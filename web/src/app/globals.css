@@ -126,26 +126,14 @@
 }
 
 /* Assistant UI Claude Style Overrides */
-.aui-thread--viewport {
-  max-width: none !important;
-  width: 100% !important;
-}
-
 .aui-thread--composer {
-  max-width: 56rem !important;
-  /* Center the input slightly for better UX, but make it wider than default */
+  max-width: 50rem !important;
   width: 100% !important;
   margin-left: auto !important;
   margin-right: auto !important;
 }
 
-.aui-thread--welcome {
-  max-width: none !important;
-  width: 100% !important;
-  text-align: left !important;
-}
-
-/* Adjust message alignment to be more open */
+/* Ensure message content doesn't break layout */
 .aui-message--content {
   max-width: none !important;
 }

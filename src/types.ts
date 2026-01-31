@@ -159,6 +159,7 @@ export interface ChatRequest {
     userId?: string;
     stream?: boolean;
     context?: Record<string, unknown>;
+    history?: Message[];
 }
 
 export interface ChatResponse {

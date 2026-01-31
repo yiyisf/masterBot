@@ -38,7 +38,7 @@ const CustomAssistantMessage = memo(() => {
     const steps = (message.metadata as any)?.custom?.steps || [];
 
     return (
-        <div className="flex flex-col gap-4 items-start mb-10 w-full animate-in fade-in duration-500">
+        <div className="flex flex-col gap-4 items-start mb-10 w-full max-w-3xl mx-auto animate-in fade-in duration-500">
             <div className="flex gap-4 items-start w-full">
                 <div className="w-9 h-9 rounded-lg bg-primary/10 border border-primary/20 flex items-center justify-center shrink-0 mt-1 shadow-sm">
                     <span className="text-[11px] font-bold text-primary">CM</span>
@@ -60,7 +60,7 @@ const CustomAssistantMessage = memo(() => {
 
 const CustomUserMessage = memo(() => {
     return (
-        <div className="flex flex-col gap-3 items-end mb-10 w-full animate-in slide-in-from-right-4 fade-in duration-300">
+        <div className="flex flex-col gap-3 items-end mb-10 w-full max-w-3xl mx-auto animate-in slide-in-from-right-4 fade-in duration-300">
             <div className="max-w-[75%] bg-muted/80 text-foreground px-5 py-3 rounded-2xl rounded-tr-none shadow-sm border border-border/50 backdrop-blur-sm">
                 <div className="text-[15px] leading-relaxed">
                     <MessagePrimitive.Content components={{ Text: MarkdownText }} />

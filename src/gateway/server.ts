@@ -121,9 +121,14 @@ export class GatewayServer {
 
         // Chat API (streaming via SSE)
         this.app.post<{ Body: ChatRequest }>('/api/chat/stream', async (request, reply) => {
-            const { message, sessionId = nanoid(), userId } = request.body;
+            const { message, sessionId = nanoid(), userId, history: clientHistory } = request.body;
 
             this.logger.info(`Stream chat request: session=${sessionId}`);
+
+            // Sync with client history if provided (client as source of truth)
+            if (clientHistory) {
+                this.conversationHistory.set(sessionId, clientHistory);
+            }
 
             const memory = this.sessionManager.getSession(sessionId);
             const history = this.conversationHistory.get(sessionId) || [];
@@ -132,12 +137,24 @@ export class GatewayServer {
             reply.raw.setHeader('Cache-Control', 'no-cache');
             reply.raw.setHeader('Connection', 'keep-alive');
 
+            let assistantAnswer = '';
+
             try {
                 for await (const step of this.agent.run(message, { sessionId, userId, memory, history })) {
+                    if (step.type === 'answer') {
+                        assistantAnswer = step.content;
+                    }
                     reply.raw.write(`data: ${JSON.stringify(step)}\n\n`);
                 }
+
+                // Persist history after success
+                history.push({ role: 'user', content: message });
+                history.push({ role: 'assistant', content: assistantAnswer });
+                this.conversationHistory.set(sessionId, history);
+
                 reply.raw.write('data: [DONE]\n\n');
             } catch (error: any) {
+                this.logger.error(`Stream error: ${error.message}`);
                 reply.raw.write(`data: ${JSON.stringify({ type: 'error', content: error.message })}\n\n`);
             }
 
