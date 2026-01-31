@@ -29,16 +29,7 @@ async function main() {
 
     logger.info('Starting CMaster Bot...');
 
-    // Initialize LLM adapter
-    const defaultProvider = config.models.default;
-    const llmConfig = config.models.providers[defaultProvider];
-
-    if (!llmConfig) {
-        throw new Error(`LLM provider "${defaultProvider}" not found in config`);
-    }
-
-    const llm = llmFactory.getAdapter(defaultProvider, llmConfig);
-    logger.info(`LLM initialized: ${llmConfig.type} (${llmConfig.model})`);
+    logger.info(`LLM system ready (Default: ${config.models.default})`);
 
     // Initialize skill system
     const skillRegistry = new SkillRegistry(logger);
@@ -55,9 +46,13 @@ async function main() {
         logger,
     });
 
-    // Initialize agent
+    // Initialize agent with dynamic LLM getter for hot-reloading
     const agent = new Agent({
-        llm,
+        llm: () => {
+            const provider = config.models.default;
+            const llmConfig = config.models.providers[provider];
+            return llmFactory.getAdapter(provider, llmConfig);
+        },
         skillRegistry,
         logger,
         maxIterations: 10,

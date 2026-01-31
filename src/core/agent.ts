@@ -30,21 +30,28 @@ const SYSTEM_PROMPT = `你是 CMaster Bot，一个强大的企业级 AI 助手�
  * 负责协调 LLM 和技能的交互
  */
 export class Agent {
-    private llm: LLMAdapter;
+    private llmGetter: () => LLMAdapter;
     private skillRegistry: SkillRegistry;
     private logger: Logger;
     private maxIterations: number;
 
     constructor(options: {
-        llm: LLMAdapter;
+        llm: LLMAdapter | (() => LLMAdapter);
         skillRegistry: SkillRegistry;
         logger: Logger;
         maxIterations?: number;
     }) {
-        this.llm = options.llm;
+        this.llmGetter = typeof options.llm === 'function' ? options.llm : () => options.llm as LLMAdapter;
         this.skillRegistry = options.skillRegistry;
         this.logger = options.logger;
         this.maxIterations = options.maxIterations ?? 10;
+    }
+
+    /**
+     * 获取当前 LLM 适配器
+     */
+    private get llm(): LLMAdapter {
+        return this.llmGetter();
     }
 
     /**
@@ -190,5 +197,19 @@ export class Agent {
         }
 
         return { answer, steps };
+    }
+
+    /**
+ * 获取技能注册中心
+ */
+    public getSkillRegistry(): SkillRegistry {
+        return this.skillRegistry;
+    }
+
+    /**
+     * 获取当前 LLM 适配器
+     */
+    public getLLMAdapter(): LLMAdapter {
+        return this.llm;
     }
 }

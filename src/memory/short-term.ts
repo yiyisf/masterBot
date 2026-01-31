@@ -67,8 +67,15 @@ export class SessionMemoryManager {
     }
 
     /**
+   * 获取当前活跃会话数
+   */
+    getSessionCount(): number {
+        return this.sessions.size;
+    }
+
+    /**
      * 删除会话
-     */
+       */
     deleteSession(sessionId: string): void {
         this.sessions.delete(sessionId);
         this.logger.debug(`Deleted session memory: ${sessionId}`);
