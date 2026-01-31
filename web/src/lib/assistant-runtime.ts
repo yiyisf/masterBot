@@ -24,8 +24,12 @@ export class MyRuntimeAdapter implements ChatModelAdapter {
     }
 
     async *run(options: ChatModelRunOptions): AsyncGenerator<ChatModelRunResult, void> {
-        const { messages } = options;
+        const { messages, abortSignal } = options;
         const lastMessage = messages[messages.length - 1];
+
+        // Extract attachments from the last message (user message)
+        const attachments = (lastMessage as any).attachments || [];
+
         const userContent = lastMessage.content[0]?.type === "text" ? lastMessage.content[0].text : "";
 
         // Transform history for backend
@@ -41,10 +45,18 @@ export class MyRuntimeAdapter implements ChatModelAdapter {
             const requestBody = {
                 message: userContent,
                 sessionId: this.sessionId,
-                history: history
+                history: history,
+                attachments: attachments.map((a: any) => ({
+                    id: a.id,
+                    name: a.name,
+                    type: a.contentType,
+                    // Note: In a real app, you'd handle file upload to get a URL or send base64
+                    // For now we pass what we have.
+                    url: (a as any).url
+                }))
             };
 
-            for await (const chunk of streamApi("/api/chat/stream", requestBody)) {
+            for await (const chunk of streamApi("/api/chat/stream", requestBody, abortSignal)) {
                 if (chunk.type === "content") {
                     currentContent += chunk.content;
                     yield {
@@ -75,11 +87,15 @@ export class MyRuntimeAdapter implements ChatModelAdapter {
                     };
                 }
             }
-        } catch (error) {
-            console.error("MyRuntimeAdapter Error:", error);
-            yield {
-                content: [{ type: "text", text: "抱歉，发生了错误。请检查后端连接。" }],
-            };
+        } catch (error: any) {
+            if (error.name === 'AbortError') {
+                console.log('Fetch aborted');
+            } else {
+                console.error("MyRuntimeAdapter Error:", error);
+                yield {
+                    content: [{ type: "text", text: "抱歉，发生了错误。请检查后端连接。" }],
+                };
+            }
         }
     }
 }

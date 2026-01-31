@@ -6,10 +6,23 @@ export type MessageRole = 'system' | 'user' | 'assistant' | 'tool';
 
 export interface Message {
     role: MessageRole;
-    content: string;
+    content: string | MessageContentPart[];
     name?: string;
     toolCallId?: string;
     toolCalls?: ToolCall[];
+    attachments?: Attachment[];
+}
+
+export type MessageContentPart =
+    | { type: 'text'; text: string }
+    | { type: 'image_url'; image_url: { url: string } };
+
+export interface Attachment {
+    id: string;
+    name: string;
+    type: string;
+    url?: string;
+    base64?: string;
 }
 
 export interface ToolCall {
@@ -27,6 +40,7 @@ export interface ChatOptions {
     maxTokens?: number;
     tools?: ToolDefinition[];
     stream?: boolean;
+    abortSignal?: AbortSignal;
 }
 
 export interface StreamChunk {
@@ -143,7 +157,7 @@ export interface AgentTask {
 }
 
 export interface ExecutionStep {
-    type: 'thought' | 'action' | 'observation' | 'answer';
+    type: 'thought' | 'action' | 'observation' | 'answer' | 'content';
     content: string;
     toolName?: string;
     toolInput?: Record<string, unknown>;
@@ -160,6 +174,7 @@ export interface ChatRequest {
     stream?: boolean;
     context?: Record<string, unknown>;
     history?: Message[];
+    attachments?: Attachment[];
 }
 
 export interface ChatResponse {

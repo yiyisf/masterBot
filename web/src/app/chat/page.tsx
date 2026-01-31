@@ -80,7 +80,7 @@ export default function ChatPage() {
                 <div className="flex-1 overflow-hidden">
                     <Thread
                         welcome={{
-                            message: "您好！我是 CMaster Bot。您可以直接提问，或者尝试输入以下指令：\n\n- `/help` 查看帮助\n- `列出当前目录下的文件`",
+                            message: "您好！我是 CMaster Bot。您可以直接提问，或者尝试上传图片/文件进行分析！",
                         }}
                         components={{
                             AssistantMessage: CustomAssistantMessage,
@@ -92,3 +92,4 @@ export default function ChatPage() {
         </div>
     );
 }
+

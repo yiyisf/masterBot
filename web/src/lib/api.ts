@@ -30,13 +30,14 @@ export async function fetchApi<T>(path: string, options?: RequestInit): Promise<
 /**
  * SSE 流式请求
  */
-export async function* streamApi(path: string, body: any): AsyncGenerator<any> {
+export async function* streamApi(path: string, body: any, signal?: AbortSignal): AsyncGenerator<any> {
     const response = await fetch(`${BASE_URL}${path}`, {
         method: 'POST',
         headers: {
             'Content-Type': 'application/json',
         },
         body: JSON.stringify(body),
+        signal,
     });
 
     if (!response.ok) {

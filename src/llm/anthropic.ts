@@ -34,7 +34,7 @@ export class AnthropicAdapter implements LLMAdapter {
             system: systemPrompt,
             messages: convertedMessages,
             tools: options?.tools ? this.convertTools(options.tools) : undefined,
-        });
+        }, { signal: options?.abortSignal });
 
         // Process response content
         let content = '';
@@ -71,7 +71,7 @@ export class AnthropicAdapter implements LLMAdapter {
             system: systemPrompt,
             messages: convertedMessages,
             tools: options?.tools ? this.convertTools(options.tools) : undefined,
-        });
+        }, { signal: options?.abortSignal });
 
         let currentToolCall: StreamChunk['toolCall'] | null = null;
         let currentToolInput = '';
@@ -128,25 +128,62 @@ export class AnthropicAdapter implements LLMAdapter {
 
         for (const msg of messages) {
             if (msg.role === 'system') {
-                systemPrompt = msg.content;
+                systemPrompt = typeof msg.content === 'string' ? msg.content : JSON.stringify(msg.content);
                 continue;
+            }
+
+            let content: any = msg.content;
+            if (Array.isArray(msg.content)) {
+                content = msg.content.map(part => {
+                    if (part.type === 'image_url') {
+                        // Anthropic expects base64 for images in the message array usually, 
+                        // but here we just map our structure. 
+                        // Note: Claude 3 supports image blocks.
+                        return {
+                            type: 'image',
+                            source: {
+                                type: 'url', // Assuming the model/adapter handles this or we need to convert to base64
+                                url: part.image_url.url
+                            }
+                        } as any;
+                    }
+                    return { type: 'text', text: part.text };
+                });
+            } else if (msg.attachments && msg.attachments.length > 0) {
+                // If there are attachments and content is a string, wrap it.
+                const parts: any[] = [{ type: 'text', text: msg.content }];
+                for (const att of msg.attachments) {
+                    if (att.type.startsWith('image/')) {
+                        parts.push({
+                            type: 'image',
+                            source: {
+                                type: 'base64',
+                                media_type: att.type,
+                                data: att.base64 // We need base64 for Anthropic images
+                            }
+                        });
+                    }
+                }
+                content = parts;
             }
 
             if (msg.role === 'user') {
                 convertedMessages.push({
                     role: 'user',
-                    content: msg.content,
+                    content: content,
                 });
             } else if (msg.role === 'assistant') {
-                const content: Anthropic.ContentBlock[] = [];
+                const responseContent: Anthropic.ContentBlock[] = [];
 
-                if (msg.content) {
-                    content.push({ type: 'text', text: msg.content });
+                if (Array.isArray(content)) {
+                    responseContent.push(...content);
+                } else if (content) {
+                    responseContent.push({ type: 'text', text: content });
                 }
 
                 if (msg.toolCalls) {
                     for (const tc of msg.toolCalls) {
-                        content.push({
+                        responseContent.push({
                             type: 'tool_use',
                             id: tc.id,
                             name: tc.function.name,
@@ -157,16 +194,15 @@ export class AnthropicAdapter implements LLMAdapter {
 
                 convertedMessages.push({
                     role: 'assistant',
-                    content: content.length > 0 ? content : msg.content,
+                    content: responseContent.length > 0 ? responseContent : (typeof content === 'string' ? content : ''),
                 });
             } else if (msg.role === 'tool') {
-                // Tool results in Anthropic format
                 convertedMessages.push({
                     role: 'user',
                     content: [{
                         type: 'tool_result',
                         tool_use_id: msg.toolCallId ?? '',
-                        content: msg.content,
+                        content: typeof content === 'string' ? content : JSON.stringify(content),
                     }],
                 });
             }

@@ -32,7 +32,7 @@ export class OpenAIAdapter implements LLMAdapter {
             temperature: options?.temperature ?? 0.7,
             max_tokens: options?.maxTokens ?? this.config.maxTokens ?? 4096,
             tools: options?.tools ? this.convertTools(options.tools) : undefined,
-        });
+        }, { signal: options?.abortSignal });
 
         const choice = response.choices[0];
         const message = choice.message;
@@ -59,7 +59,7 @@ export class OpenAIAdapter implements LLMAdapter {
             max_tokens: options?.maxTokens ?? this.config.maxTokens ?? 4096,
             tools: options?.tools ? this.convertTools(options.tools) : undefined,
             stream: true,
-        });
+        }, { signal: options?.abortSignal });
 
         let currentToolCall: Partial<StreamChunk['toolCall']> | null = null;
 
@@ -118,16 +118,26 @@ export class OpenAIAdapter implements LLMAdapter {
             if (msg.role === 'tool') {
                 return {
                     role: 'tool' as const,
-                    content: msg.content,
+                    content: typeof msg.content === 'string' ? msg.content : JSON.stringify(msg.content),
                     tool_call_id: msg.toolCallId ?? '',
                 };
             }
 
-            if (msg.role === 'assistant' && msg.toolCalls) {
+            let content: any = msg.content;
+            if (Array.isArray(msg.content)) {
+                content = msg.content.map(part => {
+                    if (part.type === 'image_url') {
+                        return { type: 'image_url', image_url: { url: part.image_url.url } };
+                    }
+                    return { type: 'text', text: part.text };
+                });
+            }
+
+            if (msg.role === 'assistant') {
                 return {
                     role: 'assistant' as const,
-                    content: msg.content || null,
-                    tool_calls: msg.toolCalls.map(tc => ({
+                    content: (typeof content === 'string' || Array.isArray(content)) ? content : null,
+                    tool_calls: msg.toolCalls?.map(tc => ({
                         id: tc.id,
                         type: 'function' as const,
                         function: {
@@ -135,13 +145,13 @@ export class OpenAIAdapter implements LLMAdapter {
                             arguments: tc.function.arguments,
                         },
                     })),
-                };
+                } as OpenAI.ChatCompletionAssistantMessageParam;
             }
 
             return {
-                role: msg.role as 'system' | 'user' | 'assistant',
-                content: msg.content,
-            };
+                role: msg.role as 'system' | 'user',
+                content: content,
+            } as OpenAI.ChatCompletionMessageParam;
         });
     }
 

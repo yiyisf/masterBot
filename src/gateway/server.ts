@@ -121,7 +121,7 @@ export class GatewayServer {
 
         // Chat API (streaming via SSE)
         this.app.post<{ Body: ChatRequest }>('/api/chat/stream', async (request, reply) => {
-            const { message, sessionId = nanoid(), userId, history: clientHistory } = request.body;
+            const { message, sessionId = nanoid(), userId, history: clientHistory, attachments } = request.body;
 
             this.logger.info(`Stream chat request: session=${sessionId}`);
 
@@ -137,28 +137,58 @@ export class GatewayServer {
             reply.raw.setHeader('Cache-Control', 'no-cache');
             reply.raw.setHeader('Connection', 'keep-alive');
 
+            const abortController = new AbortController();
+
+            // Listen to response closure instead of request closure to detect client disconnection accurately
+            reply.raw.on('close', () => {
+                if (!reply.raw.writableFinished) {
+                    this.logger.warn(`Stream request interrupted by client (disconnection detected): session=${sessionId}`);
+                    abortController.abort();
+                }
+            });
+
             let assistantAnswer = '';
 
             try {
-                for await (const step of this.agent.run(message, { sessionId, userId, memory, history })) {
+                for await (const step of this.agent.run(message, {
+                    sessionId,
+                    userId,
+                    memory,
+                    history,
+                    abortSignal: abortController.signal,
+                    attachments
+                })) {
                     if (step.type === 'answer') {
                         assistantAnswer = step.content;
                     }
-                    reply.raw.write(`data: ${JSON.stringify(step)}\n\n`);
+                    if (reply.raw.writable) {
+                        reply.raw.write(`data: ${JSON.stringify(step)}\n\n`);
+                    } else {
+                        break;
+                    }
                 }
 
                 // Persist history after success
-                history.push({ role: 'user', content: message });
-                history.push({ role: 'assistant', content: assistantAnswer });
-                this.conversationHistory.set(sessionId, history);
-
-                reply.raw.write('data: [DONE]\n\n');
+                if (!abortController.signal.aborted) {
+                    history.push({ role: 'user', content: message });
+                    history.push({ role: 'assistant', content: assistantAnswer });
+                    this.conversationHistory.set(sessionId, history);
+                    reply.raw.write('data: [DONE]\n\n');
+                }
             } catch (error: any) {
-                this.logger.error(`Stream error: ${error.message}`);
-                reply.raw.write(`data: ${JSON.stringify({ type: 'error', content: error.message })}\n\n`);
+                if (error.name === 'AbortError' || error.message?.includes('aborted')) {
+                    this.logger.info(`Stream aborted as requested: session=${sessionId}`);
+                } else {
+                    this.logger.error(`Stream error: ${error.message}`);
+                    if (reply.raw.writable) {
+                        reply.raw.write(`data: ${JSON.stringify({ type: 'error', content: error.message })}\n\n`);
+                    }
+                }
             }
 
-            reply.raw.end();
+            if (!reply.raw.writableFinished) {
+                reply.raw.end();
+            }
         });
 
         // WebSocket endpoint

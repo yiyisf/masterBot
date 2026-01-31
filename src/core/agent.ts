@@ -6,7 +6,8 @@ import type {
     ExecutionStep,
     SkillContext,
     Logger,
-    MemoryAccess
+    MemoryAccess,
+    Attachment
 } from '../types.js';
 import { SkillRegistry } from '../skills/registry.js';
 
@@ -64,12 +65,18 @@ export class Agent {
             userId?: string;
             memory: MemoryAccess;
             history?: Message[];
+            abortSignal?: AbortSignal;
+            attachments?: Attachment[];
         }
     ): AsyncGenerator<ExecutionStep> {
         const messages: Message[] = [
             { role: 'system', content: SYSTEM_PROMPT },
             ...(context.history || []),
-            { role: 'user', content: input },
+            {
+                role: 'user',
+                content: input,
+                attachments: context.attachments
+            },
         ];
 
         const tools = this.skillRegistry.getToolDefinitions();
@@ -79,15 +86,35 @@ export class Agent {
             iteration++;
             this.logger.debug(`Agent iteration ${iteration}`);
 
-            // 调用 LLM
-            const response = await this.llm.chat(messages, { tools });
+            let fullContent = '';
+            let toolCalls: any[] = [];
+
+            // 调用 LLM (流式获取内容和工具调用)
+            for await (const chunk of this.llm.chatStream(messages, { tools, abortSignal: context.abortSignal })) {
+                if (chunk.type === 'content' && chunk.content) {
+                    fullContent += chunk.content;
+                    yield {
+                        type: 'content',
+                        content: chunk.content,
+                        timestamp: new Date(),
+                    };
+                } else if (chunk.type === 'tool_call' && chunk.toolCall) {
+                    toolCalls.push(chunk.toolCall);
+                }
+            }
+
+            const response: Message = {
+                role: 'assistant',
+                content: fullContent,
+                toolCalls: toolCalls.length > 0 ? toolCalls : undefined,
+            };
             messages.push(response);
 
             // 如果没有工具调用，返回最终答案
             if (!response.toolCalls || response.toolCalls.length === 0) {
                 yield {
                     type: 'answer',
-                    content: response.content,
+                    content: typeof response.content === 'string' ? response.content : JSON.stringify(response.content),
                     timestamp: new Date(),
                 };
                 break;
@@ -181,6 +208,8 @@ export class Agent {
             userId?: string;
             memory: MemoryAccess;
             history?: Message[];
+            abortSignal?: AbortSignal;
+            attachments?: Attachment[];
         }
     ): Promise<{
         answer: string;
