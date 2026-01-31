@@ -119,7 +119,33 @@
   * {
     @apply border-border outline-ring/50;
   }
+
   body {
     @apply bg-background text-foreground;
   }
+}
+
+/* Assistant UI Claude Style Overrides */
+.aui-thread--viewport {
+  max-width: none !important;
+  width: 100% !important;
+}
+
+.aui-thread--composer {
+  max-width: 56rem !important;
+  /* Center the input slightly for better UX, but make it wider than default */
+  width: 100% !important;
+  margin-left: auto !important;
+  margin-right: auto !important;
+}
+
+.aui-thread--welcome {
+  max-width: none !important;
+  width: 100% !important;
+  text-align: left !important;
+}
+
+/* Adjust message alignment to be more open */
+.aui-message--content {
+  max-width: none !important;
 }

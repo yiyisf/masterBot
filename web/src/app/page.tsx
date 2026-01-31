@@ -47,7 +47,7 @@ export default function DashboardPage() {
   ];
 
   return (
-    <div className="space-y-8">
+    <div className="h-full overflow-y-auto space-y-8">
       <div>
         <h1 className="text-3xl font-bold tracking-tight">你好, 这里是控制台</h1>
         <p className="text-muted-foreground">欢迎回来，您的 AI 助手已准备就绪。</p>

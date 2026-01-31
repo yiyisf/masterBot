@@ -17,7 +17,7 @@ export default function SkillsPage() {
     }, []);
 
     return (
-        <div className="space-y-8 pb-10">
+        <div className="h-full overflow-y-auto space-y-8 pb-10">
             <div>
                 <h1 className="text-3xl font-bold tracking-tight">技能管理</h1>
                 <p className="text-muted-foreground">查看并配置已加载的辅助技能，它们赋予了 AI 助手操作系统的能力。</p>
