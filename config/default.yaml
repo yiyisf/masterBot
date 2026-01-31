@@ -1,0 +1,50 @@
+server:
+  port: ${PORT:3000}
+  host: ${HOST:0.0.0.0}
+
+models:
+  default: openai
+  providers:
+    openai:
+      type: openai
+      baseUrl: ${OPENAI_BASE_URL}
+      apiKey: ${OPENAI_API_KEY}
+      model: ${OPENAI_MODEL:gpt-4}
+      maxTokens: 4096
+      
+    anthropic:
+      type: anthropic
+      baseUrl: ${ANTHROPIC_BASE_URL}
+      apiKey: ${ANTHROPIC_API_KEY}
+      model: ${ANTHROPIC_MODEL:claude-3-sonnet-20240229}
+      maxTokens: 4096
+
+memory:
+  shortTerm:
+    maxMessages: 50
+    ttlSeconds: 3600
+  longTerm:
+    enabled: true
+    vectorDb: chroma
+    chromaUrl: ${CHROMA_URL:http://localhost:8000}
+    collectionName: cmaster_memory
+
+skills:
+  autoLoad: true
+  directories:
+    - ./skills/built-in
+    - ./skills/installed
+    - ./skills/local
+
+queue:
+  redis:
+    url: ${REDIS_URL:redis://localhost:6379}
+  defaultJobOptions:
+    attempts: 3
+    backoff:
+      type: exponential
+      delay: 1000
+
+logging:
+  level: ${LOG_LEVEL:info}
+  prettyPrint: true
