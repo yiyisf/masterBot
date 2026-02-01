@@ -6,13 +6,27 @@ import { MessageSquare, Calendar, Search } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { fetchApi } from "@/lib/api";
+import {
+    AlertDialog,
+    AlertDialogAction,
+    AlertDialogCancel,
+    AlertDialogContent,
+    AlertDialogDescription,
+    AlertDialogFooter,
+    AlertDialogHeader,
+    AlertDialogTitle,
+    AlertDialogTrigger,
+} from "@/components/ui/alert-dialog";
+import { Trash2 } from "lucide-react";
+import { toast } from "sonner";
 
 export default function MemoryPage() {
     const [history, setHistory] = useState<any[]>([]);
     const [loading, setLoading] = useState(true);
     const [searchQuery, setSearchQuery] = useState("");
 
-    useEffect(() => {
+    const loadSessions = () => {
+        setLoading(true);
         fetchApi("/api/sessions")
             .then((data: any) => {
                 setHistory(data);
@@ -21,8 +35,24 @@ export default function MemoryPage() {
             .catch(err => {
                 console.error(err);
                 setLoading(false);
+                toast.error("加载会话失败");
             });
+    };
+
+    useEffect(() => {
+        loadSessions();
     }, []);
+
+    const handleDelete = async (id: string) => {
+        try {
+            await fetchApi(`/api/sessions/${id}`, { method: "DELETE" });
+            toast.success("会话已删除");
+            setHistory(prev => prev.filter(s => s.id !== id));
+        } catch (err: any) {
+            console.error(err);
+            toast.error(`删除失败: ${err.message}`);
+        }
+    };
 
     const filteredHistory = history.filter(item =>
         item.title.toLowerCase().includes(searchQuery.toLowerCase())
@@ -69,6 +99,28 @@ export default function MemoryPage() {
                                     <a href={`/chat?sessionId=${session.id}`}>
                                         <Button size="sm" variant="outline">进入会话</Button>
                                     </a>
+
+                                    <AlertDialog>
+                                        <AlertDialogTrigger asChild>
+                                            <Button size="sm" variant="ghost" className="text-destructive hover:text-destructive hover:bg-destructive/10 opacity-0 group-hover:opacity-100 transition-opacity">
+                                                <Trash2 className="w-4 h-4" />
+                                            </Button>
+                                        </AlertDialogTrigger>
+                                        <AlertDialogContent>
+                                            <AlertDialogHeader>
+                                                <AlertDialogTitle>确认删除此对话？</AlertDialogTitle>
+                                                <AlertDialogDescription>
+                                                    此操作将永久删除与该会话相关的所有消息和上下文记忆，且无法撤销。
+                                                </AlertDialogDescription>
+                                            </AlertDialogHeader>
+                                            <AlertDialogFooter>
+                                                <AlertDialogCancel>取消</AlertDialogCancel>
+                                                <AlertDialogAction onClick={() => handleDelete(session.id)} className="bg-destructive text-destructive-foreground hover:bg-destructive/90">
+                                                    确认删除
+                                                </AlertDialogAction>
+                                            </AlertDialogFooter>
+                                        </AlertDialogContent>
+                                    </AlertDialog>
                                 </div>
                             </CardHeader>
                         </Card>
