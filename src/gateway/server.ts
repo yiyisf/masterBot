@@ -9,6 +9,7 @@ import { llmFactory } from '../llm/index.js';
 import type { Config, ChatRequest, Logger, Message } from '../types.js';
 import { Agent } from '../core/agent.js';
 import { SessionMemoryManager } from '../memory/short-term.js';
+import { historyRepository } from '../core/repository.js';
 
 /**
  * Gateway 服务器
@@ -20,7 +21,6 @@ export class GatewayServer {
     private sessionManager: SessionMemoryManager;
     private logger: Logger;
     private config: Config;
-    private conversationHistory: Map<string, Message[]> = new Map();
 
     constructor(options: {
         agent: Agent;
@@ -92,7 +92,7 @@ export class GatewayServer {
             this.logger.info(`Chat request: session=${sessionId}`);
 
             const memory = this.sessionManager.getSession(sessionId);
-            const history = this.conversationHistory.get(sessionId) || [];
+            const history = historyRepository.getMessages(sessionId);
 
             try {
                 const { answer, steps } = await this.agent.execute(message, {
@@ -103,9 +103,8 @@ export class GatewayServer {
                 });
 
                 // Update history
-                history.push({ role: 'user', content: message });
-                history.push({ role: 'assistant', content: answer });
-                this.conversationHistory.set(sessionId, history);
+                historyRepository.saveMessage(sessionId, { role: 'user', content: message });
+                historyRepository.saveMessage(sessionId, { role: 'assistant', content: answer });
 
                 return {
                     sessionId,
@@ -127,11 +126,11 @@ export class GatewayServer {
 
             // Sync with client history if provided (client as source of truth)
             if (clientHistory) {
-                this.conversationHistory.set(sessionId, clientHistory);
+                // historyRepository.syncHistory(sessionId, clientHistory);
             }
 
             const memory = this.sessionManager.getSession(sessionId);
-            const history = this.conversationHistory.get(sessionId) || [];
+            const history = historyRepository.getMessages(sessionId);
 
             reply.raw.setHeader('Content-Type', 'text/event-stream');
             reply.raw.setHeader('Cache-Control', 'no-cache');
@@ -170,9 +169,15 @@ export class GatewayServer {
 
                 // Persist history after success
                 if (!abortController.signal.aborted) {
-                    history.push({ role: 'user', content: message });
-                    history.push({ role: 'assistant', content: assistantAnswer });
-                    this.conversationHistory.set(sessionId, history);
+                    historyRepository.saveMessage(sessionId, {
+                        role: 'user',
+                        content: message,
+                        attachments: attachments
+                    });
+                    historyRepository.saveMessage(sessionId, {
+                        role: 'assistant',
+                        content: assistantAnswer
+                    });
                     reply.raw.write('data: [DONE]\n\n');
                 }
             } catch (error: any) {
@@ -203,7 +208,7 @@ export class GatewayServer {
 
                     if (type === 'chat') {
                         const memory = this.sessionManager.getSession(sessionId);
-                        const history = this.conversationHistory.get(sessionId) || [];
+                        const history = historyRepository.getMessages(sessionId);
 
                         for await (const step of this.agent.run(userMessage, { sessionId, memory, history })) {
                             socket.send(JSON.stringify(step));
@@ -232,16 +237,43 @@ export class GatewayServer {
             }));
         });
 
+        // Get all sessions
+        this.app.get('/api/sessions', async () => {
+            const sessions = historyRepository.getSessions();
+            return sessions.map(s => ({
+                id: s.id,
+                title: s.title || s.first_msg || '新对话',
+                updatedAt: s.updated_at,
+                createdAt: s.created_at
+            }));
+        });
+
+        // Get specific session messages
+        this.app.get<{ Params: { id: string } }>('/api/sessions/:id/messages', async (request, reply) => {
+            const { id } = request.params;
+            const messages = historyRepository.getMessages(id);
+            return {
+                sessionId: id,
+                messages
+            };
+        });
+
         // System status
         this.app.get('/api/status', async () => {
+            const sessions = historyRepository.getSessions();
             return {
                 status: 'active',
                 version: '0.1.0',
                 stats: {
-                    totalSessions: this.sessionManager.getSessionCount(),
+                    totalSessions: sessions.length,
                     totalMessages: 0, // TODO: track messages
                     skillCount: this.agent.getSkillRegistry().getAll().length,
                 },
+                sessions: sessions.map(s => ({
+                    id: s.id,
+                    title: s.title || s.first_msg || '新对话',
+                    updatedAt: s.updated_at
+                })),
                 llm: {
                     provider: this.agent.getLLMAdapter().provider,
                     // More info can be added here

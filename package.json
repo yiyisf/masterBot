@@ -26,6 +26,7 @@
     "@fastify/cors": "^10.0.2",
     "@fastify/static": "^9.0.0",
     "@fastify/websocket": "^11.0.2",
+    "better-sqlite3": "^12.6.2",
     "bullmq": "^5.34.8",
     "dotenv": "^16.4.7",
     "fastify": "^5.2.0",
@@ -40,7 +41,7 @@
     "zod": "^3.24.1"
   },
   "devDependencies": {
-    "@types/better-sqlite3": "^7.6.12",
+    "@types/better-sqlite3": "^7.6.13",
     "@types/node": "^22.10.6",
     "@typescript-eslint/eslint-plugin": "^8.20.0",
     "@typescript-eslint/parser": "^8.20.0",

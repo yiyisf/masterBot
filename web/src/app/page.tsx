@@ -68,14 +68,35 @@ export default function DashboardPage() {
       </div>
 
       <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-7">
-        <Card className="lg:col-span-4">
+        <Card className="lg:col-span-4 flex flex-col">
           <CardHeader>
             <CardTitle>最近对话</CardTitle>
           </CardHeader>
-          <CardContent>
-            <div className="text-center py-12 text-muted-foreground italic">
-              暂无对话记录
-            </div>
+          <CardContent className="flex-1 overflow-y-auto max-h-[400px]">
+            {status?.sessions?.length > 0 ? (
+              <div className="space-y-4">
+                {status.sessions.slice(0, 10).map((session: any) => (
+                  <div key={session.id} className="flex items-center justify-between p-3 rounded-lg border hover:bg-muted/50 transition-colors group">
+                    <div className="flex items-center gap-3 overflow-hidden">
+                      <div className="w-8 h-8 rounded-full bg-primary/10 flex items-center justify-center shrink-0">
+                        <MessageSquare className="w-4 h-4 text-primary" />
+                      </div>
+                      <div className="overflow-hidden">
+                        <div className="font-medium truncate text-sm">{session.title}</div>
+                        <div className="text-xs text-muted-foreground">{new Date(session.updatedAt).toLocaleString()}</div>
+                      </div>
+                    </div>
+                    <a href={`/chat?sessionId=${session.id}`} className="text-xs font-medium text-primary opacity-0 group-hover:opacity-100 transition-opacity px-2 py-1 rounded-md hover:bg-primary/10">
+                      恢复对话
+                    </a>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <div className="text-center py-12 text-muted-foreground italic">
+                暂无对话记录
+              </div>
+            )}
           </CardContent>
         </Card>
 

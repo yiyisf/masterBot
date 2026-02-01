@@ -8,19 +8,8 @@ import { nanoid } from "nanoid";
 export class MyRuntimeAdapter implements ChatModelAdapter {
     private sessionId: string;
 
-    constructor() {
-        // Initialize or restore session ID
-        if (typeof window !== "undefined") {
-            const stored = localStorage.getItem("cm_chat_session_id");
-            if (stored) {
-                this.sessionId = stored;
-            } else {
-                this.sessionId = nanoid();
-                localStorage.setItem("cm_chat_session_id", this.sessionId);
-            }
-        } else {
-            this.sessionId = nanoid();
-        }
+    constructor(sessionId?: string) {
+        this.sessionId = sessionId || nanoid();
     }
 
     async *run(options: ChatModelRunOptions): AsyncGenerator<ChatModelRunResult, void> {
@@ -50,8 +39,6 @@ export class MyRuntimeAdapter implements ChatModelAdapter {
                     id: a.id,
                     name: a.name,
                     type: a.contentType,
-                    // Note: In a real app, you'd handle file upload to get a URL or send base64
-                    // For now we pass what we have.
                     url: (a as any).url
                 }))
             };
