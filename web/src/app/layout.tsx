@@ -36,9 +36,9 @@ export default function RootLayout({
           <SidebarProvider>
             <AppSidebar />
             <SidebarInset className="h-svh overflow-hidden flex flex-col">
-              <header className="flex h-16 shrink-0 items-center justify-between border-b px-4 transition-[width,height] ease-linear group-has-[[data-collapsible=icon]]/sidebar-wrapper:h-12">
+              <header className="flex h-14 shrink-0 items-center justify-between border-b px-4 transition-all">
                 <div className="flex items-center gap-2">
-                  <SidebarTrigger className="-ml-1" />
+                  {/* SidebarTrigger 已移至侧边栏内部 */}
                 </div>
                 <ModeToggle />
               </header>

@@ -37,6 +37,7 @@ import {
   SidebarMenuItem,
   SidebarProvider,
   SidebarRail,
+  SidebarTrigger,
   SidebarGroup,
   SidebarGroupLabel,
   SidebarGroupContent,
@@ -173,49 +174,21 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
 
   return (
     <Sidebar collapsible="icon" {...props}>
-      <SidebarHeader>
-        <SidebarMenu>
-          <SidebarMenuItem>
-            <DropdownMenu>
-              <DropdownMenuTrigger asChild>
-                <SidebarMenuButton
-                  size="lg"
-                  className="data-[state=open]:bg-sidebar-accent data-[state=open]:text-sidebar-accent-foreground"
-                >
-                  <div className="flex aspect-square size-8 items-center justify-center rounded-lg bg-sidebar-primary text-sidebar-primary-foreground">
-                    <TeamLogo className="size-4" />
-                  </div>
-                  <div className="grid flex-1 text-left text-sm leading-tight">
-                    <span className="truncate font-semibold uppercase">
-                      {activeTeam.name}
-                    </span>
-                    <span className="truncate text-xs font-medium text-muted-foreground">
-                      {activeTeam.plan}
-                    </span>
-                  </div>
-                  <ChevronsUpDown className="ml-auto" />
-                </SidebarMenuButton>
-              </DropdownMenuTrigger>
-              <DropdownMenuContent
-                className="w-[--radix-dropdown-menu-trigger-width] min-w-56 rounded-lg"
-                align="start"
-                side="bottom"
-                sideOffset={4}
-              >
-                <DropdownMenuLabel className="text-xs text-muted-foreground">
-                  当前环境
-                </DropdownMenuLabel>
-                <DropdownMenuItem className="gap-2 p-2 focus:bg-sidebar-accent">
-                  <div className="flex size-6 items-center justify-center rounded-sm border">
-                    <Bot className="size-4 shrink-0" />
-                  </div>
-                  {data.teams[0].name}
-                  <Badge variant="outline" className="ml-auto">Pro</Badge>
-                </DropdownMenuItem>
-              </DropdownMenuContent>
-            </DropdownMenu>
-          </SidebarMenuItem>
-        </SidebarMenu>
+      <SidebarHeader className="h-14 border-b flex-row items-center gap-2 px-4 group-data-[collapsible=icon]:justify-center">
+        <div className="flex flex-1 items-center gap-2 overflow-hidden transition-all group-data-[collapsible=icon]:w-0 group-data-[collapsible=icon]:opacity-0">
+          <div className="flex aspect-square size-8 items-center justify-center rounded-lg bg-sidebar-primary text-sidebar-primary-foreground shrink-0">
+            <TeamLogo className="size-4" />
+          </div>
+          <div className="grid flex-1 text-left text-sm leading-tight">
+            <span className="truncate font-semibold uppercase">
+              {activeTeam.name}
+            </span>
+            <span className="truncate text-xs font-medium text-muted-foreground">
+              {activeTeam.plan}
+            </span>
+          </div>
+        </div>
+        <SidebarTrigger className="shrink-0" />
       </SidebarHeader>
 
       <SidebarContent>
