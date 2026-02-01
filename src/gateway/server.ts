@@ -244,7 +244,8 @@ export class GatewayServer {
                 id: s.id,
                 title: s.title || s.first_msg || '新对话',
                 updatedAt: s.updated_at,
-                createdAt: s.created_at
+                createdAt: s.created_at,
+                is_pinned: Boolean(s.is_pinned),
             }));
         });
 

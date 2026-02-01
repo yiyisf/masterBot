@@ -17,7 +17,7 @@ import {
     AlertDialogTitle,
     AlertDialogTrigger,
 } from "@/components/ui/alert-dialog";
-import { Trash2 } from "lucide-react";
+import { Trash2, Pin, PinOff } from "lucide-react";
 import { toast } from "sonner";
 
 export default function MemoryPage() {
@@ -54,6 +54,23 @@ export default function MemoryPage() {
         }
     };
 
+    const handleTogglePin = async (id: string, currentPinned: boolean) => {
+        try {
+            const isPinned = !currentPinned;
+            await fetchApi(`/api/sessions/${id}/pin`, {
+                method: "PATCH",
+                body: JSON.stringify({ isPinned })
+            });
+            toast.success(isPinned ? "已置顶" : "已取消置顶");
+
+            // Reload to get correct sorting from backend
+            loadSessions();
+        } catch (err: any) {
+            console.error(err);
+            toast.error(`操作失败: ${err.message}`);
+        }
+    };
+
     const filteredHistory = history.filter(item =>
         item.title.toLowerCase().includes(searchQuery.toLowerCase())
     );
@@ -85,9 +102,13 @@ export default function MemoryPage() {
                     </div>
                 ) : filteredHistory.length > 0 ? (
                     filteredHistory.map((session) => (
-                        <Card key={session.id} className="hover:bg-muted/30 transition-colors cursor-pointer group">
+                        <Card
+                            key={session.id}
+                            className={`hover:bg-muted/30 transition-colors cursor-pointer group ${session.is_pinned ? 'border-primary/50 bg-primary/5' : ''}`}
+                        >
                             <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
                                 <CardTitle className="text-base font-semibold flex items-center gap-2">
+                                    {session.is_pinned && <Pin className="w-3 h-3 text-primary fill-primary" />}
                                     <MessageSquare className="w-4 h-4 text-primary" />
                                     {session.title}
                                 </CardTitle>
@@ -96,6 +117,19 @@ export default function MemoryPage() {
                                         <Calendar className="w-3 h-3" />
                                         {new Date(session.updatedAt).toLocaleString()}
                                     </div>
+                                    <Button
+                                        size="sm"
+                                        variant="ghost"
+                                        className="opacity-0 group-hover:opacity-100 transition-opacity"
+                                        onClick={() => handleTogglePin(session.id, session.is_pinned)}
+                                    >
+                                        {session.is_pinned ? (
+                                            <PinOff className="w-4 h-4" />
+                                        ) : (
+                                            <Pin className="w-4 h-4" />
+                                        )}
+                                    </Button>
+
                                     <a href={`/chat?sessionId=${session.id}`}>
                                         <Button size="sm" variant="outline">进入会话</Button>
                                     </a>
