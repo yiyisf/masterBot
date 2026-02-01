@@ -11,12 +11,17 @@ export interface ApiResponse<T> {
 }
 
 export async function fetchApi<T>(path: string, options?: RequestInit): Promise<T> {
+    const headers: Record<string, string> = {
+        ...(options?.headers as Record<string, string>),
+    };
+
+    if (options?.body || (options?.method && ['POST', 'PUT', 'PATCH'].includes(options.method.toUpperCase()))) {
+        headers['Content-Type'] = 'application/json';
+    }
+
     const response = await fetch(`${BASE_URL}${path}`, {
         ...options,
-        headers: {
-            'Content-Type': 'application/json',
-            ...options?.headers,
-        },
+        headers,
     });
 
     if (!response.ok) {

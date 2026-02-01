@@ -158,6 +158,13 @@ export class HistoryRepository {
             base64: row.base64
         }));
     }
+
+    /**
+     * 删除会话及其所有关联数据
+     */
+    deleteSession(sessionId: string): void {
+        db.prepare('DELETE FROM sessions WHERE id = ?').run(sessionId);
+    }
 }
 
 export const historyRepository = new HistoryRepository();

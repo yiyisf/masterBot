@@ -258,6 +258,20 @@ export class GatewayServer {
             };
         });
 
+        // Delete session
+        this.app.delete<{ Params: { id: string } }>('/api/sessions/:id', async (request, reply) => {
+            const { id } = request.params;
+            this.logger.info(`Delete session request: ${id}`);
+            try {
+                historyRepository.deleteSession(id);
+                return { success: true };
+            } catch (error: any) {
+                this.logger.error(`Delete session error: ${error.message}`);
+                reply.status(500);
+                return { error: error.message };
+            }
+        });
+
         // System status
         this.app.get('/api/status', async () => {
             const sessions = historyRepository.getSessions();
