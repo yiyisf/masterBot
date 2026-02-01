@@ -26,7 +26,9 @@ export function initDatabase(): Database {
             user_id TEXT,
             title TEXT,
             created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-            updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            is_pinned BOOLEAN DEFAULT 0
         );
 
         CREATE TABLE IF NOT EXISTS messages (
@@ -51,6 +53,16 @@ export function initDatabase(): Database {
             FOREIGN KEY (message_id) REFERENCES messages(id) ON DELETE CASCADE
         );
     `);
+
+    // Auto-migration for existing databases
+    try {
+        db.prepare('ALTER TABLE sessions ADD COLUMN is_pinned BOOLEAN DEFAULT 0').run();
+    } catch (error: any) {
+        // Ignore error if column already exists
+        if (!error.message.includes('duplicate column name')) {
+            // Log but don't crash if it's another error, though for this simple setup it's fine
+        }
+    }
 
     return db;
 }

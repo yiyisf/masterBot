@@ -272,6 +272,20 @@ export class GatewayServer {
             }
         });
 
+        // Toggle pin session
+        this.app.patch<{ Params: { id: string }, Body: { isPinned: boolean } }>('/api/sessions/:id/pin', async (request, reply) => {
+            const { id } = request.params;
+            const { isPinned } = request.body;
+            try {
+                historyRepository.togglePin(id, isPinned);
+                return { success: true };
+            } catch (error: any) {
+                this.logger.error(`Toggle pin error: ${error.message}`);
+                reply.status(500);
+                return { error: error.message };
+            }
+        });
+
         // System status
         this.app.get('/api/status', async () => {
             const sessions = historyRepository.getSessions();

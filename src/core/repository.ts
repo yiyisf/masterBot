@@ -14,7 +14,7 @@ export class HistoryRepository {
             SELECT s.*, 
             (SELECT content FROM messages WHERE session_id = s.id ORDER BY created_at ASC LIMIT 1) as first_msg
             FROM sessions s
-            ORDER BY updated_at DESC
+            ORDER BY is_pinned DESC, updated_at DESC
         `).all() as any[];
     }
 
@@ -164,6 +164,13 @@ export class HistoryRepository {
      */
     deleteSession(sessionId: string): void {
         db.prepare('DELETE FROM sessions WHERE id = ?').run(sessionId);
+    }
+
+    /**
+     * 切换会话置顶状态
+     */
+    togglePin(sessionId: string, isPinned: boolean): void {
+        db.prepare('UPDATE sessions SET is_pinned = ? WHERE id = ?').run(isPinned ? 1 : 0, sessionId);
     }
 }
 

@@ -5,6 +5,7 @@ import type { ChatCompletionMessageParam } from 'openai/resources/chat/completio
 export type MessageRole = 'system' | 'user' | 'assistant' | 'tool';
 
 export interface Message {
+    id?: string;
     role: MessageRole;
     content: string | MessageContentPart[];
     name?: string;
