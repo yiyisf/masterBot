@@ -241,4 +241,26 @@ export class Agent {
     public getLLMAdapter(): LLMAdapter {
         return this.llm;
     }
+
+    /**
+     * 为会话生成简短标题
+     */
+    async generateTitle(userMessage: string): Promise<string> {
+        try {
+            const prompt = `请为以下用户输入生成一个非常简短的标题（5-10个字以内），直接返回标题内容，不要包含任何标点符号或解释：\n\n${userMessage}`;
+            const response = await this.llm.chat([
+                { role: 'user', content: prompt }
+            ]);
+
+            let title = typeof response.content === 'string' ? response.content : '';
+            if (!title && Array.isArray(response.content)) {
+                title = response.content.map(p => p.type === 'text' ? p.text : '').join('');
+            }
+
+            return title.trim().replace(/["""]/g, '');
+        } catch (error) {
+            this.logger.warn(`Failed to generate title: ${(error as Error).message}`);
+            return '新对话';
+        }
+    }
 }

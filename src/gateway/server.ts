@@ -106,6 +106,16 @@ export class GatewayServer {
                 historyRepository.saveMessage(sessionId, { role: 'user', content: message });
                 historyRepository.saveMessage(sessionId, { role: 'assistant', content: answer });
 
+                // Auto-generate title for new sessions (async)
+                if ((history?.length || 0) <= 2) {
+                    this.agent.generateTitle(message).then(title => {
+                        this.logger.info(`Generated title for session ${sessionId}: ${title}`);
+                        historyRepository.updateSessionTitle(sessionId, title);
+                    }).catch(err => {
+                        this.logger.error(`Title generation failed: ${err.message}`);
+                    });
+                }
+
                 return {
                     sessionId,
                     message: answer,
@@ -178,6 +188,17 @@ export class GatewayServer {
                         role: 'assistant',
                         content: assistantAnswer
                     });
+
+                    // Auto-generate title for new sessions (async)
+                    if ((history?.length || 0) <= 2) {
+                        this.agent.generateTitle(message).then(title => {
+                            this.logger.info(`Generated title for session ${sessionId}: ${title}`);
+                            historyRepository.updateSessionTitle(sessionId, title);
+                        }).catch(err => {
+                            this.logger.error(`Title generation failed: ${err.message}`);
+                        });
+                    }
+
                     reply.raw.write('data: [DONE]\n\n');
                 }
             } catch (error: any) {

@@ -172,6 +172,13 @@ export class HistoryRepository {
     togglePin(sessionId: string, isPinned: boolean): void {
         db.prepare('UPDATE sessions SET is_pinned = ? WHERE id = ?').run(isPinned ? 1 : 0, sessionId);
     }
+
+    /**
+     * 更新会话标题
+     */
+    updateSessionTitle(sessionId: string, title: string): void {
+        db.prepare('UPDATE sessions SET title = ? WHERE id = ?').run(title, sessionId);
+    }
 }
 
 export const historyRepository = new HistoryRepository();

@@ -26,7 +26,6 @@ export function initDatabase(): Database {
             user_id TEXT,
             title TEXT,
             created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
             updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
             is_pinned BOOLEAN DEFAULT 0
         );

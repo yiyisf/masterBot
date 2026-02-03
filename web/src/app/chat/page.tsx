@@ -15,6 +15,7 @@ import { useSearchParams } from "next/navigation";
 import { fetchApi } from "@/lib/api";
 
 import { Mermaid } from "@/components/mermaid";
+import { Skeleton } from "@/components/ui/skeleton";
 
 /**
  * 自定义 Markdown 渲染组件，集成 Mermaid 支持
@@ -180,10 +181,33 @@ function ChatContent() {
                     <ThreadHydrator sessionId={sessionId} onLoaded={handleLoaded} />
                 )}
 
-                <div className="flex-1 overflow-hidden">
+                <div className="flex-1 overflow-hidden relative">
+                    {/* Loading Skeleton Overlay */}
+                    {!historyLoaded && sessionId && (
+                        <div className="absolute inset-0 bg-background/80 backdrop-blur-sm z-50 flex flex-col items-center justify-center space-y-4 animate-in fade-in">
+                            <div className="w-full max-w-2xl space-y-4 px-4">
+                                <div className="flex items-start gap-4">
+                                    <Skeleton className="h-10 w-10 rounded-full" />
+                                    <div className="space-y-2 flex-1">
+                                        <Skeleton className="h-4 w-[250px]" />
+                                        <Skeleton className="h-4 w-[200px]" />
+                                    </div>
+                                </div>
+                                <div className="flex items-start gap-4 flex-row-reverse">
+                                    <Skeleton className="h-10 w-10 rounded-full" />
+                                    <div className="space-y-2 flex-1 flex flex-col items-end">
+                                        <Skeleton className="h-4 w-[250px]" />
+                                        <Skeleton className="h-4 w-[200px]" />
+                                    </div>
+                                </div>
+                            </div>
+                            <p className="text-sm text-muted-foreground animate-pulse">正在同步历史记录...</p>
+                        </div>
+                    )}
+
                     <Thread
                         welcome={{
-                            message: sessionId && !historyLoaded ? "加载历史对话中..." : "您好！我是 CMaster Bot。您可以直接提问，或者尝试上传图片/文件进行分析！",
+                            message: "您好！我是 CMaster Bot。您可以直接提问，或者尝试上传图片/文件进行分析！",
                         }}
                         components={{
                             AssistantMessage: CustomAssistantMessage,

@@ -19,6 +19,7 @@ import {
 } from "@/components/ui/alert-dialog";
 import { Trash2, Pin, PinOff } from "lucide-react";
 import { toast } from "sonner";
+import { Skeleton } from "@/components/ui/skeleton";
 
 export default function MemoryPage() {
     const [history, setHistory] = useState<any[]>([]);
@@ -38,6 +39,26 @@ export default function MemoryPage() {
                 toast.error("加载会话失败");
             });
     };
+
+    const HistorySkeleton = () => (
+        <div className="grid gap-4">
+            {[1, 2, 3, 4].map((i) => (
+                <div key={i} className="rounded-xl border bg-card text-card-foreground shadow-sm p-6">
+                    <div className="flex flex-row items-center justify-between space-y-0 pb-2">
+                        <div className="flex items-center gap-2">
+                            <Skeleton className="h-4 w-4 rounded-full" />
+                            <Skeleton className="h-5 w-48" />
+                        </div>
+                        <div className="flex items-center gap-4">
+                            <Skeleton className="h-3 w-32" />
+                            <Skeleton className="h-8 w-20" />
+                            <Skeleton className="h-8 w-8" />
+                        </div>
+                    </div>
+                </div>
+            ))}
+        </div>
+    );
 
     useEffect(() => {
         loadSessions();
@@ -97,9 +118,7 @@ export default function MemoryPage() {
 
             <div className="grid gap-4">
                 {loading ? (
-                    <div className="py-20 text-center text-muted-foreground animate-pulse">
-                        加载中...
-                    </div>
+                    <HistorySkeleton />
                 ) : filteredHistory.length > 0 ? (
                     filteredHistory.map((session) => (
                         <Card
