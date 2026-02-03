@@ -1,41 +1,43 @@
-import { readdir, stat } from 'fs/promises';
+import { readdir } from 'fs/promises';
 import { existsSync } from 'fs';
 import { join, resolve } from 'path';
 import { pathToFileURL } from 'url';
-import type { Skill, SkillAction, Logger } from '../types.js';
+import type { Skill, SkillAction, Logger, SkillSource, ToolDefinition, SkillContext } from '../types.js';
 import { parseSkillMd, SkillRegistry } from './registry.js';
 
 /**
- * 技能加载器
- * 负责从文件系统加载技能
+ * 本地文件技能源
+ * 负责从文件系统加载技能并作为 Source 提供给 Registry
  */
-export class SkillLoader {
-    private logger: Logger;
-    private registry: SkillRegistry;
+export class LocalSkillSource implements SkillSource {
+    name = 'local-files';
+    type = 'local' as const;
 
-    constructor(registry: SkillRegistry, logger: Logger) {
-        this.registry = registry;
+    private skills: Map<string, Skill> = new Map();
+    private directories: string[];
+    private logger: Logger;
+
+    constructor(directories: string[], logger: Logger) {
+        this.directories = directories;
         this.logger = logger;
     }
 
-    /**
-     * 从目录加载所有技能
-     */
-    async loadFromDirectories(directories: string[]): Promise<void> {
+    async initialize(): Promise<void> {
+        this.logger.info('Initializing LocalSkillSource...');
+        await this.loadFromDirectories(this.directories);
+    }
+
+    private async loadFromDirectories(directories: string[]): Promise<void> {
         for (const dir of directories) {
             const resolvedDir = resolve(dir);
             if (!existsSync(resolvedDir)) {
                 this.logger.warn(`Skill directory not found: ${resolvedDir}`);
                 continue;
             }
-
             await this.loadDirectory(resolvedDir);
         }
     }
 
-    /**
-     * 加载单个目录中的技能
-     */
     private async loadDirectory(directory: string): Promise<void> {
         const entries = await readdir(directory, { withFileTypes: true });
 
@@ -58,9 +60,6 @@ export class SkillLoader {
         }
     }
 
-    /**
-     * 加载单个技能
-     */
     async loadSkill(skillDir: string): Promise<Skill> {
         const skillMdPath = join(skillDir, 'SKILL.md');
 
@@ -122,15 +121,11 @@ export class SkillLoader {
             await skill.init();
         }
 
-        // 注册技能
-        this.registry.register(skill);
-
+        // 存入本地 Map
+        this.skills.set(skill.metadata.name, skill);
         return skill;
     }
 
-    /**
-     * 创建占位符处理器（当实现未找到时）
-     */
     private createPlaceholderHandler(actionName: string): SkillAction['handler'] {
         return async () => {
             throw new Error(`Action "${actionName}" is not implemented`);
@@ -141,13 +136,78 @@ export class SkillLoader {
      * 重新加载技能
      */
     async reloadSkill(skillDir: string): Promise<Skill> {
-        const skillMdPath = join(skillDir, 'SKILL.md');
-        const parsed = await parseSkillMd(skillMdPath);
-
-        // 卸载旧版本
-        await this.registry.unregister(parsed.metadata.name);
-
-        // 加载新版本
+        // 直接覆盖即可
         return this.loadSkill(skillDir);
+    }
+
+    // --- SkillSource Implementation ---
+
+    async getTools(): Promise<ToolDefinition[]> {
+        const tools: ToolDefinition[] = [];
+
+        for (const skill of this.skills.values()) {
+            for (const [actionName, action] of skill.actions) {
+                tools.push({
+                    type: 'function',
+                    function: {
+                        name: `${skill.metadata.name}.${actionName}`,
+                        description: action.description,
+                        parameters: {
+                            type: 'object',
+                            properties: Object.fromEntries(
+                                Object.entries(action.parameters).map(([key, param]) => [
+                                    key,
+                                    {
+                                        type: param.type,
+                                        description: param.description,
+                                    },
+                                ])
+                            ),
+                            required: Object.entries(action.parameters)
+                                .filter(([_, p]) => p.required)
+                                .map(([k]) => k),
+                        },
+                    },
+                });
+            }
+        }
+        return tools;
+    }
+
+    async execute(toolName: string, params: Record<string, unknown>, context: SkillContext): Promise<unknown> {
+        const [skillName, actionName] = toolName.split('.');
+        const skill = this.skills.get(skillName);
+        if (!skill) throw new Error(`Skill ${skillName} not found`);
+        const action = skill.actions.get(actionName);
+        if (!action) throw new Error(`Action ${actionName} not found`);
+
+        return action.handler(context, params);
+    }
+
+    async destroy(): Promise<void> {
+        for (const skill of this.skills.values()) {
+            if (skill.destroy) await skill.destroy();
+        }
+        this.skills.clear();
+    }
+}
+
+/**
+ * Legacy Loader Wrapper
+ * (For backward compatibility in initialization)
+ */
+export class SkillLoader {
+    private logger: Logger;
+    private registry: SkillRegistry;
+
+    constructor(registry: SkillRegistry, logger: Logger) {
+        this.registry = registry;
+        this.logger = logger;
+    }
+
+    async loadFromDirectories(directories: string[]): Promise<void> {
+        // 创建一个新的 LocalSource 并注册到 Registry
+        const localSource = new LocalSkillSource(directories, this.logger);
+        await this.registry.registerSource(localSource);
     }
 }

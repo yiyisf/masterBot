@@ -93,11 +93,11 @@ function parseActionsFromMarkdown(content: string): ParsedSkillMd['actions'] {
 }
 
 /**
- * 技能注册中心
- * 管理所有已加载的技能
+ * 技能注册中心 (Registry 2.0)
+ * 管理多源技能接入 (Local + MCP)
  */
 export class SkillRegistry {
-    private skills: Map<string, Skill> = new Map();
+    private sources: Map<string, SkillSource> = new Map();
     private logger: Logger;
 
     constructor(logger: Logger) {
@@ -105,74 +105,44 @@ export class SkillRegistry {
     }
 
     /**
-     * 注册技能
+     * 注册技能源
      */
-    register(skill: Skill): void {
-        if (this.skills.has(skill.metadata.name)) {
-            this.logger.warn(`Skill "${skill.metadata.name}" already registered, overwriting`);
+    async registerSource(source: SkillSource): Promise<void> {
+        if (this.sources.has(source.name)) {
+            this.logger.warn(`Skill source "${source.name}" already registered, overwriting`);
+            const old = this.sources.get(source.name);
+            if (old?.destroy) await old.destroy();
         }
-        this.skills.set(skill.metadata.name, skill);
-        this.logger.info(`Registered skill: ${skill.metadata.name} v${skill.metadata.version}`);
+
+        try {
+            await source.initialize();
+            this.sources.set(source.name, source);
+            this.logger.info(`Registered skill source: ${source.name} (${source.type})`);
+        } catch (error) {
+            this.logger.error(`Failed to register source ${source.name}: ${error}`);
+            throw error;
+        }
     }
 
     /**
-     * 获取技能
+     * 获取所有聚合的工具定义 (JSON Schema)
      */
-    get(name: string): Skill | undefined {
-        return this.skills.get(name);
-    }
-
-    /**
-     * 获取所有技能
-     */
-    getAll(): Skill[] {
-        return Array.from(this.skills.values());
-    }
-
-    /**
-     * 获取所有技能的 action 作为工具定义
-     */
-    getToolDefinitions(): Array<{
+    async getToolDefinitions(): Promise<Array<{
         type: 'function';
         function: {
             name: string;
             description: string;
             parameters: Record<string, unknown>;
         };
-    }> {
-        const tools: Array<{
-            type: 'function';
-            function: {
-                name: string;
-                description: string;
-                parameters: Record<string, unknown>;
-            };
-        }> = [];
+    }>> {
+        const tools: Array<any> = [];
 
-        for (const skill of this.skills.values()) {
-            for (const [actionName, action] of skill.actions) {
-                tools.push({
-                    type: 'function',
-                    function: {
-                        name: `${skill.metadata.name}.${actionName}`,
-                        description: action.description,
-                        parameters: {
-                            type: 'object',
-                            properties: Object.fromEntries(
-                                Object.entries(action.parameters).map(([key, param]) => [
-                                    key,
-                                    {
-                                        type: param.type,
-                                        description: param.description,
-                                    },
-                                ])
-                            ),
-                            required: Object.entries(action.parameters)
-                                .filter(([_, p]) => p.required)
-                                .map(([k]) => k),
-                        },
-                    },
-                });
+        for (const source of this.sources.values()) {
+            try {
+                const sourceTools = await source.getTools();
+                tools.push(...sourceTools);
+            } catch (error) {
+                this.logger.error(`Failed to get tools from source ${source.name}: ${error}`);
             }
         }
 
@@ -180,49 +150,69 @@ export class SkillRegistry {
     }
 
     /**
-     * 执行技能 action
+     * 搜索工具 (支持简单的文本匹配，未来可扩展为向量检索)
+     */
+    async searchTools(query: string): Promise<Array<any>> {
+        const allTools = await this.getToolDefinitions();
+        const lowerQuery = query.toLowerCase();
+
+        return allTools.filter(tool => {
+            const nameMatch = tool.function.name.toLowerCase().includes(lowerQuery);
+            const descMatch = tool.function.description.toLowerCase().includes(lowerQuery);
+            return nameMatch || descMatch;
+        });
+    }
+
+    /**
+     * 统一执行入口
      */
     async executeAction(
-        skillName: string,
-        actionName: string,
+        toolName: string,
         params: Record<string, unknown>,
         context: SkillContext
     ): Promise<unknown> {
-        const skill = this.skills.get(skillName);
-        if (!skill) {
-            throw new Error(`Skill "${skillName}" not found`);
+        // Find which source owns this tool
+        // Optimization: We could cache tool->source mapping, but for now we search
+        for (const source of this.sources.values()) {
+            try {
+                const tools = await source.getTools();
+                const found = tools.find(t => t.function.name === toolName);
+
+                if (found) {
+                    return await source.execute(toolName, params, context);
+                }
+            } catch (error) {
+                this.logger.warn(`Error searching tool in source ${source.name}: ${error}`);
+            }
         }
 
-        const action = skill.actions.get(actionName);
-        if (!action) {
-            throw new Error(`Action "${actionName}" not found in skill "${skillName}"`);
-        }
-
-        return action.handler(context, params);
+        throw new Error(`Tool "${toolName}" not found in any registered source`);
     }
 
     /**
-     * 卸载技能
+     * 卸载源
      */
-    async unregister(name: string): Promise<void> {
-        const skill = this.skills.get(name);
-        if (skill?.destroy) {
-            await skill.destroy();
+    async unregisterSource(name: string): Promise<void> {
+        const source = this.sources.get(name);
+        if (source) {
+            if (source.destroy) await source.destroy();
+            this.sources.delete(name);
+            this.logger.info(`Unregistered source: ${name}`);
         }
-        this.skills.delete(name);
-        this.logger.info(`Unregistered skill: ${name}`);
     }
 
     /**
-     * 卸载所有技能
+     * 清理所有
      */
     async unregisterAll(): Promise<void> {
-        for (const [name, skill] of this.skills) {
-            if (skill.destroy) {
-                await skill.destroy();
-            }
-            this.logger.info(`Unregistered skill: ${name}`);
+        for (const [name, source] of this.sources) {
+            if (source.destroy) await source.destroy();
         }
-        this.skills.clear();
+        this.sources.clear();
+    }
+
+    // Legacy support for direct skill access if needed, or remove
+    getAllSources(): SkillSource[] {
+        return Array.from(this.sources.values());
     }
 }

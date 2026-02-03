@@ -108,6 +108,16 @@ export interface Skill {
     destroy?(): Promise<void>;
 }
 
+export interface SkillSource {
+    name: string; // e.g., "local", "github-mcp"
+    type: 'local' | 'mcp' | 'openapi';
+
+    initialize(): Promise<void>;
+    getTools(): Promise<ToolDefinition[]>;
+    execute(toolName: string, params: Record<string, unknown>, context: SkillContext): Promise<unknown>;
+    destroy?(): Promise<void>;
+}
+
 export interface SkillContext {
     sessionId: string;
     userId?: string;
@@ -231,4 +241,14 @@ export interface Config {
         level: string;
         prettyPrint: boolean;
     };
+}
+
+export interface McpServerConfig {
+    id: string;
+    name: string;
+    type: 'stdio' | 'sse';
+    command?: string;
+    args?: string[];
+    url?: string;
+    enabled: boolean;
 }

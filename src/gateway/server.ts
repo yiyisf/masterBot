@@ -4,9 +4,9 @@ import websocket from '@fastify/websocket';
 import { nanoid } from 'nanoid';
 import fastifyStatic from '@fastify/static';
 import path from 'path';
-import { existsSync } from 'fs';
+import fs from 'fs';
 import { llmFactory } from '../llm/index.js';
-import type { Config, ChatRequest, Logger, Message } from '../types.js';
+import type { Config, ChatRequest, Logger, Message, McpServerConfig } from '../types.js';
 import { Agent } from '../core/agent.js';
 import { SessionMemoryManager } from '../memory/short-term.js';
 import { historyRepository } from '../core/repository.js';
@@ -54,7 +54,7 @@ export class GatewayServer {
 
     private async setupStatic(): Promise<void> {
         const distPath = path.join(process.cwd(), 'web/out');
-        if (existsSync(distPath)) {
+        if (fs.existsSync(distPath)) {
             this.logger.info(`Serving static files from ${distPath}`);
             await this.app.register(fastifyStatic, {
                 root: distPath,
@@ -247,15 +247,78 @@ export class GatewayServer {
             });
         });
 
-        // List skills
+        // List skills (Derived from tools)
         this.app.get('/api/skills', async () => {
-            const skills = this.agent.getSkillRegistry().getAll();
-            return skills.map(skill => ({
-                name: skill.metadata.name,
-                version: skill.metadata.version,
-                description: skill.metadata.description,
-                actions: Array.from(skill.actions.keys()),
+            const tools = await this.agent.getSkillRegistry().getToolDefinitions();
+
+            // Group tools by skill name (prefix before first dot)
+            const skillMap = new Map<string, { name: string; actions: string[] }>();
+
+            for (const tool of tools) {
+                const [skillName, actionName] = tool.function.name.split('.');
+                if (!skillMap.has(skillName)) {
+                    skillMap.set(skillName, {
+                        name: skillName,
+                        actions: []
+                    });
+                }
+                skillMap.get(skillName)?.actions.push(actionName);
+            }
+
+            return Array.from(skillMap.values()).map(s => ({
+                name: s.name,
+                version: '2.0.0', // Dynamic version not available in ToolDefinition
+                description: 'Loaded via Skill Registry 2.0',
+                actions: s.actions,
             }));
+        });
+
+        // --- MCP Management API ---
+        const MCP_CONFIG_PATH = path.join(process.cwd(), 'mcp-servers.json');
+
+        // Helper to read MCP config
+        const readMcpConfig = async (): Promise<McpServerConfig[]> => {
+            try {
+                if (!fs.existsSync(MCP_CONFIG_PATH)) return [];
+                const content = await fs.promises.readFile(MCP_CONFIG_PATH, 'utf-8');
+                return JSON.parse(content);
+            } catch (e) {
+                this.logger.error('Failed to read MCP config', e);
+                return [];
+            }
+        };
+
+        // Helper to write MCP config
+        const writeMcpConfig = async (config: McpServerConfig[]) => {
+            await fs.promises.writeFile(MCP_CONFIG_PATH, JSON.stringify(config, null, 2));
+        };
+
+        this.app.get('/api/mcp/config', async () => {
+            return await readMcpConfig();
+        });
+
+        this.app.post<{ Body: McpServerConfig }>('/api/mcp/config', async (request, reply) => {
+            const configs = await readMcpConfig();
+            const newConfig = request.body;
+
+            if (!newConfig.id) newConfig.id = nanoid();
+
+            const index = configs.findIndex(c => c.id === newConfig.id);
+            if (index >= 0) {
+                configs[index] = newConfig;
+            } else {
+                configs.push(newConfig);
+            }
+
+            await writeMcpConfig(configs);
+            return { success: true, config: newConfig };
+        });
+
+        this.app.delete<{ Params: { id: string } }>('/api/mcp/config/:id', async (request, reply) => {
+            const configs = await readMcpConfig();
+            const newConfigs = configs.filter(c => c.id !== request.params.id);
+            await writeMcpConfig(newConfigs);
+            return { success: true };
         });
 
         // Get all sessions
@@ -317,7 +380,7 @@ export class GatewayServer {
                 stats: {
                     totalSessions: sessions.length,
                     totalMessages: 0, // TODO: track messages
-                    skillCount: this.agent.getSkillRegistry().getAll().length,
+                    skillCount: (await this.agent.getSkillRegistry().getToolDefinitions()).length,
                 },
                 sessions: sessions.map(s => ({
                     id: s.id,

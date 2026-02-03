@@ -54,6 +54,18 @@ export class MyRuntimeAdapter implements ChatModelAdapter {
                     yield {
                         metadata: { custom: { steps: [...currentSteps] } },
                     };
+                } else if (chunk.type === "plan") {
+                    try {
+                        // content is JSON string of steps array
+                        const planSteps = typeof chunk.content === 'string' ? JSON.parse(chunk.content) : chunk.content;
+                        currentSteps.push({ plan: planSteps });
+                    } catch (e) {
+                        console.warn("Failed to parse plan:", chunk.content);
+                        currentSteps.push({ plan: ["Detail hidden"] });
+                    }
+                    yield {
+                        metadata: { custom: { steps: [...currentSteps] } },
+                    };
                 } else if (chunk.type === "action") {
                     currentSteps.push({ action: JSON.stringify(chunk.tool) });
                     yield {

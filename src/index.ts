@@ -37,7 +37,8 @@ async function main() {
 
     if (config.skills.autoLoad) {
         await skillLoader.loadFromDirectories(config.skills.directories);
-        logger.info(`Loaded ${skillRegistry.getAll().length} skills`);
+        const tools = await skillRegistry.getToolDefinitions();
+        logger.info(`Skill system initialized with ${tools.length} tools`);
     }
 
     // Initialize memory

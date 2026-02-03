@@ -102,7 +102,7 @@ export class Agent {
         ];
 
         // 合并内置工具和外部技能工具
-        const externalTools = this.skillRegistry.getToolDefinitions();
+        const externalTools = await this.skillRegistry.getToolDefinitions();
         const tools = [PLAN_TOOL_DEF, ...externalTools];
 
         let iteration = 0;
@@ -178,7 +178,7 @@ export class Agent {
                 }
 
                 // 2.2 处理常规技能调用
-                const [skillName, actionName] = toolName.split('.');
+                // const [skillName, actionName] = toolName.split('.'); // Registry now handles routing
 
                 yield {
                     type: 'action',
@@ -198,10 +198,9 @@ export class Agent {
                         config: {},
                     };
 
-                    // 执行技能
+                    // 执行技能 (Registry 负责路由到正确的 source)
                     const result = await this.skillRegistry.executeAction(
-                        skillName,
-                        actionName,
+                        toolName,
                         params,
                         skillContext
                     );
