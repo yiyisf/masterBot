@@ -1,4 +1,4 @@
-import DatabaseConstructor, { Database } from 'better-sqlite3';
+import { DatabaseSync } from 'node:sqlite';
 import path from 'path';
 import { existsSync, mkdirSync } from 'fs';
 import { fileURLToPath } from 'url';
@@ -11,13 +11,13 @@ const DB_PATH = path.join(DATA_DIR, 'cmaster.db');
 /**
  * 数据库初始化与管理
  */
-export function initDatabase(): Database {
+export function initDatabase(): DatabaseSync {
     if (!existsSync(DATA_DIR)) {
         mkdirSync(DATA_DIR, { recursive: true });
     }
 
-    const db = new DatabaseConstructor(DB_PATH);
-    db.pragma('journal_mode = WAL');
+    const db = new DatabaseSync(DB_PATH);
+    db.exec('PRAGMA journal_mode = WAL');
 
     // 创建表结构
     db.exec(`
@@ -66,4 +66,4 @@ export function initDatabase(): Database {
     return db;
 }
 
-export const db: Database = initDatabase();
+export const db: DatabaseSync = initDatabase();

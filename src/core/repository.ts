@@ -114,17 +114,20 @@ export class HistoryRepository {
      * 同步整个会话历史 (全替换或增量，这里采用先删后存的策略简化初始实现)
      */
     syncHistory(sessionId: string, history: Message[]) {
-        const transaction = db.transaction((messages: Message[]) => {
+        db.exec('BEGIN');
+        try {
             this.ensureSession(sessionId);
             // 删除旧消息 (级联删除附件)
             // db.prepare('DELETE FROM messages WHERE session_id = ?').run(sessionId);
 
-            for (const msg of messages) {
+            for (const msg of history) {
                 this.saveMessage(sessionId, msg);
             }
-        });
-
-        transaction(history);
+            db.exec('COMMIT');
+        } catch (error) {
+            db.exec('ROLLBACK');
+            throw error;
+        }
     }
 
     private ensureSession(id: string) {
