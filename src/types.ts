@@ -158,7 +158,7 @@ export interface AgentTask {
 }
 
 export interface ExecutionStep {
-    type: 'thought' | 'action' | 'observation' | 'answer' | 'content';
+    type: 'thought' | 'plan' | 'action' | 'observation' | 'answer' | 'content';
     content: string;
     toolName?: string;
     toolInput?: Record<string, unknown>;

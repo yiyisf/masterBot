@@ -13,18 +13,40 @@ import { SkillRegistry } from '../skills/registry.js';
 
 const SYSTEM_PROMPT = `你是 CMaster Bot，一个强大的企业级 AI 助手。
 
-你可以使用以下工具来完成任务。当需要执行操作时，请调用相应的工具。
+核心工作流 (Think-Plan-Act):
+1. **思考 (Think)**: 在行动前，先进行深思熟虑，分析用户意图和潜在难点。
+2. **规划 (Plan)**: 对于复杂任务，必须先调用 \`plan_task\` 工具制定步骤。
+3. **执行 (Act)**: 按照计划一步步调用工具执行。
+4. **反思 (Reflect)**: 如果工具执行失败，分析原因并修正计划。
 
-工作原则：
-1. 分析用户请求，确定需要执行的步骤
-2. 使用合适的工具来完成每个步骤
-3. 清晰地解释你的操作和结果
-4. 如果任务失败，提供有用的错误信息和建议
+安全与原则：
+1. 不执行危害性操作，保护隐私。
+2. 遇到不确定的关键操作（如删除），需请求用户确认。
+3. 保持回答简洁专业。`;
 
-安全原则：
-1. 不执行可能造成数据丢失的危险操作，除非用户明确确认
-2. 不访问敏感系统文件
-3. 保护用户隐私数据`;
+// 内置规划工具定义
+const PLAN_TOOL_DEF: ToolDefinition = {
+    type: 'function',
+    function: {
+        name: 'plan_task',
+        description: 'Create or update a execution plan for complex tasks',
+        parameters: {
+            type: 'object',
+            properties: {
+                thought: {
+                    type: 'string',
+                    description: 'The reasoning behind this plan (Thinking process)'
+                },
+                steps: {
+                    type: 'array',
+                    items: { type: 'string' },
+                    description: 'List of actionable steps to complete the task'
+                }
+            },
+            required: ['thought', 'steps']
+        }
+    }
+};
 
 /**
  * Agent 编排引擎
@@ -79,7 +101,10 @@ export class Agent {
             },
         ];
 
-        const tools = this.skillRegistry.getToolDefinitions();
+        // 合并内置工具和外部技能工具
+        const externalTools = this.skillRegistry.getToolDefinitions();
+        const tools = [PLAN_TOOL_DEF, ...externalTools];
+
         let iteration = 0;
 
         while (iteration < this.maxIterations) {
@@ -122,13 +147,43 @@ export class Agent {
 
             // 处理工具调用
             for (const toolCall of response.toolCalls) {
-                const [skillName, actionName] = toolCall.function.name.split('.');
                 const params = JSON.parse(toolCall.function.arguments);
+                const toolName = toolCall.function.name;
+
+                // 2.1 处理内置规划工具
+                if (toolName === 'plan_task') {
+                    const { thought, steps } = params;
+
+                    yield {
+                        type: 'thought',
+                        content: thought,
+                        timestamp: new Date()
+                    };
+
+                    yield {
+                        type: 'plan',
+                        content: JSON.stringify(steps),
+                        toolName: 'plan_task',
+                        toolOutput: steps,
+                        timestamp: new Date()
+                    };
+
+                    messages.push({
+                        role: 'tool',
+                        content: `Plan created: ${JSON.stringify(steps)}. Now precede to execute step 1.`,
+                        toolCallId: toolCall.id
+                    });
+
+                    continue; // Skip normal skill execution
+                }
+
+                // 2.2 处理常规技能调用
+                const [skillName, actionName] = toolName.split('.');
 
                 yield {
                     type: 'action',
-                    content: `Calling ${toolCall.function.name}`,
-                    toolName: toolCall.function.name,
+                    content: `Calling ${toolName}`,
+                    toolName: toolName,
                     toolInput: params,
                     timestamp: new Date(),
                 };
@@ -158,7 +213,7 @@ export class Agent {
                     yield {
                         type: 'observation',
                         content: resultStr,
-                        toolName: toolCall.function.name,
+                        toolName: toolName,
                         toolOutput: result,
                         timestamp: new Date(),
                     };
@@ -175,7 +230,7 @@ export class Agent {
                     yield {
                         type: 'observation',
                         content: errorMsg,
-                        toolName: toolCall.function.name,
+                        toolName: toolName,
                         toolOutput: { error: error.message },
                         timestamp: new Date(),
                     };
