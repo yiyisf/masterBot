@@ -229,7 +229,7 @@ export interface Config {
         longTerm: {
             enabled: boolean;
             vectorDb: string;
-            chromaUrl: string;
+            chromaUrl?: string;
             collectionName: string;
         };
     };

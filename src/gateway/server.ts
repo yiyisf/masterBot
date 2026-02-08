@@ -10,6 +10,7 @@ import type { Config, ChatRequest, Logger, Message, McpServerConfig } from '../t
 import { Agent } from '../core/agent.js';
 import { SessionMemoryManager } from '../memory/short-term.js';
 import { historyRepository } from '../core/repository.js';
+import { McpSkillSource } from '../skills/mcp-source.js';
 
 /**
  * Gateway 服务器
@@ -274,6 +275,7 @@ export class GatewayServer {
         });
 
         // --- MCP Management API ---
+        const registry = this.agent.getSkillRegistry();
         const MCP_CONFIG_PATH = path.join(process.cwd(), 'mcp-servers.json');
 
         // Helper to read MCP config
@@ -305,17 +307,38 @@ export class GatewayServer {
 
             const index = configs.findIndex(c => c.id === newConfig.id);
             if (index >= 0) {
+                // Unregister old source before updating
+                const oldConfig = configs[index];
+                await registry.unregisterSource(`mcp-${oldConfig.name}`).catch(() => {});
                 configs[index] = newConfig;
             } else {
                 configs.push(newConfig);
             }
 
             await writeMcpConfig(configs);
+
+            // Register the new MCP source if enabled
+            if (newConfig.enabled) {
+                try {
+                    const source = new McpSkillSource(newConfig, this.logger);
+                    await registry.registerSource(source);
+                } catch (err) {
+                    this.logger.warn(`MCP server "${newConfig.name}" saved but connection failed: ${(err as Error).message}`);
+                }
+            }
+
             return { success: true, config: newConfig };
         });
 
         this.app.delete<{ Params: { id: string } }>('/api/mcp/config/:id', async (request, reply) => {
             const configs = await readMcpConfig();
+            const toDelete = configs.find(c => c.id === request.params.id);
+
+            // Unregister MCP source before removing config
+            if (toDelete) {
+                await registry.unregisterSource(`mcp-${toDelete.name}`).catch(() => {});
+            }
+
             const newConfigs = configs.filter(c => c.id !== request.params.id);
             await writeMcpConfig(newConfigs);
             return { success: true };

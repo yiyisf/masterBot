@@ -30,8 +30,7 @@ memory:
     ttlSeconds: 3600
   longTerm:
     enabled: true
-    vectorDb: chroma
-    chromaUrl: ${CHROMA_URL:http://localhost:8000}
+    vectorDb: sqlite
     collectionName: cmaster_memory
 
 skills:

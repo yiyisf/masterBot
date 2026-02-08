@@ -11,6 +11,7 @@ import type {
 } from '../types.js';
 import { SkillRegistry } from '../skills/registry.js';
 import { ContextManager } from './context-manager.js';
+import type { LongTermMemory } from '../memory/long-term.js';
 
 const SYSTEM_PROMPT = `你是 CMaster Bot，一个强大的企业级 AI 助手。
 
@@ -49,6 +50,51 @@ const PLAN_TOOL_DEF: ToolDefinition = {
     }
 };
 
+// 内置记忆工具定义
+const MEMORY_REMEMBER_TOOL: ToolDefinition = {
+    type: 'function',
+    function: {
+        name: 'memory_remember',
+        description: 'Save important information to long-term memory for future recall across sessions',
+        parameters: {
+            type: 'object',
+            properties: {
+                content: {
+                    type: 'string',
+                    description: 'The information to remember'
+                },
+                tags: {
+                    type: 'string',
+                    description: 'Optional comma-separated tags for categorization'
+                }
+            },
+            required: ['content']
+        }
+    }
+};
+
+const MEMORY_RECALL_TOOL: ToolDefinition = {
+    type: 'function',
+    function: {
+        name: 'memory_recall',
+        description: 'Search long-term memory for previously saved information',
+        parameters: {
+            type: 'object',
+            properties: {
+                query: {
+                    type: 'string',
+                    description: 'The search query to find relevant memories'
+                },
+                limit: {
+                    type: 'number',
+                    description: 'Maximum number of results (default: 5)'
+                }
+            },
+            required: ['query']
+        }
+    }
+};
+
 /**
  * Agent 编排引擎
  * 负责协调 LLM 和技能的交互
@@ -59,6 +105,7 @@ export class Agent {
     private logger: Logger;
     private maxIterations: number;
     private contextManager: ContextManager;
+    private longTermMemory?: LongTermMemory;
 
     constructor(options: {
         llm: LLMAdapter | (() => LLMAdapter);
@@ -66,11 +113,13 @@ export class Agent {
         logger: Logger;
         maxIterations?: number;
         maxContextTokens?: number;
+        longTermMemory?: LongTermMemory;
     }) {
         this.llmGetter = typeof options.llm === 'function' ? options.llm : () => options.llm as LLMAdapter;
         this.skillRegistry = options.skillRegistry;
         this.logger = options.logger;
         this.maxIterations = options.maxIterations ?? 10;
+        this.longTermMemory = options.longTermMemory;
         this.contextManager = new ContextManager({
             maxTokens: options.maxContextTokens,
             logger: options.logger,
@@ -98,7 +147,21 @@ export class Agent {
             attachments?: Attachment[];
         }
     ): AsyncGenerator<ExecutionStep> {
-        const systemMessage: Message = { role: 'system', content: SYSTEM_PROMPT };
+        // Auto-inject relevant long-term memories into system prompt
+        let systemContent = SYSTEM_PROMPT;
+        if (this.longTermMemory) {
+            try {
+                const memories = await this.longTermMemory.search(input, 3);
+                if (memories.length > 0) {
+                    const memoryContext = memories.map(m => `- ${m.content}`).join('\n');
+                    systemContent += `\n\n相关记忆:\n${memoryContext}`;
+                }
+            } catch (err) {
+                this.logger.warn(`Failed to retrieve long-term memories: ${(err as Error).message}`);
+            }
+        }
+
+        const systemMessage: Message = { role: 'system', content: systemContent };
         const currentInput: Message[] = [{
             role: 'user',
             content: input,
@@ -115,7 +178,11 @@ export class Agent {
 
         // 合并内置工具和外部技能工具
         const externalTools = await this.skillRegistry.getToolDefinitions();
-        const tools = [PLAN_TOOL_DEF, ...externalTools];
+        const builtinTools = [PLAN_TOOL_DEF];
+        if (this.longTermMemory) {
+            builtinTools.push(MEMORY_REMEMBER_TOOL, MEMORY_RECALL_TOOL);
+        }
+        const tools = [...builtinTools, ...externalTools];
 
         let iteration = 0;
 
@@ -187,6 +254,42 @@ export class Agent {
                     });
 
                     continue; // Skip normal skill execution
+                }
+
+                // 2.1b 处理内置记忆工具
+                if (toolName === 'memory_remember' && this.longTermMemory) {
+                    const { content: memContent, tags } = params;
+                    const metadata = tags ? { tags: tags.split(',').map((t: string) => t.trim()) } : {};
+                    const memId = await this.longTermMemory.remember(memContent, metadata, context.sessionId);
+
+                    const result = `Memory saved (id: ${memId})`;
+                    yield {
+                        type: 'observation',
+                        content: result,
+                        toolName,
+                        toolOutput: { id: memId },
+                        timestamp: new Date(),
+                    };
+                    messages.push({ role: 'tool', content: result, toolCallId: toolCall.id });
+                    continue;
+                }
+
+                if (toolName === 'memory_recall' && this.longTermMemory) {
+                    const { query, limit: recallLimit } = params;
+                    const memories = await this.longTermMemory.search(query, recallLimit ?? 5);
+                    const resultStr = memories.length > 0
+                        ? memories.map(m => `- ${m.content}`).join('\n')
+                        : 'No relevant memories found.';
+
+                    yield {
+                        type: 'observation',
+                        content: resultStr,
+                        toolName,
+                        toolOutput: memories,
+                        timestamp: new Date(),
+                    };
+                    messages.push({ role: 'tool', content: resultStr, toolCallId: toolCall.id });
+                    continue;
                 }
 
                 // 2.2 处理常规技能调用
