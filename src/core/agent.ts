@@ -12,6 +12,8 @@ import type {
 import { SkillRegistry } from '../skills/registry.js';
 import { ContextManager } from './context-manager.js';
 import type { LongTermMemory } from '../memory/long-term.js';
+import { taskRepository } from './task-repository.js';
+import { DAGExecutor } from './dag-executor.js';
 
 const SYSTEM_PROMPT = `你是 CMaster Bot，一个强大的企业级 AI 助手。
 
@@ -20,6 +22,12 @@ const SYSTEM_PROMPT = `你是 CMaster Bot，一个强大的企业级 AI 助手�
 2. **规划 (Plan)**: 对于复杂任务，必须先调用 \`plan_task\` 工具制定步骤。
 3. **执行 (Act)**: 按照计划一步步调用工具执行。
 4. **反思 (Reflect)**: 如果工具执行失败，分析原因并修正计划。
+
+任务 DAG (用于复杂多步任务):
+- 使用 \`dag_create_task\` 将复杂任务分解为多个子任务，声明依赖关系
+- 任务描述可以是纯文本，也可以是 JSON 格式的工具调用: {"tool":"skill.action","params":{...}}
+- 使用 \`dag_get_status\` 查看当前 DAG 状态
+- 使用 \`dag_execute\` 并行执行所有就绪任务
 
 安全与原则：
 1. 不执行危害性操作，保护隐私。
@@ -95,6 +103,56 @@ const MEMORY_RECALL_TOOL: ToolDefinition = {
     }
 };
 
+// DAG task tools
+const DAG_CREATE_TASK_TOOL: ToolDefinition = {
+    type: 'function',
+    function: {
+        name: 'dag_create_task',
+        description: 'Create a sub-task in the DAG for complex task decomposition. The description can be plain text or a JSON tool call: {"tool":"skill.action","params":{...}}',
+        parameters: {
+            type: 'object',
+            properties: {
+                description: {
+                    type: 'string',
+                    description: 'Task description or JSON tool call specification'
+                },
+                dependencies: {
+                    type: 'array',
+                    items: { type: 'string' },
+                    description: 'Optional array of task IDs that must complete before this task'
+                }
+            },
+            required: ['description']
+        }
+    }
+};
+
+const DAG_GET_STATUS_TOOL: ToolDefinition = {
+    type: 'function',
+    function: {
+        name: 'dag_get_status',
+        description: 'View the current DAG status including all tasks and their dependencies',
+        parameters: {
+            type: 'object',
+            properties: {},
+            required: []
+        }
+    }
+};
+
+const DAG_EXECUTE_TOOL: ToolDefinition = {
+    type: 'function',
+    function: {
+        name: 'dag_execute',
+        description: 'Execute all ready tasks in the DAG in parallel, respecting dependency order. Continues until no more tasks are ready.',
+        parameters: {
+            type: 'object',
+            properties: {},
+            required: []
+        }
+    }
+};
+
 /**
  * Agent 编排引擎
  * 负责协调 LLM 和技能的交互
@@ -106,6 +164,7 @@ export class Agent {
     private maxIterations: number;
     private contextManager: ContextManager;
     private longTermMemory?: LongTermMemory;
+    private skillConfig: Record<string, unknown>;
 
     constructor(options: {
         llm: LLMAdapter | (() => LLMAdapter);
@@ -114,12 +173,14 @@ export class Agent {
         maxIterations?: number;
         maxContextTokens?: number;
         longTermMemory?: LongTermMemory;
+        skillConfig?: Record<string, unknown>;
     }) {
         this.llmGetter = typeof options.llm === 'function' ? options.llm : () => options.llm as LLMAdapter;
         this.skillRegistry = options.skillRegistry;
         this.logger = options.logger;
         this.maxIterations = options.maxIterations ?? 10;
         this.longTermMemory = options.longTermMemory;
+        this.skillConfig = options.skillConfig ?? {};
         this.contextManager = new ContextManager({
             maxTokens: options.maxContextTokens,
             logger: options.logger,
@@ -178,7 +239,7 @@ export class Agent {
 
         // 合并内置工具和外部技能工具
         const externalTools = await this.skillRegistry.getToolDefinitions();
-        const builtinTools = [PLAN_TOOL_DEF];
+        const builtinTools = [PLAN_TOOL_DEF, DAG_CREATE_TASK_TOOL, DAG_GET_STATUS_TOOL, DAG_EXECUTE_TOOL];
         if (this.longTermMemory) {
             builtinTools.push(MEMORY_REMEMBER_TOOL, MEMORY_RECALL_TOOL);
         }
@@ -292,7 +353,77 @@ export class Agent {
                     continue;
                 }
 
-                // 2.2 处理常规技能调用
+                // 2.2 处理 DAG 工具
+                if (toolName === 'dag_create_task') {
+                    const { description: taskDesc, dependencies: deps } = params;
+                    const taskId = taskRepository.createTask(context.sessionId, taskDesc, deps);
+
+                    yield {
+                        type: 'task_created',
+                        content: `Task created: ${taskDesc}`,
+                        taskId,
+                        toolName,
+                        timestamp: new Date(),
+                    };
+                    messages.push({
+                        role: 'tool',
+                        content: JSON.stringify({ taskId, description: taskDesc }),
+                        toolCallId: toolCall.id,
+                    });
+                    continue;
+                }
+
+                if (toolName === 'dag_get_status') {
+                    const dag = taskRepository.getDAG(context.sessionId);
+                    const resultStr = JSON.stringify(dag, null, 2);
+
+                    yield {
+                        type: 'observation',
+                        content: resultStr,
+                        toolName,
+                        toolOutput: dag,
+                        timestamp: new Date(),
+                    };
+                    messages.push({ role: 'tool', content: resultStr, toolCallId: toolCall.id });
+                    continue;
+                }
+
+                if (toolName === 'dag_execute') {
+                    const skillContext: SkillContext = {
+                        sessionId: context.sessionId,
+                        userId: context.userId,
+                        memory: context.memory,
+                        logger: this.logger,
+                        config: this.skillConfig,
+                    };
+
+                    const executor = new DAGExecutor(
+                        context.sessionId,
+                        this.skillRegistry,
+                        skillContext,
+                        this.logger,
+                    );
+
+                    const stepResults: string[] = [];
+                    for await (const step of executor.execute()) {
+                        yield {
+                            type: step.type,
+                            content: step.result || step.error || '',
+                            taskId: step.taskId,
+                            toolName: 'dag_execute',
+                            timestamp: new Date(),
+                        };
+                        stepResults.push(`${step.taskId}: ${step.type} - ${step.result || step.error}`);
+                    }
+
+                    const summary = stepResults.length > 0
+                        ? `DAG execution completed:\n${stepResults.join('\n')}`
+                        : 'No tasks to execute.';
+                    messages.push({ role: 'tool', content: summary, toolCallId: toolCall.id });
+                    continue;
+                }
+
+                // 2.3 处理常规技能调用
                 // const [skillName, actionName] = toolName.split('.'); // Registry now handles routing
 
                 yield {
@@ -310,7 +441,7 @@ export class Agent {
                         userId: context.userId,
                         memory: context.memory,
                         logger: this.logger,
-                        config: {},
+                        config: this.skillConfig,
                     };
 
                     // 执行技能，带超时保护 (默认 60 秒)

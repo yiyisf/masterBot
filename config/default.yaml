@@ -39,6 +39,17 @@ skills:
     - ./skills/built-in
     - ./skills/installed
     - ./skills/local
+  shell:
+    sandbox:
+      enabled: true
+      mode: blocklist
+
+auth:
+  enabled: false
+  mode: api-key
+  apiKeys:
+    - ${API_KEY:changeme}
+  jwtSecret: ${JWT_SECRET:changeme}
 
 queue:
   redis:

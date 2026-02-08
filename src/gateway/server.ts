@@ -11,6 +11,7 @@ import { Agent } from '../core/agent.js';
 import { SessionMemoryManager } from '../memory/short-term.js';
 import { historyRepository } from '../core/repository.js';
 import { McpSkillSource } from '../skills/mcp-source.js';
+import { createAuthHook } from './auth.js';
 
 /**
  * Gateway 服务器
@@ -51,6 +52,10 @@ export class GatewayServer {
             credentials: true,
         });
         await this.app.register(websocket);
+
+        if (this.config.auth?.enabled) {
+            this.app.addHook('onRequest', createAuthHook(this.config.auth, this.logger));
+        }
     }
 
     private async setupStatic(): Promise<void> {

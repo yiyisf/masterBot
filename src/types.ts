@@ -168,11 +168,12 @@ export interface AgentTask {
 }
 
 export interface ExecutionStep {
-    type: 'thought' | 'plan' | 'action' | 'observation' | 'answer' | 'content';
+    type: 'thought' | 'plan' | 'action' | 'observation' | 'answer' | 'content' | 'task_created' | 'task_completed' | 'task_failed';
     content: string;
     toolName?: string;
     toolInput?: Record<string, unknown>;
     toolOutput?: unknown;
+    taskId?: string;
     timestamp: Date;
 }
 
@@ -236,6 +237,20 @@ export interface Config {
     skills: {
         autoLoad: boolean;
         directories: string[];
+        shell?: {
+            sandbox?: {
+                enabled: boolean;
+                mode: 'blocklist' | 'allowlist';
+                blocklist?: string[];
+                allowlist?: string[];
+            };
+        };
+    };
+    auth?: {
+        enabled: boolean;
+        mode: 'api-key' | 'jwt';
+        apiKeys?: string[];
+        jwtSecret?: string;
     };
     queue?: {
         redis: {

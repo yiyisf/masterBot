@@ -1,8 +1,15 @@
 import { exec, spawn } from 'child_process';
 import { promisify } from 'util';
 import type { SkillContext } from '../../../src/types.js';
+import { CommandSandbox, type SandboxConfig } from '../../../src/skills/sandbox.js';
 
 const execAsync = promisify(exec);
+
+function getSandbox(ctx: SkillContext): CommandSandbox | null {
+    const sandboxConfig = (ctx.config as any)?.sandbox as SandboxConfig | undefined;
+    if (!sandboxConfig) return null;
+    return new CommandSandbox(sandboxConfig, ctx.logger);
+}
 
 /**
  * 执行 Shell 命令
@@ -12,6 +19,15 @@ export async function execute(
     params: { command: string; cwd?: string; timeout?: number }
 ): Promise<{ stdout: string; stderr: string; exitCode: number }> {
     const { command, cwd, timeout = 30000 } = params;
+
+    // Sandbox check
+    const sandbox = getSandbox(ctx);
+    if (sandbox) {
+        const check = sandbox.validate(command);
+        if (!check.allowed) {
+            return { stdout: '', stderr: `Command blocked: ${check.reason}`, exitCode: 126 };
+        }
+    }
 
     ctx.logger.info(`Executing command: ${command}`);
 
@@ -38,8 +54,17 @@ export async function execute(
 export async function execute_background(
     ctx: SkillContext,
     params: { command: string; cwd?: string }
-): Promise<{ pid: number }> {
+): Promise<{ pid: number } | { stdout: string; stderr: string; exitCode: number }> {
     const { command, cwd } = params;
+
+    // Sandbox check
+    const sandbox = getSandbox(ctx);
+    if (sandbox) {
+        const check = sandbox.validate(command);
+        if (!check.allowed) {
+            return { stdout: '', stderr: `Command blocked: ${check.reason}`, exitCode: 126 };
+        }
+    }
 
     ctx.logger.info(`Spawning background command: ${command}`);
 

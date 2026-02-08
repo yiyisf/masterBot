@@ -78,6 +78,11 @@ export class MyRuntimeAdapter implements ChatModelAdapter {
                     yield {
                         metadata: { custom: { steps: [...currentSteps] } },
                     };
+                } else if (chunk.type === "task_created" || chunk.type === "task_completed" || chunk.type === "task_failed") {
+                    currentSteps.push({ task: { type: chunk.type, taskId: chunk.taskId, content: chunk.content } });
+                    yield {
+                        metadata: { custom: { steps: [...currentSteps] } },
+                    };
                 } else if (chunk.type === "answer") {
                     currentContent = chunk.content;
                     yield {

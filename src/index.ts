@@ -80,6 +80,9 @@ async function main() {
         maxIterations: config.agent?.maxIterations ?? 10,
         maxContextTokens: config.agent?.maxContextTokens,
         longTermMemory,
+        skillConfig: {
+            sandbox: config.skills.shell?.sandbox,
+        },
     });
 
     // Load MCP server configs and register sources

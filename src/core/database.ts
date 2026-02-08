@@ -51,6 +51,19 @@ export function initDatabase(): DatabaseSync {
             created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
             FOREIGN KEY (message_id) REFERENCES messages(id) ON DELETE CASCADE
         );
+
+        CREATE TABLE IF NOT EXISTS tasks (
+            id TEXT PRIMARY KEY,
+            session_id TEXT NOT NULL,
+            description TEXT NOT NULL,
+            status TEXT NOT NULL DEFAULT 'pending',
+            dependencies TEXT DEFAULT '[]',
+            result TEXT,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE
+        );
+        CREATE INDEX IF NOT EXISTS idx_tasks_session ON tasks(session_id);
     `);
 
     // Auto-migration for existing databases
