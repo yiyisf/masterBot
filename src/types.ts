@@ -216,9 +216,14 @@ export interface Config {
         default: string;
         providers: Record<string, LLMConfig>;
     };
+    agent: {
+        maxIterations: number;
+        maxContextTokens: number;
+    };
     memory: {
         shortTerm: {
             maxMessages: number;
+            maxSessions: number;
             ttlSeconds: number;
         };
         longTerm: {
@@ -232,7 +237,7 @@ export interface Config {
         autoLoad: boolean;
         directories: string[];
     };
-    queue: {
+    queue?: {
         redis: {
             url: string;
         };

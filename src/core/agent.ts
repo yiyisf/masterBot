@@ -10,6 +10,7 @@ import type {
     Attachment
 } from '../types.js';
 import { SkillRegistry } from '../skills/registry.js';
+import { ContextManager } from './context-manager.js';
 
 const SYSTEM_PROMPT = `你是 CMaster Bot，一个强大的企业级 AI 助手。
 
@@ -57,17 +58,23 @@ export class Agent {
     private skillRegistry: SkillRegistry;
     private logger: Logger;
     private maxIterations: number;
+    private contextManager: ContextManager;
 
     constructor(options: {
         llm: LLMAdapter | (() => LLMAdapter);
         skillRegistry: SkillRegistry;
         logger: Logger;
         maxIterations?: number;
+        maxContextTokens?: number;
     }) {
         this.llmGetter = typeof options.llm === 'function' ? options.llm : () => options.llm as LLMAdapter;
         this.skillRegistry = options.skillRegistry;
         this.logger = options.logger;
         this.maxIterations = options.maxIterations ?? 10;
+        this.contextManager = new ContextManager({
+            maxTokens: options.maxContextTokens,
+            logger: options.logger,
+        });
     }
 
     /**
@@ -91,15 +98,20 @@ export class Agent {
             attachments?: Attachment[];
         }
     ): AsyncGenerator<ExecutionStep> {
-        const messages: Message[] = [
-            { role: 'system', content: SYSTEM_PROMPT },
-            ...(context.history || []),
-            {
-                role: 'user',
-                content: input,
-                attachments: context.attachments
-            },
-        ];
+        const systemMessage: Message = { role: 'system', content: SYSTEM_PROMPT };
+        const currentInput: Message[] = [{
+            role: 'user',
+            content: input,
+            attachments: context.attachments
+        }];
+
+        // Apply context window management to prevent exceeding LLM context limit
+        const messages = await this.contextManager.trimMessages(
+            systemMessage,
+            context.history || [],
+            currentInput,
+            this.llm
+        );
 
         // 合并内置工具和外部技能工具
         const externalTools = await this.skillRegistry.getToolDefinitions();
@@ -198,11 +210,11 @@ export class Agent {
                         config: {},
                     };
 
-                    // 执行技能 (Registry 负责路由到正确的 source)
-                    const result = await this.skillRegistry.executeAction(
-                        toolName,
-                        params,
-                        skillContext
+                    // 执行技能，带超时保护 (默认 60 秒)
+                    const result = await this.executeWithTimeout(
+                        () => this.skillRegistry.executeAction(toolName, params, skillContext),
+                        60000,
+                        toolName
                     );
 
                     const resultStr = typeof result === 'string'
@@ -294,6 +306,26 @@ export class Agent {
      */
     public getLLMAdapter(): LLMAdapter {
         return this.llm;
+    }
+
+    /**
+     * 带超时保护的工具执行
+     */
+    private async executeWithTimeout<T>(
+        fn: () => Promise<T>,
+        timeoutMs: number,
+        toolName: string
+    ): Promise<T> {
+        return new Promise<T>((resolve, reject) => {
+            const timer = setTimeout(() => {
+                reject(new Error(`Tool "${toolName}" timed out after ${timeoutMs}ms`));
+            }, timeoutMs);
+
+            fn().then(
+                (result) => { clearTimeout(timer); resolve(result); },
+                (error) => { clearTimeout(timer); reject(error); }
+            );
+        });
     }
 
     /**

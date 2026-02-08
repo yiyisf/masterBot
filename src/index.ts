@@ -44,6 +44,7 @@ async function main() {
     // Initialize memory
     const sessionManager = new SessionMemoryManager({
         maxMessages: config.memory.shortTerm.maxMessages,
+        maxSessions: config.memory.shortTerm.maxSessions ?? 100,
         logger,
     });
 
@@ -56,7 +57,8 @@ async function main() {
         },
         skillRegistry,
         logger,
-        maxIterations: 10,
+        maxIterations: config.agent?.maxIterations ?? 10,
+        maxContextTokens: config.agent?.maxContextTokens,
     });
 
     // Start gateway server
@@ -73,6 +75,7 @@ async function main() {
     const shutdown = async () => {
         logger.info('Shutting down...');
         await server.stop();
+        sessionManager.destroy();
         await skillRegistry.unregisterAll();
         process.exit(0);
     };

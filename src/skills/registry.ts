@@ -3,7 +3,7 @@ import { existsSync } from 'fs';
 import { join, dirname, basename } from 'path';
 import { glob } from 'glob';
 import matter from 'gray-matter';
-import type { Skill, SkillMetadata, SkillAction, SkillContext, Logger } from '../types.js';
+import type { Skill, SkillMetadata, SkillAction, SkillContext, SkillSource, ToolDefinition, Logger } from '../types.js';
 
 /**
  * SKILL.md 解析器
