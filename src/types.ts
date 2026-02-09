@@ -168,12 +168,14 @@ export interface AgentTask {
 }
 
 export interface ExecutionStep {
-    type: 'thought' | 'plan' | 'action' | 'observation' | 'answer' | 'content' | 'task_created' | 'task_completed' | 'task_failed';
+    type: 'thought' | 'plan' | 'action' | 'observation' | 'answer' | 'content' | 'task_created' | 'task_completed' | 'task_failed' | 'meta' | 'suggestions';
     content: string;
     toolName?: string;
     toolInput?: Record<string, unknown>;
     toolOutput?: unknown;
     taskId?: string;
+    assistantMessageId?: string;
+    items?: string[];
     timestamp: Date;
 }
 

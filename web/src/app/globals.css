@@ -137,3 +137,9 @@
 .aui-message--content {
   max-width: none !important;
 }
+
+/* Code block: always use dark background for readability */
+.aui-md-pre {
+  background-color: #282c34 !important;
+  color: #abb2bf !important;
+}

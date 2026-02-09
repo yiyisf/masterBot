@@ -3,7 +3,7 @@ import { streamApi } from "./api";
 import { nanoid } from "nanoid";
 
 /**
- * 自定义 Runtime 适配器，连接后端 SSE 服务
+ * Custom Runtime adapter connecting to backend SSE service
  */
 export class MyRuntimeAdapter implements ChatModelAdapter {
     private sessionId: string;
@@ -29,6 +29,11 @@ export class MyRuntimeAdapter implements ChatModelAdapter {
 
         let currentContent = "";
         const currentSteps: any[] = [];
+        const currentToolCalls: any[] = [];
+        const currentToolResults: any[] = [];
+        let pendingToolCallId: string | null = null;
+        let assistantMessageId: string | null = null;
+        let suggestions: string[] | null = null;
 
         try {
             const requestBody = {
@@ -47,16 +52,25 @@ export class MyRuntimeAdapter implements ChatModelAdapter {
                 if (chunk.type === "content") {
                     currentContent += chunk.content;
                     yield {
-                        content: [{ type: "text", text: currentContent }],
+                        content: [
+                            { type: "text" as const, text: currentContent },
+                            ...currentToolCalls,
+                            ...currentToolResults,
+                        ],
+                        metadata: { custom: { steps: [...currentSteps], assistantMessageId, suggestions } },
                     };
                 } else if (chunk.type === "thought") {
                     currentSteps.push({ thought: chunk.content });
                     yield {
-                        metadata: { custom: { steps: [...currentSteps] } },
+                        content: [
+                            ...(currentContent ? [{ type: "text" as const, text: currentContent }] : []),
+                            ...currentToolCalls,
+                            ...currentToolResults,
+                        ],
+                        metadata: { custom: { steps: [...currentSteps], assistantMessageId, suggestions } },
                     };
                 } else if (chunk.type === "plan") {
                     try {
-                        // content is JSON string of steps array
                         const planSteps = typeof chunk.content === 'string' ? JSON.parse(chunk.content) : chunk.content;
                         currentSteps.push({ plan: planSteps });
                     } catch (e) {
@@ -64,30 +78,101 @@ export class MyRuntimeAdapter implements ChatModelAdapter {
                         currentSteps.push({ plan: ["Detail hidden"] });
                     }
                     yield {
-                        metadata: { custom: { steps: [...currentSteps] } },
+                        content: [
+                            ...(currentContent ? [{ type: "text" as const, text: currentContent }] : []),
+                            ...currentToolCalls,
+                            ...currentToolResults,
+                        ],
+                        metadata: { custom: { steps: [...currentSteps], assistantMessageId, suggestions } },
                     };
                 } else if (chunk.type === "action") {
                     currentSteps.push({ action: JSON.stringify(chunk.tool) });
+
+                    // Generate a tool-call content part for Tool UI rendering
+                    const toolCallId = (chunk.toolName || "tool") + "-" + nanoid(8);
+                    pendingToolCallId = toolCallId;
+
+                    currentToolCalls.push({
+                        type: "tool-call" as const,
+                        toolCallId,
+                        toolName: chunk.toolName || "unknown",
+                        args: chunk.toolInput || {},
+                    });
+
                     yield {
-                        metadata: { custom: { steps: [...currentSteps] } },
+                        content: [
+                            ...(currentContent ? [{ type: "text" as const, text: currentContent }] : []),
+                            ...currentToolCalls,
+                            ...currentToolResults,
+                        ],
+                        metadata: { custom: { steps: [...currentSteps], assistantMessageId, suggestions } },
                     };
                 } else if (chunk.type === "observation") {
                     if (currentSteps.length > 0) {
                         currentSteps[currentSteps.length - 1].observation = chunk.result;
                     }
+
+                    // Associate observation with pending tool-call as a tool-result
+                    if (pendingToolCallId) {
+                        currentToolResults.push({
+                            type: "tool-result" as const,
+                            toolCallId: pendingToolCallId,
+                            toolName: chunk.toolName || "unknown",
+                            result: chunk.result ?? chunk.toolOutput ?? chunk.content ?? "",
+                        });
+                        pendingToolCallId = null;
+                    }
+
                     yield {
-                        metadata: { custom: { steps: [...currentSteps] } },
+                        content: [
+                            ...(currentContent ? [{ type: "text" as const, text: currentContent }] : []),
+                            ...currentToolCalls,
+                            ...currentToolResults,
+                        ],
+                        metadata: { custom: { steps: [...currentSteps], assistantMessageId, suggestions } },
                     };
                 } else if (chunk.type === "task_created" || chunk.type === "task_completed" || chunk.type === "task_failed") {
                     currentSteps.push({ task: { type: chunk.type, taskId: chunk.taskId, content: chunk.content } });
                     yield {
-                        metadata: { custom: { steps: [...currentSteps] } },
+                        content: [
+                            ...(currentContent ? [{ type: "text" as const, text: currentContent }] : []),
+                            ...currentToolCalls,
+                            ...currentToolResults,
+                        ],
+                        metadata: { custom: { steps: [...currentSteps], assistantMessageId, suggestions } },
+                    };
+                } else if (chunk.type === "meta") {
+                    // Capture assistant message ID for feedback
+                    if (chunk.assistantMessageId) {
+                        assistantMessageId = chunk.assistantMessageId;
+                    }
+                    yield {
+                        content: [
+                            ...(currentContent ? [{ type: "text" as const, text: currentContent }] : []),
+                            ...currentToolCalls,
+                            ...currentToolResults,
+                        ],
+                        metadata: { custom: { steps: [...currentSteps], assistantMessageId, suggestions } },
+                    };
+                } else if (chunk.type === "suggestions") {
+                    suggestions = chunk.items || [];
+                    yield {
+                        content: [
+                            ...(currentContent ? [{ type: "text" as const, text: currentContent }] : []),
+                            ...currentToolCalls,
+                            ...currentToolResults,
+                        ],
+                        metadata: { custom: { steps: [...currentSteps], assistantMessageId, suggestions } },
                     };
                 } else if (chunk.type === "answer") {
                     currentContent = chunk.content;
                     yield {
-                        content: [{ type: "text", text: currentContent }],
-                        metadata: { custom: { steps: [...currentSteps] } },
+                        content: [
+                            { type: "text" as const, text: currentContent },
+                            ...currentToolCalls,
+                            ...currentToolResults,
+                        ],
+                        metadata: { custom: { steps: [...currentSteps], assistantMessageId, suggestions } },
                     };
                 }
             }

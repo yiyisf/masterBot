@@ -182,6 +182,28 @@ export class HistoryRepository {
     updateSessionTitle(sessionId: string, title: string): void {
         db.prepare('UPDATE sessions SET title = ? WHERE id = ?').run(title, sessionId);
     }
+
+    /**
+     * 保存消息反馈（点赞/点踩）
+     */
+    saveFeedback(messageId: string, sessionId: string, rating: 'positive' | 'negative'): string {
+        const id = nanoid();
+        // Upsert: remove existing feedback for this message then insert
+        db.prepare('DELETE FROM feedback WHERE message_id = ?').run(messageId);
+        db.prepare(`
+            INSERT INTO feedback (id, message_id, session_id, rating)
+            VALUES (?, ?, ?, ?)
+        `).run(id, messageId, sessionId, rating);
+        return id;
+    }
+
+    /**
+     * 获取消息的反馈
+     */
+    getFeedback(messageId: string): { rating: string } | null {
+        const row = db.prepare('SELECT rating FROM feedback WHERE message_id = ?').get(messageId) as any;
+        return row ? { rating: row.rating } : null;
+    }
 }
 
 export const historyRepository = new HistoryRepository();

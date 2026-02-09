@@ -190,10 +190,15 @@ export class GatewayServer {
                         content: message,
                         attachments: attachments
                     });
-                    historyRepository.saveMessage(sessionId, {
+                    const assistantMsgId = historyRepository.saveMessage(sessionId, {
                         role: 'assistant',
                         content: assistantAnswer
                     });
+
+                    // Send meta chunk with assistant message ID for feedback correlation
+                    if (reply.raw.writable && assistantMsgId !== 'duplicate') {
+                        reply.raw.write(`data: ${JSON.stringify({ type: 'meta', assistantMessageId: assistantMsgId })}\n\n`);
+                    }
 
                     // Auto-generate title for new sessions (async)
                     if ((history?.length || 0) <= 2) {
@@ -385,6 +390,20 @@ export class GatewayServer {
             }
         });
 
+        // Update session title
+        this.app.patch<{ Params: { id: string }, Body: { title: string } }>('/api/sessions/:id/title', async (request, reply) => {
+            const { id } = request.params;
+            const { title } = request.body;
+            try {
+                historyRepository.updateSessionTitle(id, title);
+                return { success: true };
+            } catch (error: any) {
+                this.logger.error(`Update title error: ${error.message}`);
+                reply.status(500);
+                return { error: error.message };
+            }
+        });
+
         // Toggle pin session
         this.app.patch<{ Params: { id: string }, Body: { isPinned: boolean } }>('/api/sessions/:id/pin', async (request, reply) => {
             const { id } = request.params;
@@ -394,6 +413,23 @@ export class GatewayServer {
                 return { success: true };
             } catch (error: any) {
                 this.logger.error(`Toggle pin error: ${error.message}`);
+                reply.status(500);
+                return { error: error.message };
+            }
+        });
+
+        // Feedback API
+        this.app.post<{ Body: { messageId: string; sessionId: string; rating: 'positive' | 'negative' } }>('/api/feedback', async (request, reply) => {
+            const { messageId, sessionId, rating } = request.body;
+            if (!messageId || !sessionId || !rating) {
+                reply.status(400);
+                return { error: 'Missing required fields: messageId, sessionId, rating' };
+            }
+            try {
+                const id = historyRepository.saveFeedback(messageId, sessionId, rating);
+                return { success: true, id };
+            } catch (error: any) {
+                this.logger.error(`Feedback error: ${error.message}`);
                 reply.status(500);
                 return { error: error.message };
             }

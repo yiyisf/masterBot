@@ -20,8 +20,10 @@ import { Copy, Check, RefreshCw, ThumbsUp, ThumbsDown } from "lucide-react";
 import { Mermaid } from "@/components/mermaid";
 import { Skeleton } from "@/components/ui/skeleton";
 import remarkGfm from "remark-gfm";
+// eslint-disable-next-line @typescript-eslint/no-require-imports
+const atomOneDark = require("react-syntax-highlighter/dist/esm/styles/hljs/atom-one-dark").default;
 
-const SyntaxHighlighter = makeLightAsyncSyntaxHighlighter({});
+const SyntaxHighlighter = makeLightAsyncSyntaxHighlighter({ style: atomOneDark });
 
 /**
  * Mermaid wrapper adapted to SyntaxHighlighterProps interface

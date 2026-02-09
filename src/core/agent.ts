@@ -277,11 +277,28 @@ export class Agent {
 
             // 如果没有工具调用，返回最终答案
             if (!response.toolCalls || response.toolCalls.length === 0) {
+                const answerContent = typeof response.content === 'string' ? response.content : JSON.stringify(response.content);
                 yield {
                     type: 'answer',
-                    content: typeof response.content === 'string' ? response.content : JSON.stringify(response.content),
+                    content: answerContent,
                     timestamp: new Date(),
                 };
+
+                // Generate follow-up suggestions asynchronously
+                try {
+                    const suggestions = await this.generateSuggestions(input, answerContent);
+                    if (suggestions.length > 0) {
+                        yield {
+                            type: 'suggestions',
+                            content: '',
+                            items: suggestions,
+                            timestamp: new Date(),
+                        };
+                    }
+                } catch (err) {
+                    this.logger.debug(`Suggestion generation skipped: ${(err as Error).message}`);
+                }
+
                 break;
             }
 
@@ -560,6 +577,33 @@ export class Agent {
                 (error) => { clearTimeout(timer); reject(error); }
             );
         });
+    }
+
+    /**
+     * 生成后续建议问题
+     */
+    private async generateSuggestions(userMessage: string, answer: string): Promise<string[]> {
+        const prompt = `基于以下对话，生成2-3个用户可能想继续问的简短后续问题。每个问题一行，不要加序号和标点。
+
+用户: ${userMessage.slice(0, 200)}
+助手: ${answer.slice(0, 300)}
+
+后续问题:`;
+
+        const response = await this.llm.chat([
+            { role: 'user', content: prompt }
+        ]);
+
+        let text = typeof response.content === 'string' ? response.content : '';
+        if (!text && Array.isArray(response.content)) {
+            text = response.content.map(p => p.type === 'text' ? p.text : '').join('');
+        }
+
+        return text
+            .split('\n')
+            .map(line => line.trim().replace(/^\d+[\.\)、]\s*/, ''))
+            .filter(line => line.length > 0 && line.length < 50)
+            .slice(0, 3);
     }
 
     /**
