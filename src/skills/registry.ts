@@ -65,7 +65,7 @@ function parseActionsFromMarkdown(content: string): ParsedSkillMd['actions'] {
 
         // 解析参数
         const parameters: ParsedSkillMd['actions'][0]['parameters'] = {};
-        const paramRegex = /[-*]\s+\*\*(?:参数|参数名)?[:：]?\s*\*\*\s*`(\w+)`\s*\((\w+)\)\s*[-–]?\s*(.*)/g;
+        const paramRegex = /[-*]\s+\*\*(?:参数|参数名)?[:：]?\s*\*\*[:：]?\s*`(\w+)`\s*\((\w+)\)\s*[-–]?\s*(.*)/g;
         const altParamRegex = /[-*]\s+`(\w+)`\s*\((\w+)\)\s*[-–]?\s*(.*)/g;
 
         let paramMatch;
