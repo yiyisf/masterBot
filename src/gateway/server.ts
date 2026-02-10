@@ -11,6 +11,7 @@ import { Agent } from '../core/agent.js';
 import { SessionMemoryManager } from '../memory/short-term.js';
 import { historyRepository } from '../core/repository.js';
 import { McpSkillSource } from '../skills/mcp-source.js';
+import { McpRegistryClient } from '../skills/mcp-registry.js';
 import { createAuthHook } from './auth.js';
 
 /**
@@ -352,6 +353,58 @@ export class GatewayServer {
             const newConfigs = configs.filter(c => c.id !== request.params.id);
             await writeMcpConfig(newConfigs);
             return { success: true };
+        });
+
+        // --- MCP Registry API ---
+        const mcpRegistry = new McpRegistryClient(this.logger);
+
+        this.app.get<{ Querystring: { cursor?: string; count?: string } }>('/api/mcp/registry', async (request) => {
+            const { cursor, count } = request.query;
+            return mcpRegistry.listServers(cursor, count ? parseInt(count) : undefined);
+        });
+
+        this.app.get<{ Querystring: { q: string } }>('/api/mcp/registry/search', async (request) => {
+            const { q } = request.query;
+            if (!q) return { servers: [] };
+            const servers = await mcpRegistry.searchServers(q);
+            return { servers };
+        });
+
+        this.app.get<{ Params: { name: string } }>('/api/mcp/registry/:name', async (request) => {
+            return mcpRegistry.getServer(request.params.name);
+        });
+
+        this.app.post<{ Body: { name: string; env?: Record<string, string> } }>('/api/mcp/registry/install', async (request, reply) => {
+            const { name, env } = request.body;
+            if (!name) {
+                reply.status(400);
+                return { error: 'Missing server name' };
+            }
+
+            try {
+                const entry = await mcpRegistry.getServer(name);
+                const newConfig = mcpRegistry.toMcpConfig(entry, env);
+
+                // Persist to mcp-servers.json
+                const configs = await readMcpConfig();
+                configs.push(newConfig);
+                await writeMcpConfig(configs);
+
+                // Register live
+                if (newConfig.enabled) {
+                    try {
+                        const source = new McpSkillSource(newConfig, this.logger);
+                        await registry.registerSource(source);
+                    } catch (err) {
+                        this.logger.warn(`MCP server "${newConfig.name}" installed but connection failed: ${(err as Error).message}`);
+                    }
+                }
+
+                return { success: true, config: newConfig };
+            } catch (err) {
+                reply.status(500);
+                return { error: (err as Error).message };
+            }
         });
 
         // Get all sessions

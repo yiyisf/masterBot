@@ -30,7 +30,8 @@ describe('ContextManager', () => {
             ];
             const tokens = cm.estimateTokens(messages);
             expect(tokens).toBeGreaterThan(0);
-            expect(tokens).toBe(Math.ceil('Hello world'.length / 3));
+            // CJK-aware tokenizer counts "Hello" and "world" as 2 tokens
+            expect(tokens).toBe(2);
         });
 
         it('should include toolCalls in token estimate', () => {

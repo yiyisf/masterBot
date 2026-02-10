@@ -74,6 +74,7 @@ export interface LLMConfig {
     apiKey: string;
     model: string;
     maxTokens?: number;
+    embeddingModel?: string;
 }
 
 // ============ Skill Types ============
@@ -268,9 +269,10 @@ export interface Config {
 export interface McpServerConfig {
     id: string;
     name: string;
-    type: 'stdio' | 'sse';
+    type: 'stdio' | 'sse' | 'streamable-http';
     command?: string;
     args?: string[];
     url?: string;
+    env?: Record<string, string>;
     enabled: boolean;
 }

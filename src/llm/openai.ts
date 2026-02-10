@@ -106,7 +106,7 @@ export class OpenAIAdapter implements LLMAdapter {
 
     async embeddings(texts: string[]): Promise<number[][]> {
         const response = await this.client.embeddings.create({
-            model: 'text-embedding-ada-002',
+            model: this.config.embeddingModel || 'text-embedding-3-small',
             input: texts,
         });
 

@@ -1,4 +1,5 @@
 import type { Message, LLMAdapter, Logger } from '../types.js';
+import { countTokens } from './tokenizer.js';
 
 /**
  * 上下文窗口管理器
@@ -26,7 +27,7 @@ export class ContextManager {
 
     /**
      * 估算消息的 token 数
-     * 简单实现：按字符数 / 3 估算（英文约 4 字符/token，中文约 1.5 字符/token）
+     * 使用 CJK-aware tokenizer 提供更准确的估算
      */
     estimateTokens(messages: Message[]): number {
         let total = 0;
@@ -34,11 +35,10 @@ export class ContextManager {
             const content = typeof msg.content === 'string'
                 ? msg.content
                 : JSON.stringify(msg.content);
-            // Rough estimate: mix of CJK and ASCII
-            total += Math.ceil(content.length / 3);
+            total += countTokens(content);
 
             if (msg.toolCalls) {
-                total += Math.ceil(JSON.stringify(msg.toolCalls).length / 3);
+                total += countTokens(JSON.stringify(msg.toolCalls));
             }
         }
         return total;

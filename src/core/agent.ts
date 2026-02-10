@@ -302,206 +302,135 @@ export class Agent {
                 break;
             }
 
-            // 处理工具调用
-            for (const toolCall of response.toolCalls) {
+            // 处理工具调用 — 分离内置工具（顺序执行）和外部技能（并行执行）
+            const builtinCalls: typeof response.toolCalls = [];
+            const externalCalls: typeof response.toolCalls = [];
+            const BUILTIN_NAMES = new Set(['plan_task', 'memory_remember', 'memory_recall', 'dag_create_task', 'dag_get_status', 'dag_execute']);
+
+            for (const tc of response.toolCalls) {
+                if (BUILTIN_NAMES.has(tc.function.name)) {
+                    builtinCalls.push(tc);
+                } else {
+                    externalCalls.push(tc);
+                }
+            }
+
+            // Handle built-in tools sequentially (they have side effects/ordering requirements)
+            for (const toolCall of builtinCalls) {
                 const params = JSON.parse(toolCall.function.arguments);
                 const toolName = toolCall.function.name;
 
-                // 2.1 处理内置规划工具
                 if (toolName === 'plan_task') {
                     const { thought, steps } = params;
-
-                    yield {
-                        type: 'thought',
-                        content: thought,
-                        timestamp: new Date()
-                    };
-
-                    yield {
-                        type: 'plan',
-                        content: JSON.stringify(steps),
-                        toolName: 'plan_task',
-                        toolOutput: steps,
-                        timestamp: new Date()
-                    };
-
-                    messages.push({
-                        role: 'tool',
-                        content: `Plan created: ${JSON.stringify(steps)}. Now precede to execute step 1.`,
-                        toolCallId: toolCall.id
-                    });
-
-                    continue; // Skip normal skill execution
-                }
-
-                // 2.1b 处理内置记忆工具
-                if (toolName === 'memory_remember' && this.longTermMemory) {
+                    yield { type: 'thought', content: thought, timestamp: new Date() };
+                    yield { type: 'plan', content: JSON.stringify(steps), toolName: 'plan_task', toolOutput: steps, timestamp: new Date() };
+                    messages.push({ role: 'tool', content: `Plan created: ${JSON.stringify(steps)}. Now precede to execute step 1.`, toolCallId: toolCall.id });
+                } else if (toolName === 'memory_remember' && this.longTermMemory) {
                     const { content: memContent, tags } = params;
                     const metadata = tags ? { tags: tags.split(',').map((t: string) => t.trim()) } : {};
                     const memId = await this.longTermMemory.remember(memContent, metadata, context.sessionId);
-
                     const result = `Memory saved (id: ${memId})`;
-                    yield {
-                        type: 'observation',
-                        content: result,
-                        toolName,
-                        toolOutput: { id: memId },
-                        timestamp: new Date(),
-                    };
+                    yield { type: 'observation', content: result, toolName, toolOutput: { id: memId }, timestamp: new Date() };
                     messages.push({ role: 'tool', content: result, toolCallId: toolCall.id });
-                    continue;
-                }
-
-                if (toolName === 'memory_recall' && this.longTermMemory) {
+                } else if (toolName === 'memory_recall' && this.longTermMemory) {
                     const { query, limit: recallLimit } = params;
                     const memories = await this.longTermMemory.search(query, recallLimit ?? 5);
-                    const resultStr = memories.length > 0
-                        ? memories.map(m => `- ${m.content}`).join('\n')
-                        : 'No relevant memories found.';
-
-                    yield {
-                        type: 'observation',
-                        content: resultStr,
-                        toolName,
-                        toolOutput: memories,
-                        timestamp: new Date(),
-                    };
+                    const resultStr = memories.length > 0 ? memories.map(m => `- ${m.content}`).join('\n') : 'No relevant memories found.';
+                    yield { type: 'observation', content: resultStr, toolName, toolOutput: memories, timestamp: new Date() };
                     messages.push({ role: 'tool', content: resultStr, toolCallId: toolCall.id });
-                    continue;
-                }
-
-                // 2.2 处理 DAG 工具
-                if (toolName === 'dag_create_task') {
+                } else if (toolName === 'dag_create_task') {
                     const { description: taskDesc, dependencies: deps } = params;
                     const taskId = taskRepository.createTask(context.sessionId, taskDesc, deps);
-
-                    yield {
-                        type: 'task_created',
-                        content: `Task created: ${taskDesc}`,
-                        taskId,
-                        toolName,
-                        timestamp: new Date(),
-                    };
-                    messages.push({
-                        role: 'tool',
-                        content: JSON.stringify({ taskId, description: taskDesc }),
-                        toolCallId: toolCall.id,
-                    });
-                    continue;
-                }
-
-                if (toolName === 'dag_get_status') {
+                    yield { type: 'task_created', content: `Task created: ${taskDesc}`, taskId, toolName, timestamp: new Date() };
+                    messages.push({ role: 'tool', content: JSON.stringify({ taskId, description: taskDesc }), toolCallId: toolCall.id });
+                } else if (toolName === 'dag_get_status') {
                     const dag = taskRepository.getDAG(context.sessionId);
                     const resultStr = JSON.stringify(dag, null, 2);
-
-                    yield {
-                        type: 'observation',
-                        content: resultStr,
-                        toolName,
-                        toolOutput: dag,
-                        timestamp: new Date(),
-                    };
+                    yield { type: 'observation', content: resultStr, toolName, toolOutput: dag, timestamp: new Date() };
                     messages.push({ role: 'tool', content: resultStr, toolCallId: toolCall.id });
-                    continue;
-                }
-
-                if (toolName === 'dag_execute') {
+                } else if (toolName === 'dag_execute') {
                     const skillContext: SkillContext = {
-                        sessionId: context.sessionId,
-                        userId: context.userId,
-                        memory: context.memory,
-                        logger: this.logger,
-                        config: this.skillConfig,
+                        sessionId: context.sessionId, userId: context.userId,
+                        memory: context.memory, logger: this.logger, config: this.skillConfig,
                     };
-
-                    const executor = new DAGExecutor(
-                        context.sessionId,
-                        this.skillRegistry,
-                        skillContext,
-                        this.logger,
-                    );
-
+                    const executor = new DAGExecutor(context.sessionId, this.skillRegistry, skillContext, this.logger);
                     const stepResults: string[] = [];
                     for await (const step of executor.execute()) {
-                        yield {
-                            type: step.type,
-                            content: step.result || step.error || '',
-                            taskId: step.taskId,
-                            toolName: 'dag_execute',
-                            timestamp: new Date(),
-                        };
+                        yield { type: step.type, content: step.result || step.error || '', taskId: step.taskId, toolName: 'dag_execute', timestamp: new Date() };
                         stepResults.push(`${step.taskId}: ${step.type} - ${step.result || step.error}`);
                     }
-
-                    const summary = stepResults.length > 0
-                        ? `DAG execution completed:\n${stepResults.join('\n')}`
-                        : 'No tasks to execute.';
+                    const summary = stepResults.length > 0 ? `DAG execution completed:\n${stepResults.join('\n')}` : 'No tasks to execute.';
                     messages.push({ role: 'tool', content: summary, toolCallId: toolCall.id });
-                    continue;
+                }
+            }
+
+            // Handle external skill calls in parallel (Promise.allSettled)
+            if (externalCalls.length > 0) {
+                // Emit all action steps first
+                const parsedCalls = externalCalls.map(tc => ({
+                    toolCall: tc,
+                    params: JSON.parse(tc.function.arguments),
+                    toolName: tc.function.name,
+                }));
+
+                for (const { toolName, params } of parsedCalls) {
+                    yield {
+                        type: 'action',
+                        content: `Calling ${toolName}`,
+                        toolName,
+                        toolInput: params,
+                        timestamp: new Date(),
+                    };
                 }
 
-                // 2.3 处理常规技能调用
-                // const [skillName, actionName] = toolName.split('.'); // Registry now handles routing
-
-                yield {
-                    type: 'action',
-                    content: `Calling ${toolName}`,
-                    toolName: toolName,
-                    toolInput: params,
-                    timestamp: new Date(),
+                const skillContext: SkillContext = {
+                    sessionId: context.sessionId,
+                    userId: context.userId,
+                    memory: context.memory,
+                    logger: this.logger,
+                    config: this.skillConfig,
                 };
 
-                try {
-                    // 创建技能上下文
-                    const skillContext: SkillContext = {
-                        sessionId: context.sessionId,
-                        userId: context.userId,
-                        memory: context.memory,
-                        logger: this.logger,
-                        config: this.skillConfig,
-                    };
+                // Execute all external tool calls in parallel
+                const results = await Promise.allSettled(
+                    parsedCalls.map(({ toolName, params }) =>
+                        this.executeWithTimeout(
+                            () => this.skillRegistry.executeAction(toolName, params, skillContext),
+                            60000,
+                            toolName
+                        )
+                    )
+                );
 
-                    // 执行技能，带超时保护 (默认 60 秒)
-                    const result = await this.executeWithTimeout(
-                        () => this.skillRegistry.executeAction(toolName, params, skillContext),
-                        60000,
-                        toolName
-                    );
+                // Yield observations and push tool messages
+                for (let i = 0; i < results.length; i++) {
+                    const { toolCall, toolName } = parsedCalls[i];
+                    const result = results[i];
 
-                    const resultStr = typeof result === 'string'
-                        ? result
-                        : JSON.stringify(result, null, 2);
+                    if (result.status === 'fulfilled') {
+                        const resultStr = typeof result.value === 'string'
+                            ? result.value
+                            : JSON.stringify(result.value, null, 2);
 
-                    yield {
-                        type: 'observation',
-                        content: resultStr,
-                        toolName: toolName,
-                        toolOutput: result,
-                        timestamp: new Date(),
-                    };
-
-                    // 添加工具结果到消息
-                    messages.push({
-                        role: 'tool',
-                        content: resultStr,
-                        toolCallId: toolCall.id,
-                    });
-                } catch (error: any) {
-                    const errorMsg = `Error: ${error.message}`;
-
-                    yield {
-                        type: 'observation',
-                        content: errorMsg,
-                        toolName: toolName,
-                        toolOutput: { error: error.message },
-                        timestamp: new Date(),
-                    };
-
-                    messages.push({
-                        role: 'tool',
-                        content: errorMsg,
-                        toolCallId: toolCall.id,
-                    });
+                        yield {
+                            type: 'observation',
+                            content: resultStr,
+                            toolName,
+                            toolOutput: result.value,
+                            timestamp: new Date(),
+                        };
+                        messages.push({ role: 'tool', content: resultStr, toolCallId: toolCall.id });
+                    } else {
+                        const errorMsg = `Error: ${result.reason?.message || 'Unknown error'}`;
+                        yield {
+                            type: 'observation',
+                            content: errorMsg,
+                            toolName,
+                            toolOutput: { error: result.reason?.message },
+                            timestamp: new Date(),
+                        };
+                        messages.push({ role: 'tool', content: errorMsg, toolCallId: toolCall.id });
+                    }
                 }
             }
         }

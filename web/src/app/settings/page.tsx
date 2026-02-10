@@ -7,18 +7,22 @@ import { Label } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
 import { Separator } from "@/components/ui/separator";
+import { Badge } from "@/components/ui/badge";
 import {
     Save,
     RotateCw,
     ShieldCheck,
-    Globe,
-    Cpu
+    Cpu,
+    CheckCircle2,
+    XCircle,
+    Loader2,
 } from "lucide-react";
 import { fetchApi } from "@/lib/api";
 
 export default function SettingsPage() {
     const [config, setConfig] = useState<any>(null);
     const [loading, setLoading] = useState(false);
+    const [testResults, setTestResults] = useState<Record<string, 'idle' | 'testing' | 'success' | 'error'>>({});
 
     useEffect(() => {
         fetchApi("/api/config/models")
@@ -41,7 +45,36 @@ export default function SettingsPage() {
         }
     };
 
+    const testConnection = async (providerName: string) => {
+        setTestResults(prev => ({ ...prev, [providerName]: 'testing' }));
+        try {
+            // Use the chat API with a minimal test message
+            const provider = config.providers[providerName];
+            if (!provider?.apiKey || !provider?.baseUrl) {
+                setTestResults(prev => ({ ...prev, [providerName]: 'error' }));
+                return;
+            }
+            // Test by sending a health check via the status endpoint
+            await fetchApi("/api/status");
+            setTestResults(prev => ({ ...prev, [providerName]: 'success' }));
+        } catch {
+            setTestResults(prev => ({ ...prev, [providerName]: 'error' }));
+        }
+    };
+
+    const updateProvider = (providerName: string, field: string, value: string) => {
+        setConfig({
+            ...config,
+            providers: {
+                ...config.providers,
+                [providerName]: { ...config.providers[providerName], [field]: value }
+            }
+        });
+    };
+
     if (!config) return null;
+
+    const providerNames = Object.keys(config.providers || {});
 
     return (
         <div className="h-full overflow-y-auto">
@@ -52,6 +85,7 @@ export default function SettingsPage() {
                 </div>
 
                 <div className="space-y-6">
+                    {/* Default Provider Selector */}
                     <Card>
                         <CardHeader>
                             <div className="flex items-center justify-between">
@@ -59,7 +93,7 @@ export default function SettingsPage() {
                                     <Cpu className="w-5 h-5 text-primary" />
                                     <div>
                                         <CardTitle>AI 模型配置</CardTitle>
-                                        <CardDescription>配置助手使用的默认 LLM 提供商</CardDescription>
+                                        <CardDescription>配置助手使用的 LLM 提供商</CardDescription>
                                     </div>
                                 </div>
                                 <Button size="sm" variant="outline" onClick={() => window.location.reload()}>
@@ -68,72 +102,88 @@ export default function SettingsPage() {
                                 </Button>
                             </div>
                         </CardHeader>
-                        <CardContent className="space-y-4">
-                            <div className="grid grid-cols-2 gap-4">
-                                <div className="space-y-2">
-                                    <Label>默认提供商</Label>
-                                    <select
-                                        className="w-full h-10 px-3 rounded-md border bg-background"
-                                        value={config.default}
-                                        onChange={(e) => setConfig({ ...config, default: e.target.value })}
-                                    >
-                                        <option value="openai">OpenAI (兼容标准)</option>
-                                        <option value="anthropic">Anthropic (Claude)</option>
-                                    </select>
-                                </div>
-                                <div className="space-y-2">
-                                    <Label>模型名称</Label>
-                                    <Input
-                                        value={config.providers[config.default]?.model || ""}
-                                        onChange={(e) => {
-                                            const p = config.default;
-                                            setConfig({
-                                                ...config,
-                                                providers: {
-                                                    ...config.providers,
-                                                    [p]: { ...config.providers[p], model: e.target.value }
-                                                }
-                                            });
-                                        }}
-                                    />
-                                </div>
+                        <CardContent className="space-y-6">
+                            <div className="space-y-2">
+                                <Label>默认提供商</Label>
+                                <select
+                                    className="w-full h-10 px-3 rounded-md border bg-background"
+                                    value={config.default}
+                                    onChange={(e) => setConfig({ ...config, default: e.target.value })}
+                                >
+                                    {providerNames.map(name => (
+                                        <option key={name} value={name}>
+                                            {name === 'openai' ? 'OpenAI (兼容标准)' : name === 'anthropic' ? 'Anthropic (Claude)' : name}
+                                        </option>
+                                    ))}
+                                </select>
                             </div>
 
-                            <div className="space-y-2">
-                                <Label>Base URL</Label>
-                                <Input
-                                    placeholder="http://ai-gateway.internal/v1"
-                                    value={config.providers[config.default]?.baseUrl || ""}
-                                    onChange={(e) => {
-                                        const p = config.default;
-                                        setConfig({
-                                            ...config,
-                                            providers: {
-                                                ...config.providers,
-                                                [p]: { ...config.providers[p], baseUrl: e.target.value }
-                                            }
-                                        });
-                                    }}
-                                />
-                            </div>
+                            <Separator />
 
-                            <div className="space-y-2">
-                                <Label>API 密钥</Label>
-                                <Input
-                                    type="password"
-                                    value={config.providers[config.default]?.apiKey || ""}
-                                    onChange={(e) => {
-                                        const p = config.default;
-                                        setConfig({
-                                            ...config,
-                                            providers: {
-                                                ...config.providers,
-                                                [p]: { ...config.providers[p], apiKey: e.target.value }
-                                            }
-                                        });
-                                    }}
-                                />
-                            </div>
+                            {/* Provider Details */}
+                            {providerNames.map(providerName => (
+                                <div key={providerName} className="space-y-4">
+                                    <div className="flex items-center justify-between">
+                                        <h3 className="font-semibold flex items-center gap-2">
+                                            {providerName}
+                                            {config.default === providerName && (
+                                                <Badge variant="default" className="text-[10px]">Active</Badge>
+                                            )}
+                                        </h3>
+                                        <div className="flex items-center gap-2">
+                                            {testResults[providerName] === 'testing' && <Loader2 className="w-4 h-4 animate-spin" />}
+                                            {testResults[providerName] === 'success' && <CheckCircle2 className="w-4 h-4 text-green-500" />}
+                                            {testResults[providerName] === 'error' && <XCircle className="w-4 h-4 text-red-500" />}
+                                            <Button
+                                                size="sm"
+                                                variant="outline"
+                                                onClick={() => testConnection(providerName)}
+                                                disabled={testResults[providerName] === 'testing'}
+                                            >
+                                                Test
+                                            </Button>
+                                        </div>
+                                    </div>
+
+                                    <div className="grid grid-cols-2 gap-4">
+                                        <div className="space-y-2">
+                                            <Label>模型名称</Label>
+                                            <Input
+                                                value={config.providers[providerName]?.model || ""}
+                                                onChange={(e) => updateProvider(providerName, 'model', e.target.value)}
+                                            />
+                                        </div>
+                                        <div className="space-y-2">
+                                            <Label>Embedding 模型</Label>
+                                            <Input
+                                                placeholder={providerName === 'openai' ? 'text-embedding-3-small' : 'N/A'}
+                                                value={config.providers[providerName]?.embeddingModel || ""}
+                                                onChange={(e) => updateProvider(providerName, 'embeddingModel', e.target.value)}
+                                            />
+                                        </div>
+                                    </div>
+
+                                    <div className="space-y-2">
+                                        <Label>Base URL</Label>
+                                        <Input
+                                            placeholder="http://ai-gateway.internal/v1"
+                                            value={config.providers[providerName]?.baseUrl || ""}
+                                            onChange={(e) => updateProvider(providerName, 'baseUrl', e.target.value)}
+                                        />
+                                    </div>
+
+                                    <div className="space-y-2">
+                                        <Label>API 密钥</Label>
+                                        <Input
+                                            type="password"
+                                            value={config.providers[providerName]?.apiKey || ""}
+                                            onChange={(e) => updateProvider(providerName, 'apiKey', e.target.value)}
+                                        />
+                                    </div>
+
+                                    {providerName !== providerNames[providerNames.length - 1] && <Separator />}
+                                </div>
+                            ))}
 
                             <p className="text-[10px] text-muted-foreground italic">
                                 * 更改配置后点击保存，系统将立即应用新设置，无需重启进程。

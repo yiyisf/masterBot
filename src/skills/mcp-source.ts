@@ -1,6 +1,7 @@
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
 import { SSEClientTransport } from '@modelcontextprotocol/sdk/client/sse.js';
+import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import type { SkillSource, SkillContext, ToolDefinition, McpServerConfig, Logger } from '../types.js';
 
 /**
@@ -12,7 +13,7 @@ export class McpSkillSource implements SkillSource {
     readonly type = 'mcp' as const;
 
     private client: Client;
-    private transport?: StdioClientTransport | SSEClientTransport;
+    private transport?: StdioClientTransport | SSEClientTransport | StreamableHTTPClientTransport;
     private config: McpServerConfig;
     private logger: Logger;
     private toolCache: ToolDefinition[] = [];
@@ -91,7 +92,7 @@ export class McpSkillSource implements SkillSource {
         this.logger.info(`MCP source "${this.name}" destroyed`);
     }
 
-    private createTransport(): StdioClientTransport | SSEClientTransport {
+    private createTransport(): StdioClientTransport | SSEClientTransport | StreamableHTTPClientTransport {
         if (this.config.type === 'stdio') {
             if (!this.config.command) {
                 throw new Error(`MCP server "${this.config.name}": stdio transport requires 'command'`);
@@ -99,6 +100,7 @@ export class McpSkillSource implements SkillSource {
             return new StdioClientTransport({
                 command: this.config.command,
                 args: this.config.args ?? [],
+                env: this.config.env ? { ...process.env, ...this.config.env } as Record<string, string> : undefined,
             });
         }
 
@@ -107,6 +109,13 @@ export class McpSkillSource implements SkillSource {
                 throw new Error(`MCP server "${this.config.name}": SSE transport requires 'url'`);
             }
             return new SSEClientTransport(new URL(this.config.url));
+        }
+
+        if (this.config.type === 'streamable-http') {
+            if (!this.config.url) {
+                throw new Error(`MCP server "${this.config.name}": streamable-http transport requires 'url'`);
+            }
+            return new StreamableHTTPClientTransport(new URL(this.config.url));
         }
 
         throw new Error(`MCP server "${this.config.name}": unknown transport type "${this.config.type}"`);
