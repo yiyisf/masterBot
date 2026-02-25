@@ -9,7 +9,8 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
-import { Puzzle, Box, Code, Server, Plus, Trash2, Terminal, Globe, Search, Download, ExternalLink, Loader2 } from "lucide-react";
+import { Textarea } from "@/components/ui/textarea";
+import { Puzzle, Box, Code, Server, Plus, Trash2, Terminal, Globe, Search, Download, ExternalLink, Loader2, Sparkles, Wand2, CheckCircle2, XCircle } from "lucide-react";
 import { fetchApi } from "@/lib/api";
 
 type McpServerConfig = {
@@ -159,6 +160,38 @@ export default function SkillsPage() {
 
     const isInstalled = (name: string) => mcpConfigs.some(c => c.name === name);
 
+    // Auto-Skill Generator state
+    const [genName, setGenName] = useState('');
+    const [genDescription, setGenDescription] = useState('');
+    const [genActionsText, setGenActionsText] = useState('greet: 向用户打招呼\ncalculate: 执行简单的数学计算');
+    const [generating, setGenerating] = useState(false);
+    const [genResult, setGenResult] = useState<{ success: boolean; message: string; dir?: string } | null>(null);
+
+    const handleGenerateSkill = async () => {
+        if (!genName.trim() || !genDescription.trim()) return;
+        setGenerating(true);
+        setGenResult(null);
+        try {
+            const actions = genActionsText
+                .split('\n')
+                .filter(line => line.trim())
+                .map(line => {
+                    const [name, ...descParts] = line.split(':');
+                    return { name: name.trim(), description: descParts.join(':').trim() };
+                });
+            const result: any = await fetchApi('/api/skills/generate', {
+                method: 'POST',
+                body: JSON.stringify({ name: genName.trim(), description: genDescription.trim(), actions }),
+            });
+            setGenResult({ success: true, message: `技能 "${genName}" 已生成并热加载！`, dir: result.dir });
+            loadData();
+        } catch (err: any) {
+            setGenResult({ success: false, message: err.message || '生成失败' });
+        } finally {
+            setGenerating(false);
+        }
+    };
+
     return (
         <div className="h-full overflow-y-auto w-full max-w-5xl mx-auto p-6 space-y-8 pb-10">
             <div>
@@ -167,10 +200,11 @@ export default function SkillsPage() {
             </div>
 
             <Tabs defaultValue="available">
-                <TabsList className="grid w-full grid-cols-3 max-w-[600px]">
+                <TabsList className="grid w-full grid-cols-4 max-w-[700px]">
                     <TabsTrigger value="available">Active Skills</TabsTrigger>
                     <TabsTrigger value="mcp">MCP Servers</TabsTrigger>
                     <TabsTrigger value="registry">MCP Registry</TabsTrigger>
+                    <TabsTrigger value="generate" className="gap-1.5"><Sparkles className="w-3.5 h-3.5" />生成技能</TabsTrigger>
                 </TabsList>
 
                 <TabsContent value="available" className="mt-6">
@@ -443,6 +477,68 @@ export default function SkillsPage() {
                             </DialogFooter>
                         </DialogContent>
                     </Dialog>
+                </TabsContent>
+
+                {/* Auto-Skill Generator Tab */}
+                <TabsContent value="generate" className="mt-6">
+                    <div className="max-w-2xl space-y-6">
+                        <div className="p-4 rounded-xl border border-primary/20 bg-primary/5 flex gap-3">
+                            <Wand2 className="w-5 h-5 text-primary shrink-0 mt-0.5" />
+                            <div className="text-sm text-muted-foreground">
+                                <p className="font-medium text-foreground mb-1">AI 自动技能生成器</p>
+                                描述你需要的技能，AI 将自动编写代码、创建 SKILL.md 并热加载——无需重启服务。
+                            </div>
+                        </div>
+                        <div className="space-y-4">
+                            <div className="grid gap-2">
+                                <Label>技能名称 <span className="text-destructive">*</span></Label>
+                                <Input
+                                    placeholder="e.g. weather-api, hr-system, stock-query"
+                                    value={genName}
+                                    onChange={e => setGenName(e.target.value.toLowerCase().replace(/\s+/g, '-'))}
+                                />
+                                <p className="text-xs text-muted-foreground">只能使用小写字母和连字符</p>
+                            </div>
+                            <div className="grid gap-2">
+                                <Label>技能描述 <span className="text-destructive">*</span></Label>
+                                <Textarea
+                                    placeholder="描述这个技能的用途，例如：查询天气预报 API，支持按城市名称或坐标查询当前天气和未来7天预报。"
+                                    value={genDescription}
+                                    onChange={e => setGenDescription(e.target.value)}
+                                    rows={3}
+                                />
+                            </div>
+                            <div className="grid gap-2">
+                                <Label>动作列表（每行一个，格式：名称: 描述）</Label>
+                                <Textarea
+                                    placeholder={"get_current: 查询当前天气\nget_forecast: 查询未来7天天气预报"}
+                                    value={genActionsText}
+                                    onChange={e => setGenActionsText(e.target.value)}
+                                    rows={5}
+                                    className="font-mono text-sm"
+                                />
+                            </div>
+
+                            {genResult && (
+                                <div className={`flex items-start gap-2 p-3 rounded-lg text-sm ${genResult.success ? 'bg-green-500/10 text-green-600 dark:text-green-400' : 'bg-destructive/10 text-destructive'}`}>
+                                    {genResult.success ? <CheckCircle2 className="w-4 h-4 shrink-0 mt-0.5" /> : <XCircle className="w-4 h-4 shrink-0 mt-0.5" />}
+                                    <div>
+                                        <p>{genResult.message}</p>
+                                        {genResult.dir && <p className="font-mono text-xs mt-1 opacity-70">{genResult.dir}</p>}
+                                    </div>
+                                </div>
+                            )}
+
+                            <Button
+                                onClick={handleGenerateSkill}
+                                disabled={generating || !genName.trim() || !genDescription.trim()}
+                                className="gap-2 w-full"
+                            >
+                                {generating ? <Loader2 className="w-4 h-4 animate-spin" /> : <Sparkles className="w-4 h-4" />}
+                                {generating ? 'AI 正在生成技能代码...' : '生成并安装技能'}
+                            </Button>
+                        </div>
+                    </div>
                 </TabsContent>
             </Tabs>
         </div>

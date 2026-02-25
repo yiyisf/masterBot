@@ -130,7 +130,7 @@ const data: SidebarData = {
       isActive: true,
       items: [
         { title: "仪表盘", url: "/" },
-        { title: "系统日志", url: "#" },
+        { title: "工作流编排", url: "/workflow" },
       ],
     },
     {
@@ -139,7 +139,7 @@ const data: SidebarData = {
       icon: MessageSquare,
       items: [
         { title: "对话界面", url: "/chat" },
-        { title: "Playground", url: "#", badge: "Soon" },
+        { title: "定时任务", url: "/scheduled" },
       ],
     },
     {
@@ -148,7 +148,7 @@ const data: SidebarData = {
       icon: Puzzle,
       items: [
         { title: "技能管理", url: "/skills" },
-        { title: "插件市场", url: "#", badge: "New" },
+        { title: "企业连接器", url: "/connectors" },
       ],
     },
     {
@@ -157,7 +157,7 @@ const data: SidebarData = {
       icon: Library,
       items: [
         { title: "对话记录", url: "/memory" },
-        { title: "知识库 (RAG)", url: "#", badge: "Soon" },
+        { title: "知识图谱", url: "/knowledge" },
       ],
     },
   ],

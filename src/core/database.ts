@@ -73,6 +73,55 @@ export function initDatabase(): DatabaseSync {
             created_at DATETIME DEFAULT CURRENT_TIMESTAMP
         );
         CREATE INDEX IF NOT EXISTS idx_feedback_message ON feedback(message_id);
+
+        CREATE TABLE IF NOT EXISTS scheduled_tasks (
+            id TEXT PRIMARY KEY,
+            name TEXT NOT NULL,
+            cron_expr TEXT NOT NULL,
+            prompt TEXT NOT NULL,
+            session_id TEXT,
+            enabled INTEGER NOT NULL DEFAULT 1,
+            last_run TEXT,
+            next_run TEXT,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_scheduled_tasks_enabled ON scheduled_tasks(enabled);
+
+        CREATE TABLE IF NOT EXISTS knowledge_nodes (
+            id TEXT PRIMARY KEY,
+            type TEXT NOT NULL DEFAULT 'document',
+            title TEXT NOT NULL,
+            content TEXT NOT NULL,
+            metadata TEXT DEFAULT '{}',
+            embedding TEXT,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_knowledge_nodes_type ON knowledge_nodes(type);
+
+        CREATE TABLE IF NOT EXISTS knowledge_edges (
+            id TEXT PRIMARY KEY,
+            from_id TEXT NOT NULL,
+            to_id TEXT NOT NULL,
+            relation TEXT NOT NULL,
+            weight REAL NOT NULL DEFAULT 1.0,
+            created_at TEXT NOT NULL,
+            FOREIGN KEY (from_id) REFERENCES knowledge_nodes(id) ON DELETE CASCADE,
+            FOREIGN KEY (to_id) REFERENCES knowledge_nodes(id) ON DELETE CASCADE
+        );
+        CREATE INDEX IF NOT EXISTS idx_knowledge_edges_from ON knowledge_edges(from_id);
+        CREATE INDEX IF NOT EXISTS idx_knowledge_edges_to ON knowledge_edges(to_id);
+
+        CREATE TABLE IF NOT EXISTS workflows (
+            id TEXT PRIMARY KEY,
+            name TEXT NOT NULL,
+            description TEXT,
+            definition TEXT NOT NULL,
+            created_by TEXT,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        );
     `);
 
     // Auto-migration for existing databases

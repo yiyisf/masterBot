@@ -19,46 +19,64 @@ export class HistoryRepository {
     }
 
     /**
-     * 获取会话的所有消息
+     * 获取会话的消息（支持分页）
      */
-    getMessages(sessionId: string): Message[] {
-        const rows = db.prepare(`
-            SELECT * FROM messages 
-            WHERE session_id = ? 
-            ORDER BY created_at ASC
-        `).all(sessionId) as any[];
+    getMessages(sessionId: string, opts?: { limit?: number; before?: string }): Message[] {
+        // If before + limit: get last N rows before that cursor (DESC then reverse)
+        if (opts?.before && opts?.limit) {
+            const subQuery = `SELECT * FROM messages WHERE session_id = ? AND created_at < (SELECT created_at FROM messages WHERE id = ?) ORDER BY created_at DESC LIMIT ?`;
+            const rows = db.prepare(subQuery).all(sessionId, opts.before, opts.limit) as any[];
+            rows.reverse();
+            return rows.map(row => this.rowToMessage(row));
+        }
 
-        return rows.map(row => {
-            const msg: Message = {
-                id: row.id, role: row.role,
-                content: row.content,
-            };
+        let query = `SELECT * FROM messages WHERE session_id = ?`;
+        const params: unknown[] = [sessionId];
 
-            if (row.content && row.content.startsWith('[')) {
-                try {
-                    msg.content = JSON.parse(row.content);
-                } catch (e) {
-                    // Fallback to string
-                }
+        if (opts?.before) {
+            query += ` AND created_at < (SELECT created_at FROM messages WHERE id = ?)`;
+            params.push(opts.before);
+        }
+        query += ` ORDER BY created_at ASC`;
+        if (opts?.limit) {
+            query += ` LIMIT ?`;
+            params.push(opts.limit);
+        }
+
+        const rows = db.prepare(query).all(...(params as import('node:sqlite').SQLInputValue[])) as any[];
+        return rows.map(row => this.rowToMessage(row));
+    }
+
+    private rowToMessage(row: any): Message {
+        const msg: Message = {
+            id: row.id, role: row.role,
+            content: row.content,
+        };
+
+        if (row.content && row.content.startsWith('[')) {
+            try {
+                msg.content = JSON.parse(row.content);
+            } catch (e) {
+                // Fallback to string
             }
+        }
 
-            if (row.tool_call_id) msg.toolCallId = row.tool_call_id;
-            if (row.tool_calls) {
-                try {
-                    msg.toolCalls = JSON.parse(row.tool_calls);
-                } catch (e) {
-                    // Ignore errors
-                }
+        if (row.tool_call_id) msg.toolCallId = row.tool_call_id;
+        if (row.tool_calls) {
+            try {
+                msg.toolCalls = JSON.parse(row.tool_calls);
+            } catch (e) {
+                // Ignore errors
             }
+        }
 
-            // 获取附件
-            const attachments = this.getAttachments(row.id);
-            if (attachments.length > 0) {
-                msg.attachments = attachments;
-            }
+        // 获取附件
+        const attachments = this.getAttachments(row.id);
+        if (attachments.length > 0) {
+            msg.attachments = attachments;
+        }
 
-            return msg;
-        });
+        return msg;
     }
 
     /**
@@ -195,6 +213,14 @@ export class HistoryRepository {
             VALUES (?, ?, ?, ?)
         `).run(id, messageId, sessionId, rating);
         return id;
+    }
+
+    /**
+     * 获取所有消息总数
+     */
+    getTotalMessageCount(): number {
+        const row = db.prepare('SELECT COUNT(*) as count FROM messages').get() as { count: number };
+        return row.count;
     }
 
     /**

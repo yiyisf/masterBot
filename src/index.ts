@@ -10,6 +10,12 @@ import { db } from './core/database.js';
 import fs from 'fs';
 import path from 'path';
 import type { McpServerConfig } from './types.js';
+import { nanoid } from 'nanoid';
+import { SchedulerService } from './core/scheduler.js';
+import { KnowledgeGraph } from './memory/knowledge-graph.js';
+import { MultiAgentOrchestrator } from './core/multi-agent.js';
+import { SkillGenerator } from './core/skill-generator.js';
+import { ConnectorManager } from './skills/connector-source.js';
 
 async function main() {
     console.log(`
@@ -68,6 +74,23 @@ async function main() {
         logger.info('Long-term memory initialized (SQLite)');
     }
 
+    // Initialize new services (must be before Agent so they can be injected)
+    const connectorManager = new ConnectorManager('connectors', logger);
+    const connectorSources = await connectorManager.loadAll();
+    for (const source of connectorSources) {
+        await skillRegistry.registerSource(source);
+        logger.info(`Connector "${source.name}" loaded`);
+    }
+
+    const getLlm = () => {
+        const provider = config.models.default;
+        return llmFactory.getAdapter(provider, config.models.providers[provider]);
+    };
+
+    const knowledgeGraph = new KnowledgeGraph(getLlm(), logger);
+    const orchestrator = new MultiAgentOrchestrator(logger);
+    const skillGenerator = new SkillGenerator(getLlm(), logger);
+
     // Initialize agent with dynamic LLM getter for hot-reloading
     const agent = new Agent({
         llm: () => {
@@ -83,7 +106,12 @@ async function main() {
         skillConfig: {
             sandbox: config.skills.shell?.sandbox,
         },
+        skillGenerator,
+        orchestrator,
+        knowledgeGraph,
     });
+
+    const scheduler = new SchedulerService(logger);
 
     // Load MCP server configs and register sources
     const mcpConfigPath = path.join(process.cwd(), 'mcp-servers.json');
@@ -112,9 +140,25 @@ async function main() {
         sessionManager,
         logger,
         config,
+        knowledgeGraph,
+        orchestrator,
+        skillGenerator,
+        skillRegistry,
+        connectorManager,
+        scheduler,
     });
 
     await server.start(config.server.port, config.server.host);
+
+    // Start scheduler after server is running
+    scheduler.setTriggerHandler(async (task) => {
+        const sessionId = task.sessionId || nanoid();
+        const memory = sessionManager.getSession(sessionId);
+        logger.info(`[scheduler] Executing task "${task.name}"`);
+        await agent.execute(task.prompt, { sessionId, memory });
+    });
+    scheduler.start();
+    logger.info('Scheduler started');
 
     // Graceful shutdown
     const shutdown = async () => {

@@ -8,6 +8,7 @@ import {
 import { makeLightAsyncSyntaxHighlighter } from "@assistant-ui/react-syntax-highlighter";
 import { MyRuntimeAdapter } from "@/lib/assistant-runtime";
 import { ChatThinking } from "@/components/chat-thinking";
+import { DagView } from "@/components/dag-view";
 import { allToolUIs } from "@/components/tool-ui";
 import { useMemo, memo, useRef, useEffect, useState, Suspense } from "react";
 import "@assistant-ui/react-ui/styles/index.css";
@@ -162,6 +163,7 @@ const CustomAssistantMessage = memo(() => {
                     {steps.length > 0 && (
                         <div className="w-full mt-4 max-w-3xl">
                             <ChatThinking steps={steps} />
+                            <DagView steps={steps} />
                         </div>
                     )}
                     {/* ActionBar: copy, retry, feedback */}

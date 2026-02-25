@@ -153,6 +153,67 @@ const DAG_EXECUTE_TOOL: ToolDefinition = {
     }
 };
 
+const SKILL_GENERATE_TOOL: ToolDefinition = {
+    type: 'function',
+    function: {
+        name: 'skill_generate',
+        description: 'Automatically generate, install and hot-reload a new skill using AI. Use when the user requests a capability that doesn\'t exist yet.',
+        parameters: {
+            type: 'object',
+            properties: {
+                name: { type: 'string', description: 'Skill name (lowercase, hyphen-separated, e.g. "weather-api")' },
+                description: { type: 'string', description: 'What the skill does' },
+                actions: {
+                    type: 'array',
+                    items: {
+                        type: 'object',
+                        properties: {
+                            name: { type: 'string' },
+                            description: { type: 'string' },
+                        },
+                    },
+                    description: 'List of actions with name and description',
+                },
+            },
+            required: ['name', 'description', 'actions'],
+        },
+    },
+};
+
+const DELEGATE_AGENT_TOOL: ToolDefinition = {
+    type: 'function',
+    function: {
+        name: 'delegate_to_agent',
+        description: 'Delegate a subtask to a specialized worker agent with different skills or LLM.',
+        parameters: {
+            type: 'object',
+            properties: {
+                worker_id: { type: 'string', description: 'ID of the worker agent to delegate to' },
+                task: { type: 'string', description: 'The task description to send to the worker' },
+                context_summary: { type: 'string', description: 'Brief summary of context the worker needs' },
+            },
+            required: ['worker_id', 'task'],
+        },
+    },
+};
+
+const KNOWLEDGE_SEARCH_TOOL: ToolDefinition = {
+    type: 'function',
+    function: {
+        name: 'knowledge_search',
+        description: 'Search the enterprise knowledge graph for relevant information. Uses vector similarity and graph traversal.',
+        parameters: {
+            type: 'object',
+            properties: {
+                query: { type: 'string', description: 'Search query' },
+                depth: { type: 'number', description: 'Graph traversal depth (1-3, default 2)' },
+                limit: { type: 'number', description: 'Max results (default 10)' },
+            },
+            required: ['query'],
+        },
+    },
+};
+
 /**
  * Agent 编排引擎
  * 负责协调 LLM 和技能的交互
@@ -165,6 +226,9 @@ export class Agent {
     private contextManager: ContextManager;
     private longTermMemory?: LongTermMemory;
     private skillConfig: Record<string, unknown>;
+    private skillGenerator?: any;
+    private orchestrator?: any;
+    private knowledgeGraph?: any;
 
     constructor(options: {
         llm: LLMAdapter | (() => LLMAdapter);
@@ -174,6 +238,9 @@ export class Agent {
         maxContextTokens?: number;
         longTermMemory?: LongTermMemory;
         skillConfig?: Record<string, unknown>;
+        skillGenerator?: any;
+        orchestrator?: any;
+        knowledgeGraph?: any;
     }) {
         this.llmGetter = typeof options.llm === 'function' ? options.llm : () => options.llm as LLMAdapter;
         this.skillRegistry = options.skillRegistry;
@@ -181,6 +248,9 @@ export class Agent {
         this.maxIterations = options.maxIterations ?? 10;
         this.longTermMemory = options.longTermMemory;
         this.skillConfig = options.skillConfig ?? {};
+        this.skillGenerator = options.skillGenerator;
+        this.orchestrator = options.orchestrator;
+        this.knowledgeGraph = options.knowledgeGraph;
         this.contextManager = new ContextManager({
             maxTokens: options.maxContextTokens,
             logger: options.logger,
@@ -239,7 +309,7 @@ export class Agent {
 
         // 合并内置工具和外部技能工具
         const externalTools = await this.skillRegistry.getToolDefinitions();
-        const builtinTools = [PLAN_TOOL_DEF, DAG_CREATE_TASK_TOOL, DAG_GET_STATUS_TOOL, DAG_EXECUTE_TOOL];
+        const builtinTools = [PLAN_TOOL_DEF, DAG_CREATE_TASK_TOOL, DAG_GET_STATUS_TOOL, DAG_EXECUTE_TOOL, SKILL_GENERATE_TOOL, DELEGATE_AGENT_TOOL, KNOWLEDGE_SEARCH_TOOL];
         if (this.longTermMemory) {
             builtinTools.push(MEMORY_REMEMBER_TOOL, MEMORY_RECALL_TOOL);
         }
@@ -305,7 +375,7 @@ export class Agent {
             // 处理工具调用 — 分离内置工具（顺序执行）和外部技能（并行执行）
             const builtinCalls: typeof response.toolCalls = [];
             const externalCalls: typeof response.toolCalls = [];
-            const BUILTIN_NAMES = new Set(['plan_task', 'memory_remember', 'memory_recall', 'dag_create_task', 'dag_get_status', 'dag_execute']);
+            const BUILTIN_NAMES = new Set(['plan_task', 'memory_remember', 'memory_recall', 'dag_create_task', 'dag_get_status', 'dag_execute', 'skill_generate', 'delegate_to_agent', 'knowledge_search']);
 
             for (const tc of response.toolCalls) {
                 if (BUILTIN_NAMES.has(tc.function.name)) {
@@ -361,6 +431,64 @@ export class Agent {
                     }
                     const summary = stepResults.length > 0 ? `DAG execution completed:\n${stepResults.join('\n')}` : 'No tasks to execute.';
                     messages.push({ role: 'tool', content: summary, toolCallId: toolCall.id });
+                } else if (toolName === 'skill_generate' && this.skillGenerator) {
+                    const { name, description, actions } = params;
+                    yield { type: 'action', content: `Generating skill: ${name}`, toolName, toolInput: params, timestamp: new Date() };
+                    try {
+                        const generated = await this.skillGenerator.generate({ name, description, actions });
+                        const dir = await this.skillGenerator.install(generated);
+                        // Hot-reload: add skill to existing local-files source to avoid overwriting it
+                        try {
+                            const existingLocal = this.skillRegistry.getAllSources()
+                                .find(s => s.name === 'local-files' && typeof (s as any).loadSkill === 'function') as any;
+                            if (existingLocal) {
+                                await existingLocal.loadSkill(dir);
+                                this.logger.info(`Hot-reloaded skill "${name}" into existing local-files source`);
+                            } else {
+                                const { LocalSkillSource } = await import('../skills/loader.js');
+                                const tempSource = new LocalSkillSource([dir], this.logger);
+                                await tempSource.initialize();
+                                await this.skillRegistry.registerSource(tempSource);
+                            }
+                        } catch (err) {
+                            this.logger.warn(`Hot-reload failed: ${(err as Error).message}`);
+                        }
+                        const resultStr = `技能 "${name}" 已生成并安装到 ${dir}。现在可以直接使用它。`;
+                        yield { type: 'observation', content: resultStr, toolName, timestamp: new Date() };
+                        messages.push({ role: 'tool', content: resultStr, toolCallId: toolCall.id });
+                    } catch (err: any) {
+                        const errorMsg = `技能生成失败: ${err.message}`;
+                        yield { type: 'observation', content: errorMsg, toolName, timestamp: new Date() };
+                        messages.push({ role: 'tool', content: errorMsg, toolCallId: toolCall.id });
+                    }
+                } else if (toolName === 'delegate_to_agent' && this.orchestrator) {
+                    const { worker_id, task, context_summary } = params as { worker_id: string; task: string; context_summary?: string };
+                    yield { type: 'action', content: `Delegating to agent: ${worker_id}`, toolName, toolInput: params, timestamp: new Date() };
+                    try {
+                        const result = await this.orchestrator.delegate(worker_id, task, context);
+                        const resultStr = `[${result.workerName}] ${result.answer}`;
+                        yield { type: 'observation', content: resultStr, toolName, toolOutput: result, timestamp: new Date() };
+                        messages.push({ role: 'tool', content: resultStr, toolCallId: toolCall.id });
+                    } catch (err: any) {
+                        const errorMsg = `委托失败: ${err.message}`;
+                        yield { type: 'observation', content: errorMsg, toolName, timestamp: new Date() };
+                        messages.push({ role: 'tool', content: errorMsg, toolCallId: toolCall.id });
+                    }
+                } else if (toolName === 'knowledge_search' && this.knowledgeGraph) {
+                    const { query, depth, limit } = params as { query: string; depth?: number; limit?: number };
+                    try {
+                        const result = await this.knowledgeGraph.search(query, { depth: depth ?? 2, limit: limit ?? 10 });
+                        const nodesSummary = result.nodes.slice(0, 5).map((n: any) => `**${n.title}** (${n.type}): ${n.content.substring(0, 150)}...`).join('\n\n');
+                        const resultStr = result.nodes.length > 0
+                            ? `找到 ${result.nodes.length} 个相关知识节点:\n\n${nodesSummary}`
+                            : '知识库中未找到相关内容。';
+                        yield { type: 'observation', content: resultStr, toolName, toolOutput: result, timestamp: new Date() };
+                        messages.push({ role: 'tool', content: resultStr, toolCallId: toolCall.id });
+                    } catch (err: any) {
+                        const errorMsg = `知识检索失败: ${err.message}`;
+                        yield { type: 'observation', content: errorMsg, toolName, timestamp: new Date() };
+                        messages.push({ role: 'tool', content: errorMsg, toolCallId: toolCall.id });
+                    }
                 }
             }
 

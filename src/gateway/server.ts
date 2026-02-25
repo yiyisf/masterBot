@@ -10,9 +10,11 @@ import type { Config, ChatRequest, Logger, Message, McpServerConfig } from '../t
 import { Agent } from '../core/agent.js';
 import { SessionMemoryManager } from '../memory/short-term.js';
 import { historyRepository } from '../core/repository.js';
+import { taskRepository } from '../core/task-repository.js';
 import { McpSkillSource } from '../skills/mcp-source.js';
 import { McpRegistryClient } from '../skills/mcp-registry.js';
 import { createAuthHook } from './auth.js';
+import { db } from '../core/database.js';
 
 /**
  * Gateway 服务器
@@ -24,17 +26,35 @@ export class GatewayServer {
     private sessionManager: SessionMemoryManager;
     private logger: Logger;
     private config: Config;
+    private knowledgeGraph?: any;
+    private orchestrator?: any;
+    private skillGenerator?: any;
+    private skillRegistry?: any;
+    private connectorManager?: any;
+    private scheduler?: any;
 
     constructor(options: {
         agent: Agent;
         sessionManager: SessionMemoryManager;
         logger: Logger;
         config: Config;
+        knowledgeGraph?: any;
+        orchestrator?: any;
+        skillGenerator?: any;
+        skillRegistry?: any;
+        connectorManager?: any;
+        scheduler?: any;
     }) {
         this.agent = options.agent;
         this.sessionManager = options.sessionManager;
         this.logger = options.logger;
         this.config = options.config;
+        this.knowledgeGraph = options.knowledgeGraph;
+        this.orchestrator = options.orchestrator;
+        this.skillGenerator = options.skillGenerator;
+        this.skillRegistry = options.skillRegistry;
+        this.connectorManager = options.connectorManager;
+        this.scheduler = options.scheduler;
 
         this.app = Fastify({
             logger: options.config.logging.prettyPrint
@@ -419,14 +439,24 @@ export class GatewayServer {
             }));
         });
 
-        // Get specific session messages
-        this.app.get<{ Params: { id: string } }>('/api/sessions/:id/messages', async (request, reply) => {
+        // Get specific session messages (paginated)
+        this.app.get<{ Params: { id: string }; Querystring: { limit?: string; before?: string } }>('/api/sessions/:id/messages', async (request, reply) => {
             const { id } = request.params;
-            const messages = historyRepository.getMessages(id);
-            return {
-                sessionId: id,
-                messages
+            const { limit, before } = request.query as { limit?: string; before?: string };
+            const opts = {
+                limit: limit ? parseInt(limit, 10) : 50,
+                before: before || undefined,
             };
+            const messages = historyRepository.getMessages(id, opts);
+            const hasMore = before ? messages.length >= opts.limit : false;
+            return { messages, hasMore };
+        });
+
+        // Get session DAG tasks
+        this.app.get<{ Params: { id: string } }>('/api/sessions/:id/tasks', async (request, reply) => {
+            const { id } = request.params;
+            const dag = taskRepository.getDAG(id);
+            return dag;
         });
 
         // Delete session
@@ -496,7 +526,7 @@ export class GatewayServer {
                 version: '0.1.0',
                 stats: {
                     totalSessions: sessions.length,
-                    totalMessages: 0, // TODO: track messages
+                    totalMessages: historyRepository.getTotalMessageCount(),
                     skillCount: (await this.agent.getSkillRegistry().getToolDefinitions()).length,
                 },
                 sessions: sessions.map(s => ({
@@ -532,6 +562,203 @@ export class GatewayServer {
 
             this.logger.info(`LLM configuration hot-reloaded: ${this.config.models.default}`);
             return { success: true, message: 'Configuration updated and hot-reloaded' };
+        });
+
+        // ===== SKILL GENERATOR =====
+        this.app.post<{ Body: { name: string; description: string; actions: any[] } }>('/api/skills/generate', async (request, reply) => {
+            if (!this.skillGenerator) { reply.status(503); return { error: 'Skill generator not available' }; }
+            try {
+                const { name, description, actions } = request.body;
+                const generated = await this.skillGenerator.generate({ name, description, actions });
+                const dir = await this.skillGenerator.install(generated);
+                // Hot-reload: add skill to existing local-files source to avoid overwriting it
+                try {
+                    const registry = this.skillRegistry ?? this.agent.getSkillRegistry();
+                    const existingLocal = registry.getAllSources()
+                        .find((s: any) => s.name === 'local-files' && typeof s.loadSkill === 'function') as any;
+                    if (existingLocal) {
+                        await existingLocal.loadSkill(dir);
+                        this.logger.info(`Hot-reloaded skill "${name}" into existing local-files source`);
+                    } else {
+                        const { LocalSkillSource } = await import('../skills/loader.js');
+                        const tempSource = new LocalSkillSource([dir], this.logger);
+                        await tempSource.initialize();
+                        await registry.registerSource(tempSource);
+                    }
+                } catch (err) {
+                    this.logger.warn(`Hot-reload failed: ${(err as Error).message}`);
+                }
+                return { success: true, dir, name };
+            } catch (err: any) {
+                reply.status(500); return { error: err.message };
+            }
+        });
+
+        // ===== ENTERPRISE CONNECTORS =====
+        this.app.get('/api/connectors', async () => {
+            if (!this.connectorManager) return [];
+            return this.connectorManager.listConfigs();
+        });
+
+        this.app.post<{ Body: any }>('/api/connectors', async (request, reply) => {
+            if (!this.connectorManager) { reply.status(503); return { error: 'Connector manager not available' }; }
+            try {
+                const config = request.body as any;
+                this.connectorManager.save(config);
+                // Register the new source
+                const { ConnectorSkillSource } = await import('../skills/connector-source.js');
+                const source = new ConnectorSkillSource(config, this.logger);
+                await source.initialize();
+                await this.agent.getSkillRegistry().registerSource(source);
+                return { success: true };
+            } catch (err: any) {
+                reply.status(500); return { error: err.message };
+            }
+        });
+
+        this.app.delete<{ Params: { name: string } }>('/api/connectors/:name', async (request, reply) => {
+            if (!this.connectorManager) { reply.status(503); return { error: 'Connector manager not available' }; }
+            try {
+                this.connectorManager.delete(request.params.name);
+                return { success: true };
+            } catch (err: any) {
+                reply.status(500); return { error: err.message };
+            }
+        });
+
+        // ===== SCHEDULED TASKS =====
+        this.app.get('/api/scheduled-tasks', async () => {
+            if (!this.scheduler) return [];
+            return this.scheduler.getTasks();
+        });
+
+        this.app.post<{ Body: any }>('/api/scheduled-tasks', async (request, reply) => {
+            if (!this.scheduler) { reply.status(503); return { error: 'Scheduler not available' }; }
+            try {
+                const { name, cronExpr, prompt, sessionId, enabled } = request.body as any;
+                const id = this.scheduler.createTask({ name, cronExpr, prompt, sessionId, enabled: enabled !== false });
+                return { success: true, id };
+            } catch (err: any) {
+                reply.status(500); return { error: err.message };
+            }
+        });
+
+        this.app.patch<{ Params: { id: string }; Body: any }>('/api/scheduled-tasks/:id', async (request, reply) => {
+            if (!this.scheduler) { reply.status(503); return { error: 'Scheduler not available' }; }
+            try {
+                this.scheduler.updateTask(request.params.id, request.body);
+                return { success: true };
+            } catch (err: any) {
+                reply.status(500); return { error: err.message };
+            }
+        });
+
+        this.app.delete<{ Params: { id: string } }>('/api/scheduled-tasks/:id', async (request, reply) => {
+            if (!this.scheduler) { reply.status(503); return { error: 'Scheduler not available' }; }
+            try {
+                this.scheduler.deleteTask(request.params.id);
+                return { success: true };
+            } catch (err: any) {
+                reply.status(500); return { error: err.message };
+            }
+        });
+
+        this.app.post<{ Params: { id: string } }>('/api/scheduled-tasks/:id/trigger', async (request, reply) => {
+            if (!this.scheduler) { reply.status(503); return { error: 'Scheduler not available' }; }
+            try {
+                const task = this.scheduler.getTask(request.params.id);
+                if (!task) { reply.status(404); return { error: 'Task not found' }; }
+                const { nanoid } = await import('nanoid');
+                const sessionId = task.sessionId || nanoid();
+                const memory = this.sessionManager.getSession(sessionId);
+                // Run async
+                this.agent.execute(task.prompt, { sessionId, memory }).catch(err => {
+                    this.logger.error(`Manual trigger failed: ${err.message}`);
+                });
+                return { success: true, sessionId };
+            } catch (err: any) {
+                reply.status(500); return { error: err.message };
+            }
+        });
+
+        // ===== KNOWLEDGE GRAPH =====
+        this.app.get('/api/knowledge/stats', async () => {
+            if (!this.knowledgeGraph) return { nodeCount: 0, edgeCount: 0 };
+            return this.knowledgeGraph.getStats();
+        });
+
+        this.app.post<{ Body: { content: string; title: string; type?: string; source?: string } }>('/api/knowledge/ingest', async (request, reply) => {
+            if (!this.knowledgeGraph) { reply.status(503); return { error: 'Knowledge graph not available' }; }
+            try {
+                const { content, title, type, source } = request.body;
+                const id = await this.knowledgeGraph.ingest(content, { title, type, source });
+                return { success: true, id };
+            } catch (err: any) {
+                reply.status(500); return { error: err.message };
+            }
+        });
+
+        this.app.get<{ Querystring: { q: string; depth?: string; limit?: string } }>('/api/knowledge/search', async (request, reply) => {
+            if (!this.knowledgeGraph) { reply.status(503); return { error: 'Knowledge graph not available' }; }
+            try {
+                const { q, depth, limit } = request.query as any;
+                const result = await this.knowledgeGraph.search(q, {
+                    depth: depth ? parseInt(depth) : 2,
+                    limit: limit ? parseInt(limit) : 10,
+                });
+                return result;
+            } catch (err: any) {
+                reply.status(500); return { error: err.message };
+            }
+        });
+
+        // ===== WORKFLOWS =====
+        this.app.get('/api/workflows', async () => {
+            const rows = (db as any).prepare('SELECT id, name, description, created_at, updated_at FROM workflows ORDER BY updated_at DESC').all();
+            return rows;
+        });
+
+        this.app.post<{ Body: { name: string; description?: string; definition: any } }>('/api/workflows', async (request, reply) => {
+            try {
+                const { nanoid } = await import('nanoid');
+                const id = nanoid();
+                const now = new Date().toISOString();
+                const { name, description, definition } = request.body;
+                (db as any).prepare(`INSERT INTO workflows (id, name, description, definition, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)`)
+                    .run(id, name, description || null, JSON.stringify(definition), now, now);
+                return { success: true, id };
+            } catch (err: any) {
+                reply.status(500); return { error: err.message };
+            }
+        });
+
+        this.app.delete<{ Params: { id: string } }>('/api/workflows/:id', async (request, reply) => {
+            try {
+                (db as any).prepare('DELETE FROM workflows WHERE id = ?').run(request.params.id);
+                return { success: true };
+            } catch (err: any) {
+                reply.status(500); return { error: err.message };
+            }
+        });
+
+        this.app.post<{ Params: { id: string } }>('/api/workflows/:id/execute', async (request, reply) => {
+            try {
+                const row = (db as any).prepare('SELECT * FROM workflows WHERE id = ?').get(request.params.id) as any;
+                if (!row) { reply.status(404); return { error: 'Workflow not found' }; }
+                const definition = JSON.parse(row.definition);
+                const { nanoid } = await import('nanoid');
+                const sessionId = nanoid();
+                const memory = this.sessionManager.getSession(sessionId);
+                // Build prompt from workflow nodes
+                const nodeDescs = (definition.nodes || []).map((n: any) => `${n.type}: ${n.label}`).join(' → ');
+                const prompt = `执行工作流 "${row.name}":\n${nodeDescs}`;
+                this.agent.execute(prompt, { sessionId, memory }).catch(err => {
+                    this.logger.error(`Workflow execution failed: ${err.message}`);
+                });
+                return { success: true, sessionId };
+            } catch (err: any) {
+                reply.status(500); return { error: err.message };
+            }
         });
     }
 
