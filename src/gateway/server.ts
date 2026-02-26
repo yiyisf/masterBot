@@ -544,27 +544,77 @@ export class GatewayServer {
             };
         });
 
+        // ===== CONFIG MANAGEMENT =====
+
         // Model configuration (Read/Update)
         this.app.get('/api/config/models', async () => {
             return this.config.models;
         });
 
-        // ... inside setupRoutes ...
         this.app.patch<{ Body: any }>('/api/config/models', async (request, reply) => {
             const newModelConfig = request.body as any;
-
-            // Update configuration in-memory
             this.config.models.default = newModelConfig.default;
             this.config.models.providers = {
                 ...this.config.models.providers,
                 ...newModelConfig.providers
             };
-
-            // Clear LLM cache to force re-initialization on next use
             llmFactory.clearCache();
-
             this.logger.info(`LLM configuration hot-reloaded: ${this.config.models.default}`);
             return { success: true, message: 'Configuration updated and hot-reloaded' };
+        });
+
+        // Test LLM provider connectivity with a minimal chat call
+        this.app.post<{ Body: { providerName: string } }>('/api/config/models/test', async (request, reply) => {
+            const { providerName } = request.body;
+            const providerConfig = this.config.models.providers[providerName];
+            if (!providerConfig) {
+                reply.status(404); return { success: false, error: `Provider "${providerName}" not found` };
+            }
+            try {
+                const adapter = llmFactory.getAdapter(providerName, providerConfig);
+                const result = await adapter.chat(
+                    [{ role: 'user', content: 'Reply with "OK" only, no other text.' }],
+                    { maxTokens: 10 }
+                );
+                const content = typeof result.content === 'string' ? result.content : JSON.stringify(result.content);
+                return { success: true, response: content.trim() };
+            } catch (err: any) {
+                return { success: false, error: err.message };
+            }
+        });
+
+        // Security configuration (Read/Update)
+        this.app.get('/api/config/security', async () => {
+            return {
+                sandbox: this.config.skills.shell?.sandbox ?? { enabled: true, mode: 'blocklist' },
+                auth: this.config.auth ?? { enabled: false, mode: 'api-key' },
+            };
+        });
+
+        this.app.patch<{ Body: { sandbox?: any; auth?: any } }>('/api/config/security', async (request, reply) => {
+            const { sandbox, auth } = request.body;
+            if (sandbox !== undefined) {
+                if (!this.config.skills.shell) this.config.skills.shell = {};
+                this.config.skills.shell.sandbox = { ...this.config.skills.shell?.sandbox, ...sandbox };
+            }
+            if (auth !== undefined) {
+                this.config.auth = { ...this.config.auth, ...auth } as any;
+            }
+            this.logger.info('[config] Security settings updated');
+            return { success: true };
+        });
+
+        // Agent configuration (Read/Update)
+        this.app.get('/api/config/agent', async () => {
+            return this.config.agent;
+        });
+
+        this.app.patch<{ Body: { maxIterations?: number; maxContextTokens?: number } }>('/api/config/agent', async (request, reply) => {
+            const { maxIterations, maxContextTokens } = request.body;
+            if (maxIterations !== undefined) this.config.agent.maxIterations = Number(maxIterations);
+            if (maxContextTokens !== undefined) this.config.agent.maxContextTokens = Number(maxContextTokens);
+            this.logger.info(`[config] Agent settings updated: maxIterations=${this.config.agent.maxIterations}, maxContextTokens=${this.config.agent.maxContextTokens}`);
+            return { success: true };
         });
 
         // ===== SKILL GENERATOR =====
