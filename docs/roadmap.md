@@ -2,11 +2,11 @@
 
 ## Overview
 
-CMaster Bot is an enterprise-grade, self-evolving AI agent platform built on a ReAct pattern architecture. This roadmap documents completed work through Phase 9 and outlines the path toward a full enterprise feature set.
+CMaster Bot is an enterprise-grade, self-evolving AI agent platform built on a ReAct pattern architecture. This roadmap documents all completed phases through Phase 18.
 
 ---
 
-## Completed Phases (Alpha / Beta v0.1.0)
+## ✅ Completed Phases
 
 ### Phase 1 — Foundation
 - Project scaffold: TypeScript/Fastify backend, Next.js frontend
@@ -36,7 +36,6 @@ CMaster Bot is an enterprise-grade, self-evolving AI agent platform built on a R
 - `ContextManager`: sliding window + LLM summary compression
 - `SessionMemoryManager` with LRU eviction and TTL
 - Tool execution timeout (60 s)
-- Dependency cleanup (removed sql.js, bullmq)
 - 28 new tests via Vitest
 
 ### Phase 6 — Memory & MCP Protocol
@@ -51,169 +50,119 @@ CMaster Bot is an enterprise-grade, self-evolving AI agent platform built on a R
 - Auth middleware: API Key + JWT, disabled by default
 - Task DAG: `tasks` table + `TaskRepository` + `DAGExecutor`
 - Agent DAG tools: `dag_create_task`, `dag_get_status`, `dag_execute`
-- Frontend `task_*` event handling
 
-### Phase 8 — Advanced Frontend (assistant-ui)
-- ActionBar: Copy + Reload buttons
-- Syntax highlighting via `SyntaxHighlighter`
-- Tool UI cards (`web/src/components/tool-ui.tsx`)
-- Welcome suggestions, dynamic suggestions, feedback system
-- Session list sidebar
-- New endpoints: `PATCH /api/sessions/:id/title`, `POST /api/feedback`
+### Phase 8 — Advanced Frontend
+- ActionBar: Copy + Reload buttons; syntax highlighting
+- Tool UI cards, welcome/dynamic suggestions, feedback system
+- Session list sidebar with pin/rename/delete
+- New endpoints: session title PATCH, feedback POST
 - New DB table: `feedback`; new SSE chunks: `meta`, `suggestions`
 
 ### Phase 9 — AI/Tool/Skill Optimization
-- AI CLI skills: `gemini-cli` (ask/analyze_code/search_web), `claude-code` (ask/code_review/continue_session)
-- Configurable embedding model (`LLMConfig.embeddingModel`, default `text-embedding-3-small`)
+- AI CLI skills: `gemini-cli`, `claude-code`
+- Configurable embedding model (`LLMConfig.embeddingModel`)
 - MCP Registry: browse/search/install from `registry.modelcontextprotocol.io`
-- Streamable HTTP transport support
-- MCP env-var passthrough to `StdioClientTransport`
-- Parallel tool calls: builtins sequential, externals `Promise.allSettled`
-- CJK-aware tokenizer integrated into `ContextManager`
-- Frontend: Skills page with 3 tabs (Active / MCP / Registry), per-provider settings, embedding model config
-
-**Status: Alpha / Beta v0.1.0 — 90 tests passing**
-
----
-
-## Upcoming Phases
+- Streamable HTTP transport support; parallel tool calls (Promise.allSettled)
+- CJK-aware tokenizer in `ContextManager`
+- Frontend: Skills page with 3 tabs (Active / MCP / Registry)
 
 ### Phase 10 — Foundation Fixes & UX Polish
-*Goal: production-ready stability*
+- Message count / token stats per session in sidebar
+- DAG task visualization on frontend
+- Session history pagination (infinite scroll)
+- Sidebar real navigation links; session pin/rename/delete
+- `hello-world` example skill
 
-| Item | Description |
-|------|-------------|
-| Message count display | Show per-session message/token counts in sidebar |
-| DAG visualization | Interactive task dependency graph in frontend |
-| Pagination | Infinite scroll for session history and message lists |
-| Error boundary | Global React error boundary + graceful degradation |
-| Accessibility | ARIA labels, keyboard navigation, screen reader support |
-| Mobile responsive | Sidebar collapse, touch-friendly UI |
-| Config hot-reload | Reload `default.yaml` without restarting server |
-| Rate limiting | Per-user and per-session request throttling |
+### Phase 11 — Built-in Skills Expansion
+- `notification` skill: DingTalk / Feishu / Email push
+- `document-processor` skill: PDF, Word, Excel read + Markdown convert
+- `vision` skill: image analysis / OCR / diagram description
 
----
-
-### Phase 11 — Daily Work Skills
-*Goal: out-of-the-box productivity for knowledge workers*
-
-| Skill | Actions | Description |
-|-------|---------|-------------|
-| `notification` | send, schedule, subscribe | Push notifications via email/Slack/DingTalk/WeCom |
-| `document-processor` | parse, summarize, extract, convert | PDF/Word/Excel/PowerPoint processing |
-| `vision` | describe, ocr, detect_objects, compare | Image understanding via multimodal LLM |
-| `web-search` | search, fetch, extract, monitor | Real-time web search + content extraction |
-| `translate` | translate, detect_lang, glossary | Multi-language translation with custom glossaries |
-
-Each skill ships as a `SKILL.md` + `index.ts` pair, installable without server restart.
-
----
-
-### Phase 12 — Enterprise Framework
-*Goal: enterprise-grade governance, integration, and security*
-
-#### 12.1 Connector YAML
-Declarative connector definition — connect any REST/GraphQL/SOAP system in 30 lines of YAML, auto-generated into a full skill with typed parameters and OAuth support.
-
-```yaml
-connector:
-  name: sap-erp
-  baseUrl: ${SAP_BASE_URL}
-  auth:
-    type: oauth2
-    tokenUrl: ${SAP_TOKEN_URL}
-  actions:
-    - name: get_purchase_order
-      method: GET
-      path: /sap/opu/odata/sap/MM_PUR_PO_MAINT_V2_SRV/A_PurchaseOrder('{poNumber}')
-```
-
-#### 12.2 Multi-User RBAC
-- User accounts linked to sessions
-- Role definitions: `admin`, `operator`, `viewer`, `guest`
-- Skill-level permission gates (which roles can invoke which skills)
-- Per-skill rate limits per role
-
-#### 12.3 SSO Integration
-- SAML 2.0 IdP support (Azure AD, Okta, Ping)
-- OIDC provider support
-- JWT claim mapping to internal roles
-- Session binding to SSO identity
-
-#### 12.4 Webhooks
-- Outbound webhooks on events: `message.completed`, `task.completed`, `task.failed`, `skill.error`
-- HMAC-SHA256 signature on payloads
-- Retry with exponential backoff
-- Webhook management UI in settings page
-
-#### 12.5 Audit Log
-- Immutable audit trail for all agent actions, tool calls, and skill invocations
-- Exportable as CSV / JSON
-- Retention policy configuration
-- Searchable audit log UI
-
----
+### Phase 12 — Enterprise Connector Framework
+- `ConnectorSkillSource`: load YAML/JSON connector configs as live skills
+- CRUD API: `GET/POST/DELETE /api/connectors`
+- Frontend: Connectors management page
 
 ### Phase 13 — Innovation Features
-*Goal: differentiated capabilities that set CMaster apart*
+- **Auto-Skill Generator**: NL description → AI generates `SKILL.md` + `index.ts` → hot-load (< 60 s)
+- **Multi-Agent Orchestration**: `MultiAgentOrchestrator` + `delegate_to_agent` built-in tool
+- **Proactive AI (Scheduler)**: `SchedulerService` pure-JS Cron, `scheduled_tasks` table, `/scheduled` UI
+- **Knowledge Graph (GraphRAG)**: SQLite `knowledge_nodes/edges`, BFS traversal, `knowledge_search` tool, `/knowledge` UI
+- **Visual Workflow Builder**: 4-node drag-and-drop editor, workflow CRUD, `/workflow` page
 
-#### 13.1 Auto-Skill Generator
-The flagship innovation. The agent generates a new, working skill from a natural language description.
+---
 
-**Flow:**
-1. User describes the desired capability in plain language
-2. Agent calls `skill_generate` builtin tool
-3. LLM generates `SKILL.md` (metadata + action definitions) + `index.ts` (implementation)
-4. Sandbox validates the generated code (static analysis + sandboxed dry run)
-5. Skill is hot-loaded into the registry without restart
-6. Agent immediately uses the new skill in the same conversation
+### Phase 14 — Cross-Platform Infrastructure & Webhook Inbound ✅
+*Goal: Windows compatibility + inbound event trigger foundation*
 
-**Target:** < 60 seconds from description to working skill.
+| Item | Details |
+|------|---------|
+| Cross-platform Shell | `platform()` detection → PowerShell (win32) / bash (others); `resolvePath()` for `~` and path separators |
+| Webhook Repository | SQLite-backed CRUD + trigger history (`webhook-repository.ts`) |
+| DB: `webhooks` table | id, name, secret, enabled, trigger_count, last_triggered_at |
+| Webhook trigger API | `POST /api/webhooks/:id/trigger` with HMAC-SHA256 verification + rate limiting |
+| Webhooks UI | Create/delete webhooks, copy endpoint URL and secret, HMAC usage example |
 
-#### 13.2 Multi-Agent Orchestration
-Parallel execution across specialized sub-agents, coordinated by a supervisor agent.
+---
 
-- **Supervisor Agent**: decomposes task, assigns sub-tasks, aggregates results
-- **Sub-Agents**: specialized roles (researcher, writer, coder, reviewer)
-- Communication via shared message bus (in-process pub/sub or Redis)
-- DAG-based dependency management between agent outputs
-- Conflict resolution and result merging strategies
+### Phase 15 — NL2Insight (Natural Language Data Analysis) ✅
+*Goal: NL → SQL → ECharts visualization against internal data warehouses*
 
-#### 13.3 Proactive AI (Scheduled Agent)
-Agent runs autonomously on a schedule without user prompting.
+| Item | Details |
+|------|---------|
+| `database-connector` skill | `list_tables`, `get_schema`, `execute_query` — read-only sandbox (SELECT only, max 10k rows, PII masking) |
+| `nl2sql.ts` | Schema-aware NL2SQL + ECharts config generation |
+| `chart-renderer.tsx` | Dynamic ECharts rendering for `` ```echarts ``` `` blocks and `chart:` prefix |
+| Connector example | `connectors/data-warehouse.example.yaml` (ClickHouse/MySQL/PostgreSQL) |
 
-- Cron-expression scheduling in skill definitions
-- Daily standup report generation (pulls from Jira/Slack/Git)
-- Anomaly detection on connected data sources
-- Proactive notifications to configured channels
-- User-defined trigger conditions (threshold alerts, event-based)
+---
 
-#### 13.4 Knowledge Graph (GraphRAG)
-Structured enterprise knowledge with multi-hop reasoning.
+### Phase 16 — Living Knowledge Fabric ✅
+*Goal: Auto-incremental sync from any internal knowledge system*
 
-- Entity extraction from documents, conversations, and structured data
-- Relation-triple storage in SQLite (`knowledge_nodes`, `knowledge_edges` tables)
-- Graph traversal for multi-hop Q&A (e.g., "Which team maintains the service that handles payments?")
-- Hybrid retrieval: vector similarity + graph neighborhood expansion
-- Visual knowledge graph explorer in frontend
+| Item | Details |
+|------|---------|
+| `knowledge-graph.ts` extensions | `incrementalIngest()` — delta upsert; `findExperts(topic)` — BFS-based expert discovery; `detectConflicts()` — LLM contradiction detection |
+| `knowledge-base` adapter | `list_updated_pages`, `get_page_content`, `write_page` — pluggable Wiki HTTP client |
+| `knowledge-sync.ts` | `KnowledgeSyncService`: Cron + Webhook dual-trigger incremental sync |
 
-#### 13.5 Visual Workflow Builder
-No-code workflow construction via drag-and-drop canvas.
+---
 
-- Node types: Trigger, Agent Step, Skill Call, Condition, Loop, Merge
-- Workflow serialized as JSON, executed by DAG engine
-- Live execution visualization (node status, data flow)
-- Export/import workflow definitions
-- Pre-built workflow templates for common enterprise patterns
+### Phase 17 — AIOps Intelligent Operations Hub ✅
+*Goal: Alert auto-triage, YAML Runbook declarative execution, 24×7 unattended ops*
 
-#### 13.6 LLM Router
-Intelligent, cost-optimized model selection per request.
+| Item | Details |
+|------|---------|
+| `runbook-engine.ts` | YAML Runbook parser + DAG executor; `{{variable}}` interpolation; `condition` / `onError: continue` support |
+| `log-analyzer` skill | `fetch_logs`, `cluster_anomalies`, `analyze_root_cause` — LLM-powered anomaly clustering |
+| `notification-hub` adapter | `send`, `create_group`, `broadcast` — pluggable internal IM/notification system |
+| Runbook examples | `runbooks/service-oom.yaml`, `runbooks/disk-full-warning.yaml` |
+| Runbook API | `GET/POST /api/runbooks`, `POST /api/runbooks/:id/execute` |
+| Runbooks UI | Upload, list, manual trigger with JSON variables, step-by-step result viewer |
 
-- Task classification: simple/complex/code/vision/multilingual
-- Provider routing: GPT-4o for complex reasoning, GPT-4o-mini for simple Q&A, Claude for code review
-- Cost tracking per session and per skill
-- Fallback chain on provider error
-- Configurable routing rules via `config/default.yaml`
+---
+
+### Phase 18 — Legacy System AI-RPA ✅
+*Goal: Vision + Browser Automation for internal Web systems without APIs*
+
+| Item | Details |
+|------|---------|
+| `browser-automation` skill | Playwright: `screenshot`, `navigate`, `click`, `type`, `upload_file`, `extract_table`, `close_browser` |
+| Cross-platform browser | `platform() === 'win32'` → Edge; otherwise → Chrome |
+| RPA API | `POST /api/rpa/execute`, `POST /api/rpa/prompt` |
+| RPA UI | URL navigation, AI natural language instructions, live screenshot preview, execution log |
+
+---
+
+### Settings Page — Runtime Config Management ✅
+
+| Item | Details |
+|------|---------|
+| `POST /api/config/models/test` | Real LLM connectivity test with minimal chat call |
+| `GET/PATCH /api/config/security` | Sandbox (enabled/mode) + auth (enabled/mode/apiKeys/jwtSecret) |
+| `GET/PATCH /api/config/agent` | `maxIterations` + `maxContextTokens` hot-update |
+| Settings UI rewrite | 4 cards: AI models (test + show/hide key), Agent params, Security switches, System info summary |
+| Toast notifications | All `alert()` replaced with sonner `toast.success` / `toast.error` |
 
 ---
 
@@ -221,8 +170,28 @@ Intelligent, cost-optimized model selection per request.
 
 | Version | Phases | Status |
 |---------|--------|--------|
-| v0.1.0 (Alpha/Beta) | 1–9 | Released |
-| v0.2.0 | 10 (Foundation fixes) | Planned |
-| v0.3.0 | 11 (Daily work skills) | Planned |
-| v0.4.0 | 12 (Enterprise framework) | Planned |
-| v1.0.0 | 13 (Innovation features) | Planned |
+| v0.1.0 (Alpha) | 1–9 | ✅ Released |
+| v0.2.0 | 10–13 (Enterprise foundation + Innovation) | ✅ Released |
+| v0.3.0 | 14–18 (AIOps + RPA + NL2Insight + Cross-platform) | ✅ Released |
+| v1.0.0 | Production hardening, multi-tenant RBAC, SSO | 🔜 Planned |
+
+---
+
+## Upcoming (v1.0.0)
+
+### Multi-tenant RBAC
+- User accounts with role definitions: `admin`, `operator`, `viewer`
+- Skill-level permission gates; per-role rate limiting
+- SSO: SAML 2.0 / OIDC integration (Azure AD, Okta)
+- Session binding to SSO identity; memory isolation per user
+
+### Production Hardening
+- Audit log: immutable trail for all agent/tool actions, exportable CSV/JSON
+- Rate limiting per user/session; request queue with backpressure
+- Health dashboard: latency percentiles, error rates, LLM cost tracking
+- Docker Compose / Kubernetes deployment manifests
+
+### LLM Router
+- Task classification → cost-optimized model selection
+- Fallback chain on provider error
+- Per-session cost tracking and reporting
