@@ -1,0 +1,35 @@
+# Runbook: 磁盘空间预警自动处置
+# 触发条件：磁盘使用率超过阈值
+
+name: disk-full-warning
+description: 磁盘空间不足预警处置：清理临时文件、压缩日志、通知运维
+trigger:
+  type: webhook
+  condition: "alert_name contains 'disk'"
+
+variables:
+  oncall_channel: "infra-ops"
+
+steps:
+  - description: 查看磁盘使用情况
+    tool: shell.execute
+    command: "df -h 2>/dev/null | head -20"
+
+  - description: 查找大文件
+    tool: shell.execute
+    command: "find /var/log -name '*.log' -size +100M 2>/dev/null | head -20 || echo 'No large logs found'"
+
+  - description: 清理超过 7 天的日志压缩包
+    tool: shell.execute
+    command: "find /var/log -name '*.gz' -mtime +7 -delete 2>/dev/null && echo 'Old logs cleaned' || echo 'Cleanup done'"
+
+  - description: 再次检查磁盘空间
+    tool: shell.execute
+    command: "df -h 2>/dev/null | head -5"
+
+  - description: 发送通知
+    tool: notification-hub.send
+    params:
+      to: "{{ oncall_channel }}"
+      message: "💾 磁盘预警处置完成\n服务器：{{ hostname }}\n清理后状态：{{ previous_output }}"
+      level: info

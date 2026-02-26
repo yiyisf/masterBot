@@ -267,4 +267,159 @@ export class KnowledgeGraph {
         const edgeCount = (db.prepare('SELECT COUNT(*) as c FROM knowledge_edges').get() as any).c;
         return { nodeCount, edgeCount };
     }
+
+    /**
+     * Incremental ingest: update existing node if source+title matches, or create new node.
+     * Does NOT rebuild the full graph.
+     */
+    async incrementalIngest(
+        content: string,
+        metadata: { title: string; type?: string; source?: string; delta?: boolean }
+    ): Promise<{ id: string; action: 'created' | 'updated' }> {
+        this.logger.info(`[knowledge-graph] Incremental ingest: ${metadata.title}`);
+
+        // Check if node already exists by title + source
+        const existing = db.prepare(
+            `SELECT id FROM knowledge_nodes WHERE title = ? AND json_extract(metadata, '$.source') = ? LIMIT 1`
+        ).get(metadata.title, metadata.source || '') as any;
+
+        if (existing) {
+            const now = new Date().toISOString();
+            let embedding: string | null = null;
+            try {
+                const embeddings = await this.llm.embeddings([metadata.title + ' ' + content.substring(0, 200)]);
+                embedding = JSON.stringify(embeddings[0]);
+            } catch {}
+
+            db.prepare(`
+                UPDATE knowledge_nodes SET content = ?, metadata = ?, embedding = ?, updated_at = ? WHERE id = ?
+            `).run(
+                content.substring(0, 2000),
+                JSON.stringify({ source: metadata.source, fullLength: content.length, updatedAt: now }),
+                embedding,
+                now,
+                existing.id
+            );
+
+            return { id: existing.id, action: 'updated' };
+        }
+
+        const id = await this.ingest(content, metadata);
+        return { id, action: 'created' };
+    }
+
+    /**
+     * Find experts for a given topic based on contribution metadata in nodes.
+     * Returns nodes with type 'person' or metadata.contributor, sorted by weight.
+     */
+    findExperts(topic: string): Array<{ name: string; nodeId: string; score: number; relatedNodes: string[] }> {
+        this.logger.info(`[knowledge-graph] Finding experts for: ${topic}`);
+
+        const keywords = topic.toLowerCase().split(/\s+/);
+
+        // Find topic-related nodes
+        const allNodes = this.getAllNodes();
+        const topicNodes: Array<{ node: any; score: number }> = [];
+
+        for (const node of allNodes) {
+            const text = (node.title + ' ' + node.content).toLowerCase();
+            const matches = keywords.filter(k => text.includes(k)).length;
+            if (matches > 0) topicNodes.push({ node, score: matches / keywords.length });
+        }
+
+        if (topicNodes.length === 0) return [];
+
+        // Find person nodes connected to topic nodes
+        const topicIds = new Set(topicNodes.map(t => t.node.id));
+        const expertMap = new Map<string, { score: number; relatedNodes: string[]; nodeId: string }>();
+
+        for (const { node: topicNode, score } of topicNodes) {
+            const edges = this.getEdges(topicNode.id);
+            for (const edge of edges) {
+                const neighborId = edge.fromId === topicNode.id ? edge.toId : edge.fromId;
+                if (topicIds.has(neighborId)) continue;
+
+                const neighbor = this.getNode(neighborId);
+                if (!neighbor) continue;
+
+                const meta = neighbor.metadata as any;
+                if (neighbor.type === 'person' || meta?.role === 'contributor' || meta?.contributor) {
+                    const expertKey = neighbor.title;
+                    const existing = expertMap.get(expertKey);
+                    if (existing) {
+                        existing.score += score * edge.weight;
+                        existing.relatedNodes.push(topicNode.title);
+                    } else {
+                        expertMap.set(expertKey, {
+                            score: score * edge.weight,
+                            relatedNodes: [topicNode.title],
+                            nodeId: neighbor.id,
+                        });
+                    }
+                }
+            }
+        }
+
+        return Array.from(expertMap.entries())
+            .map(([name, data]) => ({ name, nodeId: data.nodeId, score: data.score, relatedNodes: data.relatedNodes }))
+            .sort((a, b) => b.score - a.score)
+            .slice(0, 10);
+    }
+
+    /**
+     * Detect conflicting statements about the same entity across nodes.
+     * Returns pairs of nodes with potentially contradictory content.
+     */
+    async detectConflicts(): Promise<Array<{ nodeA: string; nodeB: string; topic: string; confidence: number }>> {
+        this.logger.info('[knowledge-graph] Detecting knowledge conflicts');
+
+        const allNodes = this.getAllNodes();
+        const conflicts: Array<{ nodeA: string; nodeB: string; topic: string; confidence: number }> = [];
+
+        // Group nodes by similar titles (potential same topic)
+        const titleGroups = new Map<string, typeof allNodes>();
+
+        for (const node of allNodes) {
+            if (node.type === 'chunk' || node.type === 'entity') continue;
+            const key = node.title.toLowerCase().replace(/\s+/g, ' ').trim();
+            if (!titleGroups.has(key)) titleGroups.set(key, []);
+            titleGroups.get(key)!.push(node);
+        }
+
+        // For groups with multiple nodes, check for contradictions via LLM
+        for (const [topic, nodes] of titleGroups) {
+            if (nodes.length < 2) continue;
+
+            try {
+                const nodeA = nodes[0];
+                const nodeB = nodes[1];
+                const response = await this.llm.chat([{
+                    role: 'user',
+                    content: `判断以下两段关于"${topic}"的描述是否存在矛盾。只回答 JSON: {"hasConflict": true/false, "confidence": 0.0-1.0}
+
+文档A: ${nodeA.content.substring(0, 500)}
+
+文档B: ${nodeB.content.substring(0, 500)}`
+                }]);
+
+                const content = typeof response.content === 'string' ? response.content : '';
+                const match = content.match(/\{[\s\S]*\}/);
+                if (match) {
+                    const result = JSON.parse(match[0]);
+                    if (result.hasConflict && result.confidence > 0.7) {
+                        conflicts.push({
+                            nodeA: nodeA.id,
+                            nodeB: nodeB.id,
+                            topic,
+                            confidence: result.confidence,
+                        });
+                    }
+                }
+            } catch {
+                // Skip on LLM error
+            }
+        }
+
+        return conflicts;
+    }
 }

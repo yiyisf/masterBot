@@ -5,6 +5,7 @@ import { nanoid } from 'nanoid';
 import fastifyStatic from '@fastify/static';
 import path from 'path';
 import fs from 'fs';
+import crypto from 'crypto';
 import { llmFactory } from '../llm/index.js';
 import type { Config, ChatRequest, Logger, Message, McpServerConfig } from '../types.js';
 import { Agent } from '../core/agent.js';
@@ -15,6 +16,8 @@ import { McpSkillSource } from '../skills/mcp-source.js';
 import { McpRegistryClient } from '../skills/mcp-registry.js';
 import { createAuthHook } from './auth.js';
 import { db } from '../core/database.js';
+import { webhookRepository } from '../core/webhook-repository.js';
+import { RunbookEngine } from '../core/runbook-engine.js';
 
 /**
  * Gateway 服务器
@@ -756,6 +759,165 @@ export class GatewayServer {
                     this.logger.error(`Workflow execution failed: ${err.message}`);
                 });
                 return { success: true, sessionId };
+            } catch (err: any) {
+                reply.status(500); return { error: err.message };
+            }
+        });
+
+        // ===== WEBHOOKS =====
+        this.app.get('/api/webhooks', async () => {
+            return webhookRepository.list();
+        });
+
+        this.app.post<{ Body: { name: string; description?: string } }>('/api/webhooks', async (request, reply) => {
+            try {
+                const { name, description } = request.body;
+                if (!name) { reply.status(400); return { error: 'name is required' }; }
+                const wh = webhookRepository.create({ name, description });
+                return { success: true, webhook: wh };
+            } catch (err: any) {
+                reply.status(500); return { error: err.message };
+            }
+        });
+
+        this.app.patch<{ Params: { id: string }; Body: any }>('/api/webhooks/:id', async (request, reply) => {
+            try {
+                const wh = webhookRepository.get(request.params.id);
+                if (!wh) { reply.status(404); return { error: 'Webhook not found' }; }
+                const { name, enabled, description } = request.body as { name?: string; enabled?: boolean; description?: string };
+                webhookRepository.update(request.params.id, { name, enabled, description });
+                return { success: true };
+            } catch (err: any) {
+                reply.status(500); return { error: err.message };
+            }
+        });
+
+        this.app.delete<{ Params: { id: string } }>('/api/webhooks/:id', async (request, reply) => {
+            try {
+                webhookRepository.delete(request.params.id);
+                return { success: true };
+            } catch (err: any) {
+                reply.status(500); return { error: err.message };
+            }
+        });
+
+        // Inbound webhook trigger — HMAC-SHA256 signature verification
+        this.app.post<{ Params: { id: string }; Body: any }>(
+            '/api/webhooks/:id/trigger',
+            { config: { rawBody: true } },
+            async (request, reply) => {
+                const { id } = request.params;
+                const wh = webhookRepository.get(id);
+                if (!wh) { reply.status(404); return { error: 'Webhook not found' }; }
+                if (!wh.enabled) { reply.status(403); return { error: 'Webhook is disabled' }; }
+
+                // HMAC-SHA256 signature verification (optional — skip if no signature header)
+                const sigHeader = (request.headers['x-signature'] || request.headers['x-hub-signature-256']) as string | undefined;
+                if (sigHeader) {
+                    const rawBody = (request as any).rawBody as Buffer | undefined;
+                    const bodyStr = rawBody ? rawBody.toString() : JSON.stringify(request.body);
+                    const expected = 'sha256=' + crypto.createHmac('sha256', wh.secret).update(bodyStr).digest('hex');
+                    if (!crypto.timingSafeEqual(Buffer.from(sigHeader), Buffer.from(expected))) {
+                        reply.status(401);
+                        return { error: 'Invalid signature' };
+                    }
+                }
+
+                webhookRepository.recordTrigger(id);
+
+                // Trigger agent execution asynchronously
+                const sessionId = nanoid();
+                const memory = this.sessionManager.getSession(sessionId);
+                const payload = JSON.stringify(request.body || {});
+                const prompt = `Webhook "${wh.name}" triggered with payload: ${payload}\n请分析此 Webhook 事件并采取相应行动。`;
+
+                this.agent.execute(prompt, { sessionId, memory }).catch(err => {
+                    this.logger.error(`Webhook agent execution failed: ${err.message}`);
+                });
+
+                return { success: true, sessionId, message: 'Webhook received, agent triggered' };
+            }
+        );
+
+        // ===== RUNBOOKS =====
+        const runbookEngine = new RunbookEngine(this.agent.getSkillRegistry(), this.logger);
+
+        this.app.get('/api/runbooks', async () => {
+            return runbookEngine.listRunbooks();
+        });
+
+        this.app.post<{ Body: { filename: string; content: string } }>('/api/runbooks', async (request, reply) => {
+            try {
+                const { filename, content } = request.body;
+                if (!filename || !content) { reply.status(400); return { error: 'filename and content required' }; }
+                const { writeFileSync, mkdirSync, existsSync } = await import('fs');
+                const runbooksDir = path.join(process.cwd(), 'runbooks');
+                if (!existsSync(runbooksDir)) mkdirSync(runbooksDir, { recursive: true });
+                const safeName = filename.endsWith('.yaml') ? filename : filename + '.yaml';
+                writeFileSync(path.join(runbooksDir, safeName), content, 'utf-8');
+                return { success: true, filename: safeName };
+            } catch (err: any) {
+                reply.status(500); return { error: err.message };
+            }
+        });
+
+        this.app.post<{ Params: { filename: string }; Body: { variables?: Record<string, unknown> } }>(
+            '/api/runbooks/:filename/execute',
+            async (request, reply) => {
+                try {
+                    const runbook = runbookEngine.loadRunbook(request.params.filename);
+                    const sessionId = nanoid();
+                    const memory = this.sessionManager.getSession(sessionId);
+                    const skillContext = {
+                        sessionId,
+                        logger: this.logger,
+                        memory,
+                        config: (this.config as any).skills || {},
+                        llm: this.agent.getLLMAdapter(),
+                    };
+                    const result = await runbookEngine.execute(runbook, {
+                        sessionId,
+                        variables: request.body?.variables,
+                        skillContext,
+                    });
+                    return result;
+                } catch (err: any) {
+                    reply.status(500); return { error: err.message };
+                }
+            }
+        );
+
+        // ===== RPA API =====
+        this.app.post<{ Body: { type: string; params: Record<string, unknown> } }>('/api/rpa/execute', async (request, reply) => {
+            try {
+                const { type, params } = request.body;
+                const sessionId = nanoid();
+                const memory = this.sessionManager.getSession(sessionId);
+                const skillContext = {
+                    sessionId,
+                    logger: this.logger,
+                    memory,
+                    config: (this.config as any).skills || {},
+                    llm: this.agent.getLLMAdapter(),
+                };
+                const toolName = `browser-automation.${type}`;
+                const result = await this.agent.getSkillRegistry().executeAction(toolName, params, skillContext);
+                return result;
+            } catch (err: any) {
+                reply.status(500); return { error: err.message };
+            }
+        });
+
+        this.app.post<{ Body: { prompt: string; url?: string } }>('/api/rpa/prompt', async (request, reply) => {
+            try {
+                const { prompt, url } = request.body;
+                const sessionId = nanoid();
+                const memory = this.sessionManager.getSession(sessionId);
+                const fullPrompt = `[RPA任务] ${url ? `目标网站: ${url}\n` : ''}${prompt}\n\n请使用 browser-automation 技能完成此任务。每次操作后截图确认状态。`;
+                this.agent.execute(fullPrompt, { sessionId, memory }).catch(err => {
+                    this.logger.error(`RPA agent execution failed: ${err.message}`);
+                });
+                return { success: true, sessionId, message: 'RPA agent started' };
             } catch (err: any) {
                 reply.status(500); return { error: err.message };
             }

@@ -1,5 +1,8 @@
 import { exec, spawn } from 'child_process';
 import { promisify } from 'util';
+import { platform } from 'os';
+import { join, resolve } from 'path';
+import { homedir } from 'os';
 import type { SkillContext } from '../../../src/types.js';
 import { CommandSandbox, type SandboxConfig } from '../../../src/skills/sandbox.js';
 
@@ -12,64 +15,95 @@ function getSandbox(ctx: SkillContext): CommandSandbox | null {
 }
 
 /**
- * 执行 Shell 命令
+ * Resolve cross-platform path: handles ~ and path separators
+ */
+export function resolvePath(rawPath: string): string {
+    if (rawPath.startsWith('~')) {
+        rawPath = join(homedir(), rawPath.slice(1));
+    }
+    return resolve(rawPath);
+}
+
+/**
+ * Get platform-appropriate shell config
+ */
+function getShellConfig(): { shell: string | boolean; hint: string } {
+    if (platform() === 'win32') {
+        return {
+            shell: 'powershell.exe',
+            hint: 'PowerShell syntax (Windows)',
+        };
+    }
+    return {
+        shell: '/bin/sh',
+        hint: 'bash syntax',
+    };
+}
+
+/**
+ * 执行 Shell 命令（跨平台：Windows PowerShell / Unix bash）
  */
 export async function execute(
     ctx: SkillContext,
     params: { command: string; cwd?: string; timeout?: number }
-): Promise<{ stdout: string; stderr: string; exitCode: number }> {
-    const { command, cwd, timeout = 30000 } = params;
+): Promise<{ stdout: string; stderr: string; exitCode: number; platform: string }> {
+    const { command, timeout = 30000 } = params;
+    const cwd = params.cwd ? resolvePath(params.cwd) : process.cwd();
 
     // Sandbox check
     const sandbox = getSandbox(ctx);
     if (sandbox) {
         const check = sandbox.validate(command);
         if (!check.allowed) {
-            return { stdout: '', stderr: `Command blocked: ${check.reason}`, exitCode: 126 };
+            return { stdout: '', stderr: `Command blocked: ${check.reason}`, exitCode: 126, platform: platform() };
         }
     }
 
-    ctx.logger.info(`Executing command: ${command}`);
+    const { shell, hint } = getShellConfig();
+    ctx.logger.info(`Executing command [${hint}]: ${command}`);
 
     try {
         const { stdout, stderr } = await execAsync(command, {
-            cwd: cwd || process.cwd(),
+            cwd,
             timeout,
             maxBuffer: 10 * 1024 * 1024, // 10MB
+            shell: shell as string,
         });
 
-        return { stdout, stderr, exitCode: 0 };
+        return { stdout, stderr, exitCode: 0, platform: platform() };
     } catch (error: any) {
         return {
             stdout: error.stdout || '',
             stderr: error.stderr || error.message,
             exitCode: error.code || 1,
+            platform: platform(),
         };
     }
 }
 
 /**
- * 后台执行命令
+ * 后台执行命令（跨平台）
  */
 export async function execute_background(
     ctx: SkillContext,
     params: { command: string; cwd?: string }
-): Promise<{ pid: number } | { stdout: string; stderr: string; exitCode: number }> {
-    const { command, cwd } = params;
+): Promise<{ pid: number; platform: string } | { stdout: string; stderr: string; exitCode: number; platform: string }> {
+    const { command } = params;
+    const cwd = params.cwd ? resolvePath(params.cwd) : process.cwd();
 
     // Sandbox check
     const sandbox = getSandbox(ctx);
     if (sandbox) {
         const check = sandbox.validate(command);
         if (!check.allowed) {
-            return { stdout: '', stderr: `Command blocked: ${check.reason}`, exitCode: 126 };
+            return { stdout: '', stderr: `Command blocked: ${check.reason}`, exitCode: 126, platform: platform() };
         }
     }
 
     ctx.logger.info(`Spawning background command: ${command}`);
 
     const child = spawn(command, [], {
-        cwd: cwd || process.cwd(),
+        cwd,
         shell: true,
         detached: true,
         stdio: 'ignore',
@@ -77,7 +111,7 @@ export async function execute_background(
 
     child.unref();
 
-    return { pid: child.pid || 0 };
+    return { pid: child.pid || 0, platform: platform() };
 }
 
-export default { execute, execute_background };
+export default { execute, execute_background, resolvePath };

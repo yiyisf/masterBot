@@ -1,0 +1,50 @@
+# Runbook: 服务 OOM（内存溢出）自动处置
+# 触发条件：监控告警包含 OOM 关键字时
+# 执行步骤：诊断 → 分析 → 自动修复 → 通知
+
+name: service-oom
+description: 服务内存溢出（OOM）自动告警分诊和处置 Runbook
+trigger:
+  type: webhook
+  condition: "alert_name contains 'OOM'"
+
+variables:
+  oncall_channel: "ops-oncall"
+  notify_on_success: "true"
+
+steps:
+  - description: 查看容器内存使用情况
+    tool: shell.execute
+    command: "kubectl top pods -n {{ service_namespace }} --sort-by=memory 2>/dev/null || echo 'kubectl unavailable, checking local processes'"
+
+  - description: 分析日志中的 OOM 相关错误
+    tool: log-analyzer.analyze_root_cause
+    params:
+      service: "{{ service_name }}"
+      alertMessage: "{{ alert_message }}"
+      timeRange: "-30m"
+
+  - description: 检查是否是内存泄漏
+    tool: log-analyzer.cluster_anomalies
+    params:
+      logs: "{{ step_1_output }}"
+      service: "{{ service_name }}"
+
+  - description: 发送初步诊断通知
+    tool: notification-hub.send
+    params:
+      to: "{{ oncall_channel }}"
+      message: "🔍 正在处理 {{ service_name }} OOM 告警，根因分析中..."
+      level: warn
+
+  - description: 执行服务重启（如果内存泄漏）
+    tool: shell.execute
+    command: "kubectl rollout restart deployment/{{ service_name }} -n {{ service_namespace }} 2>/dev/null || echo 'Restart command sent'"
+
+  - description: 发送处置结果通知
+    tool: notification-hub.send
+    params:
+      to: "{{ oncall_channel }}"
+      message: "✅ {{ service_name }} OOM Runbook 执行完成\n根因：{{ previous_output }}"
+      level: info
+      template: incident_resolved

@@ -1,0 +1,18 @@
+# CMaster Bot — 数据仓库连接器示例配置
+# 复制此文件为 data-warehouse.yaml 并填入实际配置
+# 文件名即数据源名称：database-connector.execute_query { datasource: "data-warehouse", sql: "..." }
+
+name: data-warehouse
+type: database
+driver: mysql  # mysql | postgresql | sqlite | clickhouse
+host: ${DW_HOST:localhost}
+port: ${DW_PORT:3306}
+database: ${DW_DATABASE:analytics}
+username: ${DW_USER:readonly}
+password: ${DW_PASSWORD:}
+readonly: true
+
+# 自动 mask 的敏感字段（除内置规则外，可在此追加）
+# sensitiveFields:
+#   - user_phone
+#   - customer_email

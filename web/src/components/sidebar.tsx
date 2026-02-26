@@ -22,6 +22,10 @@ import {
   Pin,
   PinOff,
   Pencil,
+  Webhook,
+  BookText,
+  Monitor,
+  BarChart2,
 } from "lucide-react";
 
 
@@ -158,6 +162,16 @@ const data: SidebarData = {
       items: [
         { title: "对话记录", url: "/memory" },
         { title: "知识图谱", url: "/knowledge" },
+      ],
+    },
+    {
+      title: "运维自动化 (AIOps)",
+      url: "/webhooks",
+      icon: Webhook,
+      items: [
+        { title: "Webhook 管理", url: "/webhooks" },
+        { title: "Runbook 执行", url: "/runbooks" },
+        { title: "AI-RPA 自动化", url: "/rpa" },
       ],
     },
   ],

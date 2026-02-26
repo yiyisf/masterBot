@@ -122,6 +122,17 @@ export function initDatabase(): DatabaseSync {
             created_at TEXT NOT NULL,
             updated_at TEXT NOT NULL
         );
+
+        CREATE TABLE IF NOT EXISTS webhooks (
+            id TEXT PRIMARY KEY,
+            name TEXT NOT NULL,
+            secret TEXT NOT NULL,
+            enabled INTEGER NOT NULL DEFAULT 1,
+            description TEXT,
+            created_at TEXT NOT NULL,
+            last_triggered_at TEXT,
+            trigger_count INTEGER NOT NULL DEFAULT 0
+        );
     `);
 
     // Auto-migration for existing databases
