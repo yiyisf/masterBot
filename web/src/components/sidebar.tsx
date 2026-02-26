@@ -189,6 +189,8 @@ const data: SidebarData = {
   ],
 };
 
+const SESSION_LIMIT = 10;
+
 /**
  * Session list component for the sidebar
  */
@@ -198,7 +200,6 @@ function SessionList() {
   const [editingId, setEditingId] = React.useState<string | null>(null);
   const [editTitle, setEditTitle] = React.useState("");
   const router = useRouter();
-  const pathname = usePathname();
 
   const loadSessions = React.useCallback(async () => {
     try {
@@ -279,65 +280,81 @@ function SessionList() {
     );
   }
 
+  // Show at most SESSION_LIMIT items; pinned sessions always visible first
+  const displayed = sessions.slice(0, SESSION_LIMIT);
+  const hasMore = sessions.length > SESSION_LIMIT;
+
   return (
-    <ScrollArea className="max-h-[300px]">
-      <div className="space-y-0.5 px-1">
-        {sessions.map(session => (
-          <div
-            key={session.id}
-            className="group/session flex items-center gap-1 rounded-md px-2 py-1.5 text-xs hover:bg-muted/50 cursor-pointer transition-colors"
-            onClick={() => router.push(`/chat?sessionId=${session.id}`)}
-          >
-            {session.is_pinned && <Pin className="w-3 h-3 text-amber-500 shrink-0" />}
-            {editingId === session.id ? (
-              <input
-                className="flex-1 bg-transparent border-b border-primary text-xs outline-none min-w-0"
-                value={editTitle}
-                onChange={(e) => setEditTitle(e.target.value)}
-                onBlur={() => handleRename(session.id)}
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter') handleRename(session.id);
-                  if (e.key === 'Escape') setEditingId(null);
-                }}
-                autoFocus
-                onClick={(e) => e.stopPropagation()}
-              />
-            ) : (
-              <span className="flex-1 truncate text-muted-foreground group-hover/session:text-foreground transition-colors">
-                {session.title}
-              </span>
-            )}
-            <div className="flex gap-0.5 opacity-0 group-hover/session:opacity-100 transition-opacity shrink-0">
-              <button
-                onClick={(e) => {
-                  e.stopPropagation();
-                  setEditingId(session.id);
-                  setEditTitle(session.title);
-                }}
-                className="p-0.5 rounded hover:bg-muted"
-                title="重命名"
-              >
-                <Pencil className="w-3 h-3" />
-              </button>
-              <button
-                onClick={(e) => handleTogglePin(session.id, session.is_pinned, e)}
-                className="p-0.5 rounded hover:bg-muted"
-                title={session.is_pinned ? "取消置顶" : "置顶"}
-              >
-                {session.is_pinned ? <PinOff className="w-3 h-3" /> : <Pin className="w-3 h-3" />}
-              </button>
-              <button
-                onClick={(e) => handleDelete(session.id, e)}
-                className="p-0.5 rounded hover:bg-destructive/10 text-destructive"
-                title="删除"
-              >
-                <Trash2 className="w-3 h-3" />
-              </button>
+    // flex-col + min-h-0 so this div participates in the parent flex layout
+    <div className="flex flex-col min-h-0 flex-1">
+      <ScrollArea className="flex-1 min-h-0">
+        <div className="space-y-0.5 px-1">
+          {displayed.map(session => (
+            <div
+              key={session.id}
+              className="group/session flex items-center gap-1 rounded-md px-2 py-1.5 text-xs hover:bg-muted/50 cursor-pointer transition-colors"
+              onClick={() => router.push(`/chat?sessionId=${session.id}`)}
+            >
+              {session.is_pinned && <Pin className="w-3 h-3 text-amber-500 shrink-0" />}
+              {editingId === session.id ? (
+                <input
+                  className="flex-1 bg-transparent border-b border-primary text-xs outline-none min-w-0"
+                  value={editTitle}
+                  onChange={(e) => setEditTitle(e.target.value)}
+                  onBlur={() => handleRename(session.id)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') handleRename(session.id);
+                    if (e.key === 'Escape') setEditingId(null);
+                  }}
+                  autoFocus
+                  onClick={(e) => e.stopPropagation()}
+                />
+              ) : (
+                <span className="flex-1 truncate text-muted-foreground group-hover/session:text-foreground transition-colors">
+                  {session.title}
+                </span>
+              )}
+              <div className="flex gap-0.5 opacity-0 group-hover/session:opacity-100 transition-opacity shrink-0">
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setEditingId(session.id);
+                    setEditTitle(session.title);
+                  }}
+                  className="p-0.5 rounded hover:bg-muted"
+                  title="重命名"
+                >
+                  <Pencil className="w-3 h-3" />
+                </button>
+                <button
+                  onClick={(e) => handleTogglePin(session.id, session.is_pinned, e)}
+                  className="p-0.5 rounded hover:bg-muted"
+                  title={session.is_pinned ? "取消置顶" : "置顶"}
+                >
+                  {session.is_pinned ? <PinOff className="w-3 h-3" /> : <Pin className="w-3 h-3" />}
+                </button>
+                <button
+                  onClick={(e) => handleDelete(session.id, e)}
+                  className="p-0.5 rounded hover:bg-destructive/10 text-destructive"
+                  title="删除"
+                >
+                  <Trash2 className="w-3 h-3" />
+                </button>
+              </div>
             </div>
-          </div>
-        ))}
-      </div>
-    </ScrollArea>
+          ))}
+        </div>
+      </ScrollArea>
+      {hasMore && (
+        <Link
+          href="/memory"
+          className="mx-3 mt-1 mb-0.5 flex items-center gap-1 text-[11px] text-muted-foreground hover:text-foreground transition-colors"
+        >
+          <ChevronRight className="w-3 h-3" />
+          查看全部 {sessions.length} 条会话
+        </Link>
+      )}
+    </div>
   );
 }
 
@@ -365,8 +382,9 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
         <SidebarTrigger className="shrink-0" />
       </SidebarHeader>
 
-      <SidebarContent>
-        <SidebarGroup>
+      {/* overflow-hidden overrides the default overflow-auto so only the inner ScrollArea scrolls */}
+      <SidebarContent className="overflow-hidden">
+        <SidebarGroup className="shrink-0">
           <SidebarGroupLabel className="px-2 font-semibold">主平台 (Platform)</SidebarGroupLabel>
           <SidebarMenu>
             {data.navMain.map((item) => (
@@ -408,9 +426,9 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
           </SidebarMenu>
         </SidebarGroup>
 
-        {/* Session List */}
-        <SidebarGroup>
-          <SidebarGroupLabel className="px-2 font-semibold flex items-center justify-between">
+        {/* Session List — flex-1 takes all remaining height; hidden in icon mode */}
+        <SidebarGroup className="flex-1 min-h-0 overflow-hidden group-data-[collapsible=icon]:hidden">
+          <SidebarGroupLabel className="px-2 font-semibold flex items-center justify-between shrink-0">
             <span>历史会话 (History)</span>
             <Link
               href="/chat"
@@ -420,29 +438,27 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
               <Plus className="size-3.5" />
             </Link>
           </SidebarGroupLabel>
-          <SidebarGroupContent>
+          <SidebarGroupContent className="flex flex-col min-h-0 flex-1 overflow-hidden">
             <SessionList />
           </SidebarGroupContent>
-        </SidebarGroup>
-
-        <SidebarGroup className="mt-auto">
-          <SidebarGroupLabel className="px-2 font-semibold">系统运营 (Operations)</SidebarGroupLabel>
-          <SidebarMenu>
-            {data.navSecondary.map((item) => (
-              <SidebarMenuItem key={item.title}>
-                <SidebarMenuButton asChild size="sm" isActive={pathname === item.url} tooltip={item.title}>
-                  <Link href={item.url}>
-                    <item.icon className="size-4" />
-                    <span>{item.title}</span>
-                  </Link>
-                </SidebarMenuButton>
-              </SidebarMenuItem>
-            ))}
-          </SidebarMenu>
         </SidebarGroup>
       </SidebarContent>
 
       <SidebarFooter>
+        {/* Secondary nav anchored to footer — never overlaps session list */}
+        <SidebarMenu>
+          {data.navSecondary.map((item) => (
+            <SidebarMenuItem key={item.title}>
+              <SidebarMenuButton asChild size="sm" isActive={pathname === item.url} tooltip={item.title}>
+                <Link href={item.url}>
+                  <item.icon className="size-4" />
+                  <span>{item.title}</span>
+                </Link>
+              </SidebarMenuButton>
+            </SidebarMenuItem>
+          ))}
+        </SidebarMenu>
+
         <SidebarMenu>
           <SidebarMenuItem>
             <DropdownMenu>
