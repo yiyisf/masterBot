@@ -2,9 +2,16 @@ import type { SkillContext } from '../../../src/types.js';
 import { readFileSync, writeFileSync, existsSync } from 'fs';
 import { extname, join, resolve } from 'path';
 import { homedir } from 'os';
+import { createRequire } from 'module';
+
+// Use createRequire for CJS packages to avoid ESM double-wrapping issues
+const _require = createRequire(import.meta.url);
 
 /** 展开 ~ 并解析为绝对路径 */
-function expandPath(p: string): string {
+function expandPath(p: unknown): string {
+    if (!p || typeof p !== 'string') {
+        throw new Error(`缺少必要参数 path：请提供文件路径`);
+    }
     if (p.startsWith('~/') || p === '~') {
         return resolve(join(homedir(), p.slice(1)));
     }
@@ -25,16 +32,22 @@ export async function read_pdf(
         throw new Error(`文件不存在: ${filePath}`);
     }
 
-    let pdfParse: typeof import('pdf-parse');
+    let PDFParseClass: new (opts: { data: Buffer }) => { getText(): Promise<{ text: string; total: number }> };
     try {
-        pdfParse = await import('pdf-parse');
-    } catch {
-        throw new Error('pdf-parse 未安装，请运行 npm install pdf-parse');
+        const mod = _require('pdf-parse');
+        // v2: module.exports = { PDFParse (class), ... }
+        // v1: module.exports = function(buffer) (plain function, no longer published)
+        PDFParseClass = mod.PDFParse ?? mod.default ?? mod;
+        if (typeof PDFParseClass !== 'function') throw new Error('no callable export');
+    } catch (e: any) {
+        if (e.code === 'MODULE_NOT_FOUND') throw new Error('pdf-parse 未安装，请运行 npm install pdf-parse');
+        throw e;
     }
 
     const buffer = readFileSync(filePath);
-    const data = await pdfParse.default(buffer);
-    return `PDF 文本内容（共 ${data.numpages} 页）:\n\n${data.text}`;
+    const parser = new PDFParseClass({ data: buffer });
+    const data = await parser.getText();
+    return `PDF 文本内容（共 ${data.total} 页）:\n\n${data.text}`;
 }
 
 /**
@@ -54,7 +67,7 @@ export async function read_docx(
 
     let mammoth: typeof import('mammoth');
     try {
-        mammoth = await import('mammoth');
+        mammoth = _require('mammoth');
     } catch {
         throw new Error('mammoth 未安装，请运行 npm install mammoth');
     }
@@ -86,7 +99,7 @@ export async function read_xlsx(
 
     let XLSX: typeof import('xlsx');
     try {
-        XLSX = await import('xlsx');
+        XLSX = _require('xlsx');
     } catch {
         throw new Error('xlsx 未安装，请运行 npm install xlsx');
     }
@@ -128,7 +141,7 @@ export async function write_xlsx(
 
     let XLSX: typeof import('xlsx');
     try {
-        XLSX = await import('xlsx');
+        XLSX = _require('xlsx');
     } catch {
         throw new Error('xlsx 未安装，请运行 npm install xlsx');
     }

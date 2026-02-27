@@ -3,6 +3,8 @@ name: browser-automation
 version: 1.0.0
 description: AI-RPA 浏览器自动化技能，基于 Playwright。支持截图、点击、键盘输入、文件上传、表格提取。跨平台：Windows 优先驱动 Edge（内置），macOS 优先驱动 Chrome。适合操作无 API 的内部遗留系统（ERP/OA/财务）。
 author: CMaster Bot
+dependencies:
+  playwright: "^1.40.0"
 ---
 
 # browser-automation

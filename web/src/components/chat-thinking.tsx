@@ -1,7 +1,18 @@
 import { motion, AnimatePresence } from "framer-motion";
-import { Sparkles, ChevronRight, ListTodo, CheckCircle2, Clock, Loader2 } from "lucide-react";
+import { Sparkles, ChevronRight, ListTodo, CheckCircle2, XCircle, Clock, Loader2 } from "lucide-react";
 import { Card } from "@/components/ui/card";
 import { cn } from "@/lib/utils";
+
+function isErrorObservation(observation: string): boolean {
+    return (
+        observation.startsWith('Error:') ||
+        observation.startsWith('技能 ') ||
+        observation.includes('不可用') ||
+        observation.includes('依赖包缺失') ||
+        observation.includes('not found in any registered source') ||
+        /^Error\b/.test(observation)
+    );
+}
 
 export interface ChatStep {
     thought?: string;
@@ -75,15 +86,25 @@ export function ChatThinking({ steps }: { steps: ChatStep[] }) {
                                         {step.action}
                                     </div>
                                 </div>
-                                {step.observation && (
-                                    <div className="text-xs text-muted-foreground bg-muted/20 p-2 rounded-md font-mono overflow-x-auto max-h-[100px]">
-                                        <div className="flex items-center gap-1.5 mb-1 opacity-70">
-                                            <CheckCircle2 className="w-3 h-3 text-green-500" />
-                                            <span>Result:</span>
+                                {step.observation && (() => {
+                                    const isError = isErrorObservation(step.observation);
+                                    return (
+                                        <div className={cn(
+                                            "text-xs p-2 rounded-md font-mono overflow-x-auto max-h-[100px]",
+                                            isError
+                                                ? "text-red-700 dark:text-red-400 bg-red-50 dark:bg-red-950/20 border border-red-200 dark:border-red-900/40"
+                                                : "text-muted-foreground bg-muted/20"
+                                        )}>
+                                            <div className="flex items-center gap-1.5 mb-1 opacity-80">
+                                                {isError
+                                                    ? <><XCircle className="w-3 h-3 text-red-500" /><span>执行失败:</span></>
+                                                    : <><CheckCircle2 className="w-3 h-3 text-green-500" /><span>Result:</span></>
+                                                }
+                                            </div>
+                                            {step.observation}
                                         </div>
-                                        {step.observation}
-                                    </div>
-                                )}
+                                    );
+                                })()}
                             </div>
                         )}
                     </div>

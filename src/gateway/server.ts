@@ -6,6 +6,7 @@ import fastifyStatic from '@fastify/static';
 import path from 'path';
 import fs from 'fs';
 import crypto from 'crypto';
+import { execFile } from 'child_process';
 import { llmFactory } from '../llm/index.js';
 import type { Config, ChatRequest, Logger, Message, McpServerConfig } from '../types.js';
 import { Agent } from '../core/agent.js';
@@ -282,9 +283,10 @@ export class GatewayServer {
             });
         });
 
-        // List skills (Derived from tools)
+        // List skills (Derived from tools + metadata)
         this.app.get('/api/skills', async () => {
-            const tools = await this.agent.getSkillRegistry().getToolDefinitions();
+            const skillReg = this.agent.getSkillRegistry();
+            const tools = await skillReg.getToolDefinitions();
 
             // Group tools by skill name (prefix before first dot)
             const skillMap = new Map<string, { name: string; actions: string[] }>();
@@ -292,20 +294,92 @@ export class GatewayServer {
             for (const tool of tools) {
                 const [skillName, actionName] = tool.function.name.split('.');
                 if (!skillMap.has(skillName)) {
-                    skillMap.set(skillName, {
-                        name: skillName,
-                        actions: []
-                    });
+                    skillMap.set(skillName, { name: skillName, actions: [] });
                 }
                 skillMap.get(skillName)?.actions.push(actionName);
             }
 
-            return Array.from(skillMap.values()).map(s => ({
-                name: s.name,
-                version: '2.0.0', // Dynamic version not available in ToolDefinition
-                description: 'Loaded via Skill Registry 2.0',
-                actions: s.actions,
-            }));
+            return Array.from(skillMap.values()).map(s => {
+                const skillMeta = skillReg.getSkill(s.name)?.metadata;
+                return {
+                    name: s.name,
+                    version: skillMeta?.version ?? '2.0.0',
+                    description: skillMeta?.description ?? 'Loaded via Skill Registry 2.0',
+                    actions: s.actions,
+                    status: skillMeta?.status ?? 'active',
+                    loadError: skillMeta?.loadError,
+                    dependencies: skillMeta?.dependencies,
+                };
+            });
+        });
+
+        // Repair skill: install missing npm deps and hot-reload
+        this.app.post<{ Params: { name: string } }>('/api/skills/:name/repair', async (request, reply) => {
+            const { name } = request.params;
+            const skillReg = this.agent.getSkillRegistry();
+            const skill = skillReg.getSkill(name);
+
+            if (!skill) {
+                reply.status(404);
+                return { error: `Skill "${name}" not found` };
+            }
+
+            const deps = skill.metadata.dependencies;
+            if (!deps || Object.keys(deps).length === 0) {
+                reply.status(400);
+                return { error: `Skill "${name}" has no declared dependencies` };
+            }
+
+            const packages = Object.keys(deps);
+            this.logger.info(`Repairing skill "${name}": installing ${packages.join(', ')}`);
+
+            try {
+                await new Promise<void>((resolve, reject) => {
+                    execFile(
+                        'npm',
+                        ['install', '--save', ...packages],
+                        { cwd: process.cwd() },
+                        (err, stdout, stderr) => {
+                            if (err) {
+                                this.logger.error(`npm install failed: ${stderr || err.message}`);
+                                reject(new Error(stderr || err.message));
+                            } else {
+                                this.logger.info(`npm install success: ${stdout}`);
+                                resolve();
+                            }
+                        }
+                    );
+                });
+
+                // Hot-reload skill
+                // Find skill directory from local-files source
+                const localSource = skillReg.getAllSources()
+                    .find((s: any) => s.name === 'local-files') as any;
+
+                if (localSource && typeof localSource.getSkill === 'function') {
+                    // Reload from its original directory by re-finding it
+                    const skillDirs = (this as any).config?.skills?.directories ?? [];
+                    let reloaded = false;
+                    for (const dir of skillDirs) {
+                        const { join, resolve: resolvePath } = await import('path');
+                        const skillDir = resolvePath(join(dir, name));
+                        const { existsSync } = await import('fs');
+                        if (existsSync(skillDir)) {
+                            await localSource.loadSkill(skillDir);
+                            reloaded = true;
+                            break;
+                        }
+                    }
+                    if (!reloaded) {
+                        this.logger.warn(`Could not find skill directory for "${name}" to hot-reload`);
+                    }
+                }
+
+                return { success: true, message: `依赖安装成功，技能 "${name}" 已热重载` };
+            } catch (err: any) {
+                reply.status(500);
+                return { error: err.message };
+            }
         });
 
         // --- MCP Management API ---

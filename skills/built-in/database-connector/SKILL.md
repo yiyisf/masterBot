@@ -3,6 +3,9 @@ name: database-connector
 version: 1.0.0
 description: 安全只读数据库连接器，支持 NL2SQL 场景。支持 MySQL、PostgreSQL、SQLite 等数据源，内置 SQL 安全沙箱（仅允许 SELECT），自动 mask 敏感字段。
 author: CMaster Bot
+dependencies:
+  mysql2: "^3.6.0"
+  pg: "^8.11.0"
 ---
 
 # database-connector

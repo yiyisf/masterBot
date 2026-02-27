@@ -4,7 +4,7 @@ version: 1.0.0
 description: 文件管理技能，支持文件读写、目录操作和搜索
 author: CMaster Team
 dependencies:
-  - glob: ^11.0.0
+  glob: "^11.0.0"
 ---
 
 # File Manager Skill

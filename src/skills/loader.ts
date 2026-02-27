@@ -16,6 +16,7 @@ export class LocalSkillSource implements SkillSource {
     private skills: Map<string, Skill> = new Map();
     private directories: string[];
     private logger: Logger;
+    private loadErrors: Map<string, string> = new Map();
 
     constructor(directories: string[], logger: Logger) {
         this.directories = directories;
@@ -80,8 +81,31 @@ export class LocalSkillSource implements SkillSource {
                 const moduleUrl = pathToFileURL(modulePath).href;
                 implementation = await import(moduleUrl);
             } catch (error) {
-                this.logger.warn(`Could not load implementation for ${parsed.metadata.name}: ${error}`);
+                const errMsg = String(error);
+                this.logger.warn(`Could not load implementation for ${parsed.metadata.name}: ${errMsg}`);
+                const loadError = errMsg.includes('Cannot find module') || errMsg.includes('Cannot find package')
+                    ? `依赖包缺失: ${errMsg}`
+                    : `加载失败: ${errMsg}`;
+                parsed.metadata.loadError = loadError;
+                parsed.metadata.status = 'degraded';
+                this.loadErrors.set(parsed.metadata.name, loadError);
             }
+        }
+
+        // 依赖探测：若 SKILL.md 声明了 dependencies 且尚无 loadError，逐一 probe
+        if (parsed.metadata.dependencies && !parsed.metadata.loadError) {
+            const missing = await this.checkDependencies(parsed.metadata.dependencies);
+            if (missing.length > 0) {
+                const loadError = `依赖包缺失，请运行 npm install: ${missing.join(', ')}`;
+                parsed.metadata.loadError = loadError;
+                parsed.metadata.status = 'degraded';
+                this.loadErrors.set(parsed.metadata.name, loadError);
+                this.logger.warn(`Skill "${parsed.metadata.name}" missing dependencies: ${missing.join(', ')}`);
+            }
+        }
+
+        if (!parsed.metadata.status) {
+            parsed.metadata.status = 'active';
         }
 
         // 构建技能对象
@@ -90,7 +114,7 @@ export class LocalSkillSource implements SkillSource {
         for (const actionDef of parsed.actions) {
             const handler = (implementation[actionDef.name] as SkillAction['handler'])
                 || (implementation.default as Record<string, SkillAction['handler']>)?.[actionDef.name]
-                || this.createPlaceholderHandler(actionDef.name);
+                || this.createPlaceholderHandler(actionDef.name, parsed.metadata.name);
 
             actions.set(actionDef.name, {
                 name: actionDef.name,
@@ -126,10 +150,39 @@ export class LocalSkillSource implements SkillSource {
         return skill;
     }
 
-    private createPlaceholderHandler(actionName: string): SkillAction['handler'] {
+    private createPlaceholderHandler(actionName: string, skillName: string): SkillAction['handler'] {
+        const loadError = this.loadErrors.get(skillName);
         return async () => {
-            throw new Error(`Action "${actionName}" is not implemented`);
+            const reason = loadError ? `（原因: ${loadError}）` : '';
+            throw new Error(`技能 '${skillName}' 不可用${reason}`);
         };
+    }
+
+    /**
+     * 检测 npm 依赖是否已安装
+     */
+    private async checkDependencies(deps: Record<string, string>): Promise<string[]> {
+        // Guard: deps must be a plain object (not array). Array means YAML was malformed.
+        if (Array.isArray(deps) || typeof deps !== 'object') {
+            this.logger.warn(`Invalid dependencies format (expected object mapping, got ${Array.isArray(deps) ? 'array' : typeof deps}). Check SKILL.md YAML.`);
+            return [];
+        }
+        const missing: string[] = [];
+        for (const pkg of Object.keys(deps)) {
+            try {
+                await import(pkg);
+            } catch {
+                missing.push(pkg);
+            }
+        }
+        return missing;
+    }
+
+    /**
+     * 获取技能元数据（包含状态和错误信息）
+     */
+    getSkill(name: string): Skill | undefined {
+        return this.skills.get(name);
     }
 
     /**

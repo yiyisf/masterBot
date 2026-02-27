@@ -85,6 +85,8 @@ export interface SkillMetadata {
     description: string;
     author?: string;
     dependencies?: Record<string, string>;
+    loadError?: string;              // 加载失败原因
+    status?: 'active' | 'degraded'; // 可用性状态
 }
 
 export interface SkillAction {

@@ -10,7 +10,8 @@ import { Label } from "@/components/ui/label";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { Textarea } from "@/components/ui/textarea";
-import { Puzzle, Box, Code, Server, Plus, Trash2, Terminal, Globe, Search, Download, ExternalLink, Loader2, Sparkles, Wand2, CheckCircle2, XCircle } from "lucide-react";
+import { Puzzle, Box, Code, Server, Plus, Trash2, Terminal, Globe, Search, Download, ExternalLink, Loader2, Sparkles, Wand2, CheckCircle2, XCircle, AlertCircle, Wrench } from "lucide-react";
+import { toast } from "sonner";
 import { fetchApi } from "@/lib/api";
 
 type McpServerConfig = {
@@ -46,9 +47,20 @@ type RegistryServer = {
     }>;
 };
 
+type SkillInfo = {
+    name: string;
+    version: string;
+    description: string;
+    actions: string[];
+    status?: 'active' | 'degraded';
+    loadError?: string;
+    dependencies?: Record<string, string>;
+};
+
 export default function SkillsPage() {
-    const [skills, setSkills] = useState<any[]>([]);
+    const [skills, setSkills] = useState<SkillInfo[]>([]);
     const [mcpConfigs, setMcpConfigs] = useState<McpServerConfig[]>([]);
+    const [repairing, setRepairing] = useState<string | null>(null);
     const [isAddOpen, setIsAddOpen] = useState(false);
     const [newConfig, setNewConfig] = useState<Partial<McpServerConfig>>({
         type: 'stdio',
@@ -76,6 +88,20 @@ export default function SkillsPage() {
         fetchApi("/api/mcp/config")
             .then((data: any) => setMcpConfigs(Array.isArray(data) ? data : []))
             .catch(console.error);
+    };
+
+    const repairSkill = async (skillName: string) => {
+        setRepairing(skillName);
+        toast.loading(`正在安装 "${skillName}" 的依赖...`, { id: `repair-${skillName}` });
+        try {
+            const result: any = await fetchApi(`/api/skills/${skillName}/repair`, { method: 'POST', body: '{}' });
+            toast.success(result.message || `技能 "${skillName}" 修复成功`, { id: `repair-${skillName}` });
+            loadData();
+        } catch (err: any) {
+            toast.error(err.message || `修复失败`, { id: `repair-${skillName}` });
+        } finally {
+            setRepairing(null);
+        }
     };
 
     const handleAddServer = async () => {
@@ -209,21 +235,26 @@ export default function SkillsPage() {
 
                 <TabsContent value="available" className="mt-6">
                     <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-2">
-                        {skills.map((skill) => (
-                            <Card key={skill.name}>
+                        {skills.map((skill) => {
+                            const isDegraded = skill.status === 'degraded';
+                            return (
+                            <Card key={skill.name} className={isDegraded ? 'border-red-200 dark:border-red-900/40' : ''}>
                                 <CardHeader className="flex flex-row items-start justify-between space-y-0">
-                                    <div className="space-y-1">
-                                        <CardTitle className="flex items-center gap-2">
-                                            <Puzzle className="w-4 h-4 text-primary" />
+                                    <div className="space-y-1 flex-1 min-w-0">
+                                        <CardTitle className="flex items-center gap-2 flex-wrap">
+                                            <Puzzle className="w-4 h-4 text-primary shrink-0" />
                                             {skill.name}
                                             <Badge variant="secondary" className="text-[10px]">{skill.version}</Badge>
+                                            {isDegraded && (
+                                                <Badge variant="destructive" className="text-[10px]">不可用</Badge>
+                                            )}
                                         </CardTitle>
                                         <CardDescription>{skill.description}</CardDescription>
                                     </div>
-                                    <Switch checked={true} disabled />
+                                    <Switch checked={!isDegraded} disabled />
                                 </CardHeader>
                                 <CardContent>
-                                    <div className="space-y-4">
+                                    <div className="space-y-3">
                                         <div className="flex flex-wrap gap-2">
                                             {skill.actions.map((action: string) => (
                                                 <Badge key={action} variant="outline" className="font-mono text-[10px] flex gap-1 items-center">
@@ -232,10 +263,32 @@ export default function SkillsPage() {
                                                 </Badge>
                                             ))}
                                         </div>
+                                        {isDegraded && skill.loadError && (
+                                            <div className="flex items-start gap-2 p-2 rounded-md bg-red-50 dark:bg-red-950/20 border border-red-200 dark:border-red-900/40 text-xs text-red-700 dark:text-red-400">
+                                                <AlertCircle className="w-3.5 h-3.5 shrink-0 mt-0.5" />
+                                                <span className="break-all">{skill.loadError}</span>
+                                            </div>
+                                        )}
+                                        {isDegraded && skill.dependencies && (
+                                            <Button
+                                                size="sm"
+                                                variant="outline"
+                                                className="gap-1.5 text-xs border-red-300 text-red-700 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-950/20"
+                                                onClick={() => repairSkill(skill.name)}
+                                                disabled={repairing === skill.name}
+                                            >
+                                                {repairing === skill.name
+                                                    ? <Loader2 className="w-3 h-3 animate-spin" />
+                                                    : <Wrench className="w-3 h-3" />
+                                                }
+                                                一键安装依赖
+                                            </Button>
+                                        )}
                                     </div>
                                 </CardContent>
                             </Card>
-                        ))}
+                            );
+                        })}
                         {skills.length === 0 && (
                             <div className="col-span-full py-20 text-center border-2 border-dashed rounded-xl space-y-4">
                                 <Box className="w-12 h-12 text-muted-foreground mx-auto" />

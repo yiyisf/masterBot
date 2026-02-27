@@ -64,24 +64,37 @@ function parseActionsFromMarkdown(content: string): ParsedSkillMd['actions'] {
         const description = descMatch ? descMatch[1].trim() : '';
 
         // 解析参数
+        // 括号内允许 "type" 或 "type, required" 或 "type, 可选" 等格式
         const parameters: ParsedSkillMd['actions'][0]['parameters'] = {};
-        const paramRegex = /[-*]\s+\*\*(?:参数|参数名)?[:：]?\s*\*\*[:：]?\s*`(\w+)`\s*\((\w+)\)\s*[-–]?\s*(.*)/g;
-        const altParamRegex = /[-*]\s+`(\w+)`\s*\((\w+)\)\s*[-–]?\s*(.*)/g;
+        const paramRegex = /[-*]\s+\*\*(?:参数|参数名)?[:：]?\s*\*\*[:：]?\s*`(\w+)`\s*\(([^)]+)\)\s*[-–]?\s*(.*)/g;
+        const altParamRegex = /[-*]\s+`(\w+)`\s*\(([^)]+)\)\s*[-–]?\s*(.*)/g;
+
+        const parseTypeStr = (raw: string) => {
+            const parts = raw.split(',').map(s => s.trim());
+            const type = parts[0] || 'string';
+            const isOptional = parts.some(p => p === '可选' || p === 'optional');
+            const isRequired = parts.some(p => p === 'required' || p === '必填');
+            return { type, isOptional, isRequired };
+        };
 
         let paramMatch;
         while ((paramMatch = paramRegex.exec(body)) !== null) {
+            const { type, isOptional, isRequired } = parseTypeStr(paramMatch[2]);
+            const desc = paramMatch[3]?.trim() ?? '';
             parameters[paramMatch[1]] = {
-                type: paramMatch[2],
-                description: paramMatch[3]?.trim(),
-                required: !paramMatch[3]?.includes('可选'),
+                type,
+                description: desc,
+                required: isRequired || (!isOptional && !desc.includes('可选')),
             };
         }
         while ((paramMatch = altParamRegex.exec(body)) !== null) {
             if (!parameters[paramMatch[1]]) {
+                const { type, isOptional, isRequired } = parseTypeStr(paramMatch[2]);
+                const desc = paramMatch[3]?.trim() ?? '';
                 parameters[paramMatch[1]] = {
-                    type: paramMatch[2],
-                    description: paramMatch[3]?.trim(),
-                    required: true,
+                    type,
+                    description: desc,
+                    required: isRequired || (!isOptional && !desc.includes('可选')),
                 };
             }
         }
@@ -165,28 +178,59 @@ export class SkillRegistry {
 
     /**
      * 统一执行入口
+     * 注意：getTools() 和 execute() 分开处理：
+     * - getTools() 失败时跳过该 source 继续找
+     * - execute() 失败时直接向上传播（不吞掉实际错误）
      */
     async executeAction(
         toolName: string,
         params: Record<string, unknown>,
         context: SkillContext
     ): Promise<unknown> {
-        // Find which source owns this tool
-        // Optimization: We could cache tool->source mapping, but for now we search
         for (const source of this.sources.values()) {
+            let tools: ToolDefinition[];
             try {
-                const tools = await source.getTools();
-                const found = tools.find(t => t.function.name === toolName);
-
-                if (found) {
-                    return await source.execute(toolName, params, context);
-                }
+                tools = await source.getTools();
             } catch (error) {
-                this.logger.warn(`Error searching tool in source ${source.name}: ${error}`);
+                this.logger.warn(`Error getting tools from source ${source.name}: ${error}`);
+                continue;
+            }
+
+            const found = tools.find(t => t.function.name === toolName);
+            if (found) {
+                // 找到了就直接执行，执行错误自然传播（不 catch）
+                return await source.execute(toolName, params, context);
             }
         }
 
         throw new Error(`Tool "${toolName}" not found in any registered source`);
+    }
+
+    /**
+     * 获取技能元数据（从 local-files source）
+     */
+    getSkill(name: string): import('../types.js').Skill | undefined {
+        for (const source of this.sources.values()) {
+            if (typeof (source as any).getSkill === 'function') {
+                const skill = (source as any).getSkill(name);
+                if (skill) return skill;
+            }
+        }
+        return undefined;
+    }
+
+    /**
+     * 热重载技能（在 local-files source 中重新加载）
+     */
+    async reloadSkill(skillDir: string): Promise<void> {
+        for (const source of this.sources.values()) {
+            if (source.name === 'local-files' && typeof (source as any).loadSkill === 'function') {
+                await (source as any).loadSkill(skillDir);
+                this.logger.info(`Skill reloaded from: ${skillDir}`);
+                return;
+            }
+        }
+        throw new Error(`No local-files source found to reload skill`);
     }
 
     /**
