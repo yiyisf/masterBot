@@ -1,15 +1,7 @@
 import type { SkillContext, Message, MessageContentPart } from '../../../src/types.js';
 import { readFileSync, existsSync } from 'fs';
-import { extname, join, resolve } from 'path';
-import { homedir } from 'os';
-
-/** 展开 ~ 并解析为绝对路径 */
-function expandPath(p: string): string {
-    if (p.startsWith('~/') || p === '~') {
-        return resolve(join(homedir(), p.slice(1)));
-    }
-    return resolve(p);
-}
+import { extname } from 'path';
+import { expandPath } from '../../../src/skills/utils.js';
 
 // Supported image extensions
 const IMAGE_EXTENSIONS = new Set(['.jpg', '.jpeg', '.png', '.gif', '.webp', '.bmp']);

@@ -3,20 +3,13 @@
  * Cross-platform: Windows uses Edge, macOS/Linux uses Chrome
  * Requires: npm install playwright && npx playwright install msedge chromium
  */
-import { platform, homedir } from 'os';
-import { join, resolve } from 'path';
+import { platform } from 'os';
 import type { SkillContext } from '../../../src/types.js';
+import { expandPath } from '../../../src/skills/utils.js';
 
 // Singleton browser instance per skill context
 let browserInstance: any = null;
 let pageInstance: any = null;
-
-function resolvePath(rawPath: string): string {
-    if (rawPath.startsWith('~')) {
-        rawPath = join(homedir(), rawPath.slice(1));
-    }
-    return resolve(rawPath);
-}
 
 async function getPage(ctx: SkillContext): Promise<any> {
     if (pageInstance) return pageInstance;
@@ -183,7 +176,7 @@ export async function upload_file(
     params: { selector: string; filePath: string }
 ): Promise<{ success: boolean; filePath: string }> {
     const page = await getPage(ctx);
-    const resolvedPath = resolvePath(params.filePath);
+    const resolvedPath = expandPath(params.filePath);
 
     ctx.logger.info(`[browser-automation] Uploading ${resolvedPath} to ${params.selector}`);
 

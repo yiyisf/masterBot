@@ -1,18 +1,16 @@
-import { execFile } from 'child_process';
-import { promisify } from 'util';
-import { join, resolve } from 'path';
-import { homedir } from 'os';
 import type { SkillContext } from '../../../src/types.js';
+import { expandPath, resolveCliCommand, spawnCli } from '../../../src/skills/utils.js';
 
-/** 展开 ~ 并解析为绝对路径 */
-function expandPath(p: string): string {
-    if (p.startsWith('~/') || p === '~') {
-        return resolve(join(homedir(), p.slice(1)));
+const CLAUDE_STRIP_KEYS = ['CLAUDECODE', 'CLAUDE_CODE_ENTRYPOINT'];
+
+function parseClaudeOutput(raw: string): string {
+    try {
+        const result = JSON.parse(raw);
+        return typeof result.result === 'string' ? result.result : JSON.stringify(result, null, 2);
+    } catch {
+        return raw.trim();
     }
-    return resolve(p);
 }
-
-const execFileAsync = promisify(execFile);
 
 /**
  * 向 Claude Code 提问或执行编码任务
@@ -31,24 +29,14 @@ export async function ask(
     ctx.logger.info(`Claude Code ask: ${prompt.slice(0, 100)}...`);
 
     try {
-        const { stdout } = await execFileAsync('claude', args, {
+        const raw = await spawnCli(resolveCliCommand('claude'), args, {
             cwd: cwd ? expandPath(cwd) : process.cwd(),
-            timeout: 300_000, // Claude Code tasks may take longer
-            maxBuffer: 10 * 1024 * 1024,
-            env: { ...process.env },
+            timeout: 300_000,
+            stripEnvKeys: CLAUDE_STRIP_KEYS,
         });
-
-        try {
-            const result = JSON.parse(stdout);
-            return typeof result.result === 'string' ? result.result : JSON.stringify(result, null, 2);
-        } catch {
-            return stdout.trim();
-        }
+        return parseClaudeOutput(raw);
     } catch (error: any) {
-        if (error.code === 'ENOENT') {
-            return 'Error: Claude Code CLI not found. Please install it first.';
-        }
-        return `Error: ${error.stderr || error.message}`;
+        return `Error: ${error.message}`;
     }
 }
 
@@ -68,7 +56,7 @@ export async function code_review(
     return ask(ctx, {
         prompt: reviewPrompt,
         cwd,
-        allowed_tools: 'Read', // Read-only access for reviews
+        allowed_tools: 'Read',
     });
 }
 
@@ -89,23 +77,13 @@ export async function continue_session(
     ctx.logger.info(`Claude Code continue_session: ${prompt.slice(0, 100)}...`);
 
     try {
-        const { stdout } = await execFileAsync('claude', args, {
+        const raw = await spawnCli(resolveCliCommand('claude'), args, {
             timeout: 300_000,
-            maxBuffer: 10 * 1024 * 1024,
-            env: { ...process.env },
+            stripEnvKeys: CLAUDE_STRIP_KEYS,
         });
-
-        try {
-            const result = JSON.parse(stdout);
-            return typeof result.result === 'string' ? result.result : JSON.stringify(result, null, 2);
-        } catch {
-            return stdout.trim();
-        }
+        return parseClaudeOutput(raw);
     } catch (error: any) {
-        if (error.code === 'ENOENT') {
-            return 'Error: Claude Code CLI not found. Please install it first.';
-        }
-        return `Error: ${error.stderr || error.message}`;
+        return `Error: ${error.message}`;
     }
 }
 

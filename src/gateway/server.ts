@@ -7,6 +7,7 @@ import path from 'path';
 import fs from 'fs';
 import crypto from 'crypto';
 import { execFile } from 'child_process';
+import { resolveCliCommand } from '../skills/utils.js';
 import { llmFactory } from '../llm/index.js';
 import type { Config, ChatRequest, Logger, Message, McpServerConfig } from '../types.js';
 import { Agent } from '../core/agent.js';
@@ -336,7 +337,7 @@ export class GatewayServer {
             try {
                 await new Promise<void>((resolve, reject) => {
                     execFile(
-                        'npm',
+                        resolveCliCommand('npm'),
                         ['install', '--save', ...packages],
                         { cwd: process.cwd() },
                         (err, stdout, stderr) => {

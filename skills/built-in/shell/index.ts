@@ -1,10 +1,9 @@
 import { exec, spawn } from 'child_process';
 import { promisify } from 'util';
 import { platform } from 'os';
-import { join, resolve } from 'path';
-import { homedir } from 'os';
 import type { SkillContext } from '../../../src/types.js';
 import { CommandSandbox, type SandboxConfig } from '../../../src/skills/sandbox.js';
+import { expandPath } from '../../../src/skills/utils.js';
 
 const execAsync = promisify(exec);
 
@@ -16,13 +15,9 @@ function getSandbox(ctx: SkillContext): CommandSandbox | null {
 
 /**
  * Resolve cross-platform path: handles ~ and path separators
+ * @deprecated 请使用 expandPath from utils.ts；此别名保留向后兼容
  */
-export function resolvePath(rawPath: string): string {
-    if (rawPath.startsWith('~')) {
-        rawPath = join(homedir(), rawPath.slice(1));
-    }
-    return resolve(rawPath);
-}
+export const resolvePath = expandPath;
 
 /**
  * Get platform-appropriate shell config
@@ -48,7 +43,7 @@ export async function execute(
     params: { command: string; cwd?: string; timeout?: number }
 ): Promise<{ stdout: string; stderr: string; exitCode: number; platform: string }> {
     const { command, timeout = 30000 } = params;
-    const cwd = params.cwd ? resolvePath(params.cwd) : process.cwd();
+    const cwd = params.cwd ? expandPath(params.cwd) : process.cwd();
 
     // Sandbox check
     const sandbox = getSandbox(ctx);
@@ -89,7 +84,7 @@ export async function execute_background(
     params: { command: string; cwd?: string }
 ): Promise<{ pid: number; platform: string } | { stdout: string; stderr: string; exitCode: number; platform: string }> {
     const { command } = params;
-    const cwd = params.cwd ? resolvePath(params.cwd) : process.cwd();
+    const cwd = params.cwd ? expandPath(params.cwd) : process.cwd();
 
     // Sandbox check
     const sandbox = getSandbox(ctx);

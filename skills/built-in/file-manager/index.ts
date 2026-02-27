@@ -1,16 +1,8 @@
 import { readFile, writeFile, readdir, unlink, copyFile, stat } from 'fs/promises';
-import { join, resolve } from 'path';
-import { homedir } from 'os';
+import { join, posix } from 'path';
 import { glob } from 'glob';
 import type { SkillContext } from '../../../src/types.js';
-
-/** 展开 ~ 并解析为绝对路径 */
-function expandPath(p: string): string {
-    if (p.startsWith('~/') || p === '~') {
-        return join(homedir(), p.slice(1));
-    }
-    return resolve(p);
-}
+import { expandPath } from '../../../src/skills/utils.js';
 
 /**
  * 读取文件内容
@@ -72,7 +64,8 @@ export async function list_directory(
 
         if (recursive && entry.isDirectory()) {
             const subEntries = await list_directory(ctx, { path: fullPath, recursive: true });
-            result.push(...subEntries.map(e => ({ ...e, name: join(entry.name, e.name) })));
+            // 统一使用 posix 分隔符，避免 Windows 反斜杠导致前端/LLM 解析异常
+            result.push(...subEntries.map(e => ({ ...e, name: posix.join(entry.name, e.name) })));
         }
     }
 

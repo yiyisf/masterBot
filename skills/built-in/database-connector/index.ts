@@ -1,15 +1,6 @@
 import { readFileSync, existsSync } from 'fs';
-import { join, resolve } from 'path';
-import { homedir } from 'os';
 import type { SkillContext } from '../../../src/types.js';
-
-/** 展开 ~ 并解析为绝对路径 */
-function expandPath(p: string): string {
-    if (p.startsWith('~/') || p === '~') {
-        return resolve(join(homedir(), p.slice(1)));
-    }
-    return resolve(p);
-}
+import { expandPath } from '../../../src/skills/utils.js';
 
 interface DbConnectorConfig {
     name: string;

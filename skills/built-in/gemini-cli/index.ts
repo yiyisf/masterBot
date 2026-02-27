@@ -1,18 +1,14 @@
-import { execFile } from 'child_process';
-import { promisify } from 'util';
-import { join, resolve } from 'path';
-import { homedir } from 'os';
 import type { SkillContext } from '../../../src/types.js';
+import { expandPath, resolveCliCommand, spawnCli } from '../../../src/skills/utils.js';
 
-/** 展开 ~ 并解析为绝对路径 */
-function expandPath(p: string): string {
-    if (p.startsWith('~/') || p === '~') {
-        return resolve(join(homedir(), p.slice(1)));
+function parseGeminiOutput(raw: string): string {
+    try {
+        const result = JSON.parse(raw);
+        return typeof result.response === 'string' ? result.response : JSON.stringify(result, null, 2);
+    } catch {
+        return raw.trim();
     }
-    return resolve(p);
 }
-
-const execFileAsync = promisify(execFile);
 
 /**
  * 向 Gemini 提问或分析内容
@@ -31,25 +27,13 @@ export async function ask(
     ctx.logger.info(`Gemini CLI ask: ${prompt.slice(0, 100)}...`);
 
     try {
-        const { stdout } = await execFileAsync('gemini', args, {
+        const raw = await spawnCli(resolveCliCommand('gemini'), args, {
             cwd: cwd ? expandPath(cwd) : process.cwd(),
             timeout: 120_000,
-            maxBuffer: 10 * 1024 * 1024,
-            env: { ...process.env },
         });
-
-        try {
-            const result = JSON.parse(stdout);
-            return typeof result.response === 'string' ? result.response : JSON.stringify(result, null, 2);
-        } catch {
-            // If not valid JSON, return raw output
-            return stdout.trim();
-        }
+        return parseGeminiOutput(raw);
     } catch (error: any) {
-        if (error.code === 'ENOENT') {
-            return 'Error: Gemini CLI not found. Please install it first.';
-        }
-        return `Error: ${error.stderr || error.message}`;
+        return `Error: ${error.message}`;
     }
 }
 
@@ -69,24 +53,13 @@ export async function analyze_code(
     ctx.logger.info(`Gemini CLI analyze_code: ${prompt.slice(0, 100)}...`);
 
     try {
-        const { stdout } = await execFileAsync('gemini', args, {
+        const raw = await spawnCli(resolveCliCommand('gemini'), args, {
             cwd: cwd ? expandPath(cwd) : process.cwd(),
             timeout: 180_000,
-            maxBuffer: 10 * 1024 * 1024,
-            env: { ...process.env },
         });
-
-        try {
-            const result = JSON.parse(stdout);
-            return typeof result.response === 'string' ? result.response : JSON.stringify(result, null, 2);
-        } catch {
-            return stdout.trim();
-        }
+        return parseGeminiOutput(raw);
     } catch (error: any) {
-        if (error.code === 'ENOENT') {
-            return 'Error: Gemini CLI not found. Please install it first.';
-        }
-        return `Error: ${error.stderr || error.message}`;
+        return `Error: ${error.message}`;
     }
 }
 
@@ -103,27 +76,16 @@ export async function search_web(
     ctx.logger.info(`Gemini CLI search_web: ${query}`);
 
     try {
-        const { stdout } = await execFileAsync('gemini', [
+        const raw = await spawnCli(resolveCliCommand('gemini'), [
             '-p', `搜索并总结: ${query}`,
             '--output-format', 'json',
             '-y',
         ], {
             timeout: 60_000,
-            maxBuffer: 10 * 1024 * 1024,
-            env: { ...process.env },
         });
-
-        try {
-            const result = JSON.parse(stdout);
-            return typeof result.response === 'string' ? result.response : JSON.stringify(result, null, 2);
-        } catch {
-            return stdout.trim();
-        }
+        return parseGeminiOutput(raw);
     } catch (error: any) {
-        if (error.code === 'ENOENT') {
-            return 'Error: Gemini CLI not found. Please install it first.';
-        }
-        return `Error: ${error.stderr || error.message}`;
+        return `Error: ${error.message}`;
     }
 }
 

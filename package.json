@@ -6,8 +6,10 @@
   "type": "module",
   "scripts": {
     "dev": "tsx watch src/index.ts",
+    "dev:win": "chcp 65001 && tsx watch src/index.ts",
     "build": "tsc",
     "start": "node dist/index.js",
+    "start:win": "chcp 65001 && node dist/index.js",
     "test": "vitest",
     "test:run": "vitest run",
     "lint": "eslint src --ext .ts"

@@ -1,3 +1,4 @@
+import { platform } from 'os';
 import type { Logger } from '../types.js';
 
 export interface SandboxConfig {
@@ -13,7 +14,7 @@ export interface SandboxResult {
 }
 
 /**
- * Default dangerous command patterns (regex strings)
+ * Default dangerous command patterns (regex strings) — Unix/macOS
  */
 const DEFAULT_BLOCKLIST: string[] = [
     'rm\\s+-[^\\s]*r[^\\s]*f',     // rm -rf, rm -fr, etc.
@@ -41,6 +42,23 @@ const DEFAULT_BLOCKLIST: string[] = [
 ];
 
 /**
+ * Default dangerous command patterns — Windows only
+ */
+const DEFAULT_BLOCKLIST_WIN32: string[] = [
+    'format\\s+[a-zA-Z]:',          // 磁盘格式化
+    'del\\s+.*\\/[sq]',              // 静默递归删除
+    'rd\\s+.*\\/[sq]',               // 递归删目录
+    'rmdir\\s+.*\\/[sq]',
+    '\\bdiskpart\\b',                // 磁盘分区工具
+    'cipher\\s+\\/w',               // 安全擦除磁盘
+    'reg\\s+(delete|add).*hklm',    // 系统注册表写入
+    'net\\s+user.*\\/add',          // 添加系统账户
+    '\\bshutdown\\b.*\\/(s|r|h)',   // 关机/重启/休眠
+    'taskkill\\s+\\/f\\s+\\/im',    // 强制终止所有进程
+    '>\\s*(con|nul|prn|aux|com\\d|lpt\\d):', // 写入保留设备名
+];
+
+/**
  * Shell command sandbox validator
  */
 export class CommandSandbox {
@@ -49,11 +67,16 @@ export class CommandSandbox {
     private allowPatterns: RegExp[];
     private logger?: Logger;
 
-    constructor(config: SandboxConfig, logger?: Logger) {
+    constructor(config: SandboxConfig, logger?: Logger, platformOverride?: string) {
         this.config = config;
         this.logger = logger;
 
-        const blocklist = config.blocklist?.length ? config.blocklist : DEFAULT_BLOCKLIST;
+        const os = platformOverride ?? platform();
+        const defaultList = os === 'win32'
+            ? [...DEFAULT_BLOCKLIST, ...DEFAULT_BLOCKLIST_WIN32]
+            : DEFAULT_BLOCKLIST;
+
+        const blocklist = config.blocklist?.length ? config.blocklist : defaultList;
         this.blockPatterns = blocklist.map(p => new RegExp(p, 'i'));
         this.allowPatterns = (config.allowlist || []).map(p => new RegExp(`^${p}`, 'i'));
     }

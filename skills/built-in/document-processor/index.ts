@@ -1,22 +1,11 @@
 import type { SkillContext } from '../../../src/types.js';
 import { readFileSync, writeFileSync, existsSync } from 'fs';
-import { extname, join, resolve } from 'path';
-import { homedir } from 'os';
+import { extname } from 'path';
 import { createRequire } from 'module';
+import { expandPath } from '../../../src/skills/utils.js';
 
 // Use createRequire for CJS packages to avoid ESM double-wrapping issues
 const _require = createRequire(import.meta.url);
-
-/** 展开 ~ 并解析为绝对路径 */
-function expandPath(p: unknown): string {
-    if (!p || typeof p !== 'string') {
-        throw new Error(`缺少必要参数 path：请提供文件路径`);
-    }
-    if (p.startsWith('~/') || p === '~') {
-        return resolve(join(homedir(), p.slice(1)));
-    }
-    return resolve(p);
-}
 
 /**
  * 读取 PDF 文件
