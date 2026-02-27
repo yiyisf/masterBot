@@ -53,7 +53,7 @@ export class HistoryRepository {
             content: row.content,
         };
 
-        if (row.content && row.content.startsWith('[')) {
+        if (row.content && row.content.trim().startsWith('[')) {
             try {
                 msg.content = JSON.parse(row.content);
             } catch (e) {
@@ -80,31 +80,14 @@ export class HistoryRepository {
     }
 
     /**
-     * 保存单条消息
+     * 内部：仅执行 INSERT，不含幂等检查和事务管理。
+     * 由 saveMessage 和 saveConversationTurn 复用。
      */
-    saveMessage(sessionId: string, message: Message): string {
+    private _insertMessage(sessionId: string, message: Message): string {
         const id = nanoid();
-
-        // 确保会话存在并更新活跃时间
-        this.ensureSession(sessionId);
-        db.prepare('UPDATE sessions SET updated_at = CURRENT_TIMESTAMP WHERE id = ?').run(sessionId);
-
         const content = typeof message.content === 'string'
             ? message.content
             : JSON.stringify(message.content);
-
-        // 简易幂等性检查：如果上一条消息完全相同且在极短时间内产生，则跳过（防止前端重复触发）
-        const lastMsg = db.prepare(`
-            SELECT role, content FROM messages 
-            WHERE session_id = ? 
-            ORDER BY created_at DESC 
-            LIMIT 1
-        `).get(sessionId) as any;
-
-        if (lastMsg && lastMsg.role === message.role && lastMsg.content === content) {
-            // 这里可以增加时间差检查，但对于目前的重复导入问题，角色+内容一致已足够
-            return "duplicate";
-        }
 
         db.prepare(`
             INSERT INTO messages (id, session_id, role, content, tool_call_id, tool_calls)
@@ -118,7 +101,6 @@ export class HistoryRepository {
             message.toolCalls ? JSON.stringify(message.toolCalls) : null
         );
 
-        // 如果有附件，一并保存
         if (message.attachments) {
             for (const att of message.attachments) {
                 this.saveAttachment(id, att);
@@ -126,6 +108,57 @@ export class HistoryRepository {
         }
 
         return id;
+    }
+
+    /**
+     * 保存单条消息
+     */
+    saveMessage(sessionId: string, message: Message): string {
+        // 确保会话存在并更新活跃时间
+        this.ensureSession(sessionId);
+        db.prepare('UPDATE sessions SET updated_at = CURRENT_TIMESTAMP WHERE id = ?').run(sessionId);
+
+        const content = typeof message.content === 'string'
+            ? message.content
+            : JSON.stringify(message.content);
+
+        // 简易幂等性检查：如果上一条消息完全相同且在极短时间内产生，则跳过（防止前端重复触发）
+        const lastMsg = db.prepare(`
+            SELECT role, content FROM messages
+            WHERE session_id = ?
+            ORDER BY created_at DESC
+            LIMIT 1
+        `).get(sessionId) as any;
+
+        if (lastMsg && lastMsg.role === message.role && lastMsg.content === content) {
+            // 这里可以增加时间差检查，但对于目前的重复导入问题，角色+内容一致已足够
+            return "duplicate";
+        }
+
+        return this._insertMessage(sessionId, message);
+    }
+
+    /**
+     * 在事务中原子保存 user + assistant 一轮对话。
+     * 进程崩溃时两条消息要么都在、要么都不在，避免孤立的 user/assistant 消息。
+     */
+    saveConversationTurn(
+        sessionId: string,
+        userMsg: Message,
+        assistantMsg: Message
+    ): { userMsgId: string; assistantMsgId: string } {
+        this.ensureSession(sessionId);
+        db.exec('BEGIN');
+        try {
+            db.prepare('UPDATE sessions SET updated_at = CURRENT_TIMESTAMP WHERE id = ?').run(sessionId);
+            const userMsgId = this._insertMessage(sessionId, userMsg);
+            const assistantMsgId = this._insertMessage(sessionId, assistantMsg);
+            db.exec('COMMIT');
+            return { userMsgId, assistantMsgId };
+        } catch (err) {
+            db.exec('ROLLBACK');
+            throw err;
+        }
     }
 
     /**

@@ -134,9 +134,12 @@ export class GatewayServer {
                     history,
                 });
 
-                // Update history
-                historyRepository.saveMessage(sessionId, { role: 'user', content: message });
-                historyRepository.saveMessage(sessionId, { role: 'assistant', content: answer });
+                // Update history — 用事务原子保存，防止进程崩溃导致对话只存一半
+                historyRepository.saveConversationTurn(
+                    sessionId,
+                    { role: 'user', content: message },
+                    { role: 'assistant', content: answer }
+                );
 
                 // Auto-generate title for new sessions (async)
                 if ((history?.length || 0) <= 2) {
@@ -205,24 +208,21 @@ export class GatewayServer {
                     if (reply.raw.writable) {
                         reply.raw.write(`data: ${JSON.stringify(step)}\n\n`);
                     } else {
+                        abortController.abort(); // 连接已断开，中止 agent
                         break;
                     }
                 }
 
-                // Persist history after success
-                if (!abortController.signal.aborted) {
-                    historyRepository.saveMessage(sessionId, {
-                        role: 'user',
-                        content: message,
-                        attachments: attachments
-                    });
-                    const assistantMsgId = historyRepository.saveMessage(sessionId, {
-                        role: 'assistant',
-                        content: assistantAnswer
-                    });
+                // Persist history after success — 用事务原子保存，并跳过空答案（客户端中途断连场景）
+                if (!abortController.signal.aborted && assistantAnswer) {
+                    const { assistantMsgId } = historyRepository.saveConversationTurn(
+                        sessionId,
+                        { role: 'user', content: message, attachments },
+                        { role: 'assistant', content: assistantAnswer }
+                    );
 
                     // Send meta chunk with assistant message ID for feedback correlation
-                    if (reply.raw.writable && assistantMsgId !== 'duplicate') {
+                    if (reply.raw.writable) {
                         reply.raw.write(`data: ${JSON.stringify({ type: 'meta', assistantMessageId: assistantMsgId })}\n\n`);
                     }
 
