@@ -1,6 +1,15 @@
 import { readFileSync, existsSync } from 'fs';
 import { join, resolve } from 'path';
+import { homedir } from 'os';
 import type { SkillContext } from '../../../src/types.js';
+
+/** 展开 ~ 并解析为绝对路径 */
+function expandPath(p: string): string {
+    if (p.startsWith('~/') || p === '~') {
+        return resolve(join(homedir(), p.slice(1)));
+    }
+    return resolve(p);
+}
 
 interface DbConnectorConfig {
     name: string;
@@ -85,7 +94,8 @@ async function getConnection(config: DbConnectorConfig): Promise<any> {
     switch (config.driver) {
         case 'sqlite': {
             const { DatabaseSync } = await import('node:sqlite');
-            const dbPath = config.filepath || config.database || ':memory:';
+            const rawPath = config.filepath || config.database || ':memory:';
+            const dbPath = rawPath === ':memory:' ? rawPath : expandPath(rawPath);
             const db = new DatabaseSync(dbPath);
             return { type: 'sqlite', db };
         }

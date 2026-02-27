@@ -1,6 +1,16 @@
 import { execFile } from 'child_process';
 import { promisify } from 'util';
+import { join, resolve } from 'path';
+import { homedir } from 'os';
 import type { SkillContext } from '../../../src/types.js';
+
+/** 展开 ~ 并解析为绝对路径 */
+function expandPath(p: string): string {
+    if (p.startsWith('~/') || p === '~') {
+        return resolve(join(homedir(), p.slice(1)));
+    }
+    return resolve(p);
+}
 
 const execFileAsync = promisify(execFile);
 
@@ -22,7 +32,7 @@ export async function ask(
 
     try {
         const { stdout } = await execFileAsync('gemini', args, {
-            cwd: cwd || process.cwd(),
+            cwd: cwd ? expandPath(cwd) : process.cwd(),
             timeout: 120_000,
             maxBuffer: 10 * 1024 * 1024,
             env: { ...process.env },
@@ -60,7 +70,7 @@ export async function analyze_code(
 
     try {
         const { stdout } = await execFileAsync('gemini', args, {
-            cwd: cwd || process.cwd(),
+            cwd: cwd ? expandPath(cwd) : process.cwd(),
             timeout: 180_000,
             maxBuffer: 10 * 1024 * 1024,
             env: { ...process.env },

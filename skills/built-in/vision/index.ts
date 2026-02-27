@@ -1,6 +1,15 @@
 import type { SkillContext, Message, MessageContentPart } from '../../../src/types.js';
 import { readFileSync, existsSync } from 'fs';
-import { extname } from 'path';
+import { extname, join, resolve } from 'path';
+import { homedir } from 'os';
+
+/** 展开 ~ 并解析为绝对路径 */
+function expandPath(p: string): string {
+    if (p.startsWith('~/') || p === '~') {
+        return resolve(join(homedir(), p.slice(1)));
+    }
+    return resolve(p);
+}
 
 // Supported image extensions
 const IMAGE_EXTENSIONS = new Set(['.jpg', '.jpeg', '.png', '.gif', '.webp', '.bmp']);
@@ -19,14 +28,15 @@ function buildImageContentPart(imagePath?: string, imageUrl?: string): MessageCo
         return { type: 'image_url', image_url: { url: imageUrl } };
     }
     if (imagePath) {
-        if (!existsSync(imagePath)) {
-            throw new Error(`图像文件不存在: ${imagePath}`);
+        const resolvedPath = expandPath(imagePath);
+        if (!existsSync(resolvedPath)) {
+            throw new Error(`图像文件不存在: ${resolvedPath}`);
         }
-        const ext = extname(imagePath).toLowerCase();
+        const ext = extname(resolvedPath).toLowerCase();
         if (!IMAGE_EXTENSIONS.has(ext)) {
             throw new Error(`不支持的图像格式: ${ext}。支持: ${[...IMAGE_EXTENSIONS].join(', ')}`);
         }
-        const buffer = readFileSync(imagePath);
+        const buffer = readFileSync(resolvedPath);
         const base64 = buffer.toString('base64');
         const mimeType = MIME_MAP[ext] || 'image/jpeg';
         return { type: 'image_url', image_url: { url: `data:${mimeType};base64,${base64}` } };

@@ -3,9 +3,8 @@
  * Cross-platform: Windows uses Edge, macOS/Linux uses Chrome
  * Requires: npm install playwright && npx playwright install msedge chromium
  */
-import { platform } from 'os';
-import { join } from 'path';
-import { homedir } from 'os';
+import { platform, homedir } from 'os';
+import { join, resolve } from 'path';
 import type { SkillContext } from '../../../src/types.js';
 
 // Singleton browser instance per skill context
@@ -16,7 +15,7 @@ function resolvePath(rawPath: string): string {
     if (rawPath.startsWith('~')) {
         rawPath = join(homedir(), rawPath.slice(1));
     }
-    return rawPath;
+    return resolve(rawPath);
 }
 
 async function getPage(ctx: SkillContext): Promise<any> {

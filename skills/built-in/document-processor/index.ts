@@ -1,6 +1,15 @@
 import type { SkillContext } from '../../../src/types.js';
 import { readFileSync, writeFileSync, existsSync } from 'fs';
-import { extname } from 'path';
+import { extname, join, resolve } from 'path';
+import { homedir } from 'os';
+
+/** 展开 ~ 并解析为绝对路径 */
+function expandPath(p: string): string {
+    if (p.startsWith('~/') || p === '~') {
+        return resolve(join(homedir(), p.slice(1)));
+    }
+    return resolve(p);
+}
 
 /**
  * 读取 PDF 文件
@@ -9,10 +18,11 @@ export async function read_pdf(
     ctx: SkillContext,
     params: { path: string }
 ): Promise<string> {
-    ctx.logger.info(`[document-processor] read_pdf: ${params.path}`);
+    const filePath = expandPath(params.path);
+    ctx.logger.info(`[document-processor] read_pdf: ${filePath}`);
 
-    if (!existsSync(params.path)) {
-        throw new Error(`文件不存在: ${params.path}`);
+    if (!existsSync(filePath)) {
+        throw new Error(`文件不存在: ${filePath}`);
     }
 
     let pdfParse: typeof import('pdf-parse');
@@ -22,7 +32,7 @@ export async function read_pdf(
         throw new Error('pdf-parse 未安装，请运行 npm install pdf-parse');
     }
 
-    const buffer = readFileSync(params.path);
+    const buffer = readFileSync(filePath);
     const data = await pdfParse.default(buffer);
     return `PDF 文本内容（共 ${data.numpages} 页）:\n\n${data.text}`;
 }
@@ -34,8 +44,9 @@ export async function read_docx(
     ctx: SkillContext,
     params: { path: string; format?: 'text' | 'markdown' }
 ): Promise<string> {
-    ctx.logger.info(`[document-processor] read_docx: ${params.path}`);
-    const { path: filePath, format = 'markdown' } = params;
+    const { path: rawPath, format = 'markdown' } = params;
+    const filePath = expandPath(rawPath);
+    ctx.logger.info(`[document-processor] read_docx: ${filePath}`);
 
     if (!existsSync(filePath)) {
         throw new Error(`文件不存在: ${filePath}`);
@@ -65,8 +76,9 @@ export async function read_xlsx(
     ctx: SkillContext,
     params: { path: string; sheet?: string; max_rows?: number }
 ): Promise<string> {
-    ctx.logger.info(`[document-processor] read_xlsx: ${params.path}`);
-    const { path: filePath, max_rows = 100 } = params;
+    const { path: rawPath, max_rows = 100 } = params;
+    const filePath = expandPath(rawPath);
+    ctx.logger.info(`[document-processor] read_xlsx: ${filePath}`);
 
     if (!existsSync(filePath)) {
         throw new Error(`文件不存在: ${filePath}`);
@@ -110,8 +122,9 @@ export async function write_xlsx(
     ctx: SkillContext,
     params: { path: string; data: Record<string, unknown>[]; sheet?: string }
 ): Promise<string> {
-    ctx.logger.info(`[document-processor] write_xlsx: ${params.path}`);
-    const { path: filePath, data, sheet = 'Sheet1' } = params;
+    const { path: rawPath, data, sheet = 'Sheet1' } = params;
+    const filePath = expandPath(rawPath);
+    ctx.logger.info(`[document-processor] write_xlsx: ${filePath}`);
 
     let XLSX: typeof import('xlsx');
     try {
@@ -135,8 +148,9 @@ export async function convert_to_markdown(
     ctx: SkillContext,
     params: { path: string; output_path?: string }
 ): Promise<string> {
-    ctx.logger.info(`[document-processor] convert_to_markdown: ${params.path}`);
-    const { path: filePath, output_path } = params;
+    const { path: rawPath, output_path: rawOutputPath } = params;
+    const filePath = expandPath(rawPath);
+    ctx.logger.info(`[document-processor] convert_to_markdown: ${filePath}`);
 
     if (!existsSync(filePath)) {
         throw new Error(`文件不存在: ${filePath}`);
@@ -153,9 +167,10 @@ export async function convert_to_markdown(
         throw new Error(`不支持的文件格式: ${ext}。支持 .pdf 和 .docx`);
     }
 
-    if (output_path) {
-        writeFileSync(output_path, content, 'utf-8');
-        return `Markdown 已保存到: ${output_path}`;
+    if (rawOutputPath) {
+        const outputPath = expandPath(rawOutputPath);
+        writeFileSync(outputPath, content, 'utf-8');
+        return `Markdown 已保存到: ${outputPath}`;
     }
 
     return content;

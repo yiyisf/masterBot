@@ -1,7 +1,16 @@
 import { readFile, writeFile, readdir, unlink, copyFile, stat } from 'fs/promises';
-import { join } from 'path';
+import { join, resolve } from 'path';
+import { homedir } from 'os';
 import { glob } from 'glob';
 import type { SkillContext } from '../../../src/types.js';
+
+/** 展开 ~ 并解析为绝对路径 */
+function expandPath(p: string): string {
+    if (p.startsWith('~/') || p === '~') {
+        return join(homedir(), p.slice(1));
+    }
+    return resolve(p);
+}
 
 /**
  * 读取文件内容
@@ -10,7 +19,8 @@ export async function read_file(
     ctx: SkillContext,
     params: { path: string; encoding?: BufferEncoding }
 ): Promise<string> {
-    const { path, encoding = 'utf-8' } = params;
+    const { path: rawPath, encoding = 'utf-8' } = params;
+    const path = expandPath(rawPath);
     ctx.logger.info(`Reading file: ${path}`);
     return readFile(path, encoding);
 }
@@ -22,7 +32,8 @@ export async function write_file(
     ctx: SkillContext,
     params: { path: string; content: string; append?: boolean }
 ): Promise<{ success: boolean }> {
-    const { path, content, append = false } = params;
+    const { path: rawPath, content, append = false } = params;
+    const path = expandPath(rawPath);
     ctx.logger.info(`Writing file: ${path}`);
 
     if (append) {
@@ -42,7 +53,8 @@ export async function list_directory(
     ctx: SkillContext,
     params: { path: string; recursive?: boolean }
 ): Promise<Array<{ name: string; type: 'file' | 'directory'; size?: number }>> {
-    const { path, recursive = false } = params;
+    const { path: rawPath, recursive = false } = params;
+    const path = expandPath(rawPath);
     ctx.logger.info(`Listing directory: ${path}`);
 
     const entries = await readdir(path, { withFileTypes: true });
@@ -74,7 +86,8 @@ export async function search_files(
     ctx: SkillContext,
     params: { pattern: string; cwd?: string }
 ): Promise<string[]> {
-    const { pattern, cwd = process.cwd() } = params;
+    const { pattern, cwd: rawCwd = process.cwd() } = params;
+    const cwd = expandPath(rawCwd);
     ctx.logger.info(`Searching files: ${pattern} in ${cwd}`);
     return glob(pattern, { cwd, absolute: true });
 }
@@ -86,8 +99,9 @@ export async function delete_file(
     ctx: SkillContext,
     params: { path: string }
 ): Promise<{ success: boolean }> {
-    ctx.logger.info(`Deleting file: ${params.path}`);
-    await unlink(params.path);
+    const path = expandPath(params.path);
+    ctx.logger.info(`Deleting file: ${path}`);
+    await unlink(path);
     return { success: true };
 }
 
@@ -98,8 +112,10 @@ export async function copy_file(
     ctx: SkillContext,
     params: { source: string; destination: string }
 ): Promise<{ success: boolean }> {
-    ctx.logger.info(`Copying file: ${params.source} -> ${params.destination}`);
-    await copyFile(params.source, params.destination);
+    const source = expandPath(params.source);
+    const destination = expandPath(params.destination);
+    ctx.logger.info(`Copying file: ${source} -> ${destination}`);
+    await copyFile(source, destination);
     return { success: true };
 }
 
