@@ -154,7 +154,7 @@ export default function ScheduledPage() {
         try {
             if (editingTask) {
                 await fetchApi(`/api/scheduled-tasks/${editingTask.id}`, {
-                    method: "PUT",
+                    method: "PATCH",
                     body: JSON.stringify(form),
                 });
             } else {
@@ -175,7 +175,7 @@ export default function ScheduledPage() {
     const handleToggleEnabled = async (task: ScheduledTask) => {
         try {
             await fetchApi(`/api/scheduled-tasks/${task.id}`, {
-                method: "PUT",
+                method: "PATCH",
                 body: JSON.stringify({ ...task, enabled: !task.enabled }),
             });
             setTasks((prev) =>

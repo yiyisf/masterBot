@@ -69,6 +69,22 @@ export function getNextRun(expr: string): Date | null {
     return null;
 }
 
+/** 将 DB row（snake_case 列名）映射为 ScheduledTask（camelCase） */
+function rowToTask(row: any): ScheduledTask {
+    return {
+        id: row.id,
+        name: row.name,
+        cronExpr: row.cron_expr,
+        prompt: row.prompt,
+        sessionId: row.session_id ?? undefined,
+        enabled: row.enabled === 1,
+        lastRun: row.last_run ?? undefined,
+        nextRun: row.next_run ?? undefined,
+        createdAt: row.created_at,
+        updatedAt: row.updated_at,
+    };
+}
+
 export class SchedulerService {
     private logger: Logger;
     private timer?: NodeJS.Timeout;
@@ -129,15 +145,12 @@ export class SchedulerService {
     }
 
     getTasks(): ScheduledTask[] {
-        return (db.prepare('SELECT * FROM scheduled_tasks ORDER BY created_at DESC').all() as any[]).map(row => ({
-            ...row,
-            enabled: row.enabled === 1,
-        }));
+        return (db.prepare('SELECT * FROM scheduled_tasks ORDER BY created_at DESC').all() as any[]).map(rowToTask);
     }
 
     getTask(id: string): ScheduledTask | null {
         const row = db.prepare('SELECT * FROM scheduled_tasks WHERE id = ?').get(id) as any;
-        return row ? { ...row, enabled: row.enabled === 1 } : null;
+        return row ? rowToTask(row) : null;
     }
 
     createTask(task: Omit<ScheduledTask, 'id' | 'createdAt' | 'updatedAt'>): string {

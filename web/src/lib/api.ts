@@ -15,7 +15,7 @@ export async function fetchApi<T>(path: string, options?: RequestInit): Promise<
         ...(options?.headers as Record<string, string>),
     };
 
-    if (options?.body || (options?.method && ['POST', 'PUT', 'PATCH'].includes(options.method.toUpperCase()))) {
+    if (options?.body) {
         headers['Content-Type'] = 'application/json';
     }
 
