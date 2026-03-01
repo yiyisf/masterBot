@@ -1,6 +1,6 @@
 "use client";
 
-import { AssistantRuntimeProvider, useLocalRuntime, useMessage, MessagePrimitive, useThreadRuntime, ActionBarPrimitive } from "@assistant-ui/react";
+import { AssistantRuntimeProvider, useLocalRuntime, useMessage, MessagePrimitive, useThreadRuntime, ActionBarPrimitive, CompositeAttachmentAdapter, SimpleImageAttachmentAdapter, SimpleTextAttachmentAdapter } from "@assistant-ui/react";
 import {
     Thread,
     makeMarkdownText
@@ -16,7 +16,7 @@ import "@assistant-ui/react-ui/styles/markdown.css";
 import { nanoid } from "nanoid";
 import { useSearchParams } from "next/navigation";
 import { fetchApi } from "@/lib/api";
-import { Copy, Check, RefreshCw, ThumbsUp, ThumbsDown } from "lucide-react";
+import { Copy, Check, RefreshCw, ThumbsUp, ThumbsDown, ChevronRight } from "lucide-react";
 
 import { Mermaid } from "@/components/mermaid";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -37,12 +37,50 @@ const MermaidHighlighter = ({ code }: { code: string }) => (
 );
 
 /**
+ * Code block with language label and copy button header.
+ * Accepts the full SyntaxHighlighter props so required fields (like `components`) are forwarded.
+ */
+type SHProps = React.ComponentPropsWithoutRef<typeof SyntaxHighlighter>;
+
+const CodeBlock = (props: SHProps) => {
+    const { code, language } = props;
+    const [copied, setCopied] = useState(false);
+    const handleCopy = useCallback(() => {
+        navigator.clipboard.writeText(code);
+        setCopied(true);
+        setTimeout(() => setCopied(false), 2000);
+    }, [code]);
+
+    return (
+        <div className="not-prose my-4 rounded-lg overflow-hidden border border-zinc-700/60">
+            <div className="flex items-center justify-between px-3 py-1.5 bg-zinc-800 border-b border-zinc-700/60">
+                <span className="text-[11px] text-zinc-400 font-mono">
+                    {language && language !== 'text' ? language : 'code'}
+                </span>
+                <button
+                    onClick={handleCopy}
+                    className="flex items-center gap-1 text-[11px] text-zinc-400 hover:text-zinc-200 transition-colors"
+                >
+                    {copied
+                        ? <><Check className="h-3 w-3 text-green-400" /><span>已复制</span></>
+                        : <><Copy className="h-3 w-3" /><span>复制</span></>
+                    }
+                </button>
+            </div>
+            <Suspense fallback={<pre className="bg-zinc-900 p-4 text-zinc-300 font-mono text-sm overflow-x-auto">{code}</pre>}>
+                <SyntaxHighlighter {...props} />
+            </Suspense>
+        </div>
+    );
+};
+
+/**
  * Custom Markdown renderer with Mermaid support and syntax highlighting
  */
 const MarkdownText = makeMarkdownText({
     remarkPlugins: [remarkGfm],
     components: {
-        SyntaxHighlighter,
+        SyntaxHighlighter: CodeBlock,
     },
     componentsByLanguage: {
         mermaid: {
@@ -117,16 +155,20 @@ const FeedbackButton = ({ rating, messageId, sessionId }: { rating: 'positive' |
 const SuggestionButtons = ({ suggestions, onSelect }: { suggestions: string[]; onSelect: (text: string) => void }) => {
     if (!suggestions || suggestions.length === 0) return null;
     return (
-        <div className="flex flex-wrap gap-2 mt-3">
-            {suggestions.map((s, i) => (
-                <button
-                    key={i}
-                    onClick={() => onSelect(s)}
-                    className="text-xs px-3 py-1.5 rounded-full border border-primary/20 bg-primary/5 text-primary hover:bg-primary/10 transition-colors"
-                >
-                    {s}
-                </button>
-            ))}
+        <div className="mt-4 space-y-1">
+            <p className="text-[11px] text-muted-foreground uppercase tracking-wider mb-2">您还可以问：</p>
+            <div className="flex flex-col gap-1.5">
+                {suggestions.map((s, i) => (
+                    <button
+                        key={i}
+                        onClick={() => onSelect(s)}
+                        className="flex items-center gap-2 text-sm px-3 py-2 rounded-lg border border-border/50 bg-muted/30 hover:bg-muted/70 hover:border-primary/30 text-foreground/80 hover:text-foreground transition-all text-left"
+                    >
+                        <ChevronRight className="w-3.5 h-3.5 text-primary/60 shrink-0" />
+                        <span>{s}</span>
+                    </button>
+                ))}
+            </div>
         </div>
     );
 };
@@ -151,6 +193,12 @@ const CustomAssistantMessage = memo(() => {
         });
     };
 
+    const isComplete = message.status?.type === 'complete';
+    const hasContent = message.content.some(
+        (c) => c.type === 'text' && (c as { type: 'text'; text: string }).text.trim().length > 0
+    );
+    const showActionBar = isComplete && hasContent;
+
     return (
         <div className="group flex flex-col gap-4 items-start mb-10 w-full max-w-3xl mx-auto animate-in fade-in duration-500">
             <div className="flex gap-4 items-start w-full">
@@ -167,8 +215,8 @@ const CustomAssistantMessage = memo(() => {
                             <DagView steps={steps} />
                         </div>
                     )}
-                    {/* ActionBar: copy, retry, feedback */}
-                    <div className="opacity-0 group-hover:opacity-100 transition-opacity flex gap-1 mt-2">
+                    {/* ActionBar: copy, retry, feedback — only visible after completion with content */}
+                    <div className={`flex gap-1 mt-2 transition-opacity ${showActionBar ? 'opacity-100' : 'opacity-0 pointer-events-none'}`}>
                         <CopyButton />
                         <ActionBarPrimitive.Reload asChild>
                             <button
@@ -323,7 +371,13 @@ function ChatSession({ sessionId }: { sessionId?: string }) {
     const initPrompt = searchParams.get("prompt");
 
     const adapter = useMemo(() => new MyRuntimeAdapter(sessionId), [sessionId]);
-    const runtime = useLocalRuntime(adapter);
+    const attachmentAdapter = useMemo(() => new CompositeAttachmentAdapter([
+        new SimpleImageAttachmentAdapter(),
+        new SimpleTextAttachmentAdapter(),
+    ]), []);
+    const runtime = useLocalRuntime(adapter, {
+        adapters: { attachments: attachmentAdapter },
+    });
 
     const handleLoaded = useMemo(() => () => setHistoryLoaded(true), []);
 

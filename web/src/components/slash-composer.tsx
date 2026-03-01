@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { ComposerPrimitive, ThreadPrimitive } from "@assistant-ui/react";
+import { ComposerPrimitive, ThreadPrimitive, useAttachment, useAttachmentRuntime } from "@assistant-ui/react";
 import { useComposerRuntime } from "@assistant-ui/react";
 import { useRouter } from "next/navigation";
 import {
@@ -9,7 +9,11 @@ import {
     BrainCircuit,
     GitBranch,
     ListTodo,
+    Paperclip,
+    X,
     Zap,
+    ArrowUp,
+    Square,
 } from "lucide-react";
 
 // ── Slash command definitions ────────────────────────────────────────────────
@@ -147,6 +151,38 @@ function SlashPanel({
 
 // ── Custom Composer with slash command support ────────────────────────────────
 
+// ── Attachment preview pill ──────────────────────────────────────────────────
+
+function AttachmentPreview() {
+    const attachment = useAttachment();
+    const runtime = useAttachmentRuntime();
+    const isImage = attachment.type === "image";
+
+    return (
+        <div className="relative inline-flex items-center gap-1.5 bg-muted border rounded-lg px-2.5 py-1.5 text-xs max-w-[160px]">
+            {isImage && (attachment as any).content?.[0]?.image ? (
+                // eslint-disable-next-line @next/next/no-img-element
+                <img
+                    src={(attachment as any).content[0].image}
+                    alt={attachment.name}
+                    className="h-8 w-8 object-cover rounded"
+                />
+            ) : (
+                <Paperclip className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
+            )}
+            <span className="truncate text-foreground/80">{attachment.name}</span>
+            <button
+                type="button"
+                onClick={() => runtime.remove()}
+                className="shrink-0 text-muted-foreground hover:text-foreground transition-colors"
+                title="移除附件"
+            >
+                <X className="w-3 h-3" />
+            </button>
+        </div>
+    );
+}
+
 /**
  * Drop-in replacement for the default Thread Composer.
  * Detects "/" at the start of input and shows a slash command panel.
@@ -187,6 +223,20 @@ export function SlashComposer() {
 
     const handleClose = useCallback(() => setSlashQuery(null), []);
 
+    // Auto-expand textarea height as user types, up to 240px
+    const handleInput = useCallback((e: React.FormEvent<HTMLTextAreaElement>) => {
+        const el = e.currentTarget;
+        el.style.height = 'auto';
+        el.style.height = Math.min(el.scrollHeight, 240) + 'px';
+    }, []);
+
+    // Reset height after message is sent (runtime clears the value → re-render → effect fires)
+    useEffect(() => {
+        if (inputRef.current && inputRef.current.value === '') {
+            inputRef.current.style.height = 'auto';
+        }
+    });
+
     return (
         <ComposerPrimitive.Root className="aui-composer-root relative">
             {slashQuery !== null && (
@@ -197,20 +247,55 @@ export function SlashComposer() {
                 />
             )}
 
+            {/* Attachment preview area */}
+            <ComposerPrimitive.Attachments
+                components={{
+                    Attachment: AttachmentPreview,
+                }}
+            />
+
             <ComposerPrimitive.Input
                 ref={inputRef}
                 rows={1}
                 autoFocus
-                className="aui-composer-input"
-                placeholder="输入消息，/ 打开快捷命令..."
+                className="aui-composer-input max-h-60 overflow-y-auto"
+                placeholder="输入消息… 按 / 打开命令"
                 onChange={handleChange}
+                onInput={handleInput}
             />
 
+            {/* Paperclip add-attachment button */}
+            <ComposerPrimitive.AddAttachment asChild>
+                <button
+                    type="button"
+                    title="添加附件（图片/PDF/CSV/文本）"
+                    className="inline-flex items-center justify-center h-8 w-8 rounded-md text-muted-foreground hover:text-foreground hover:bg-muted/80 transition-colors shrink-0"
+                >
+                    <Paperclip className="w-4 h-4" />
+                </button>
+            </ComposerPrimitive.AddAttachment>
+
             <ThreadPrimitive.If running={false}>
-                <ComposerPrimitive.Send className="aui-composer-send" />
+                <ComposerPrimitive.Send asChild>
+                    <button
+                        type="button"
+                        title="发送"
+                        className="inline-flex items-center justify-center h-8 w-8 rounded-md bg-primary text-primary-foreground hover:bg-primary/90 disabled:opacity-40 disabled:cursor-not-allowed transition-colors shrink-0"
+                    >
+                        <ArrowUp className="w-4 h-4" />
+                    </button>
+                </ComposerPrimitive.Send>
             </ThreadPrimitive.If>
             <ThreadPrimitive.If running>
-                <ComposerPrimitive.Cancel className="aui-composer-cancel" />
+                <ComposerPrimitive.Cancel asChild>
+                    <button
+                        type="button"
+                        title="终止"
+                        className="inline-flex items-center justify-center h-8 w-8 rounded-md border border-border bg-background hover:bg-muted text-foreground transition-colors shrink-0"
+                    >
+                        <Square className="w-3.5 h-3.5 fill-current" />
+                    </button>
+                </ComposerPrimitive.Cancel>
             </ThreadPrimitive.If>
         </ComposerPrimitive.Root>
     );

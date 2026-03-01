@@ -189,6 +189,8 @@ export interface ExecutionStep {
 
 export interface ChatRequest {
     message: string;
+    /** Multimodal content parts (text + image_url). When present, overrides `message`. */
+    messageContent?: MessageContentPart[];
     sessionId?: string;
     userId?: string;
     stream?: boolean;

@@ -1,10 +1,58 @@
 "use client";
 
 import { makeAssistantToolUI } from "@assistant-ui/react";
-import { Terminal, FileText, Globe, Loader2, CheckCircle2, XCircle, Table2, Camera, Eye, Search, ListTree, GitFork, ClipboardList, AlertTriangle } from "lucide-react";
+import { Terminal, FileText, Globe, Loader2, CheckCircle2, XCircle, Table2, Camera, Eye, Search, ListTree, GitFork, ClipboardList, AlertTriangle, Copy, Check } from "lucide-react";
 import { useState } from "react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+
+// ─── Shared: CollapsibleOutput ────────────────────────────────────────────────
+
+function CollapsibleOutput({ content, maxLines = 8 }: { content: string; maxLines?: number }) {
+    const [expanded, setExpanded] = useState(false);
+    const lines = content.split('\n').length;
+    const isLong = lines > maxLines || content.length > 600;
+
+    return (
+        <div className="relative mt-2">
+            <pre className={`text-muted-foreground text-xs overflow-x-auto whitespace-pre-wrap break-all${!expanded && isLong ? ' max-h-[160px] overflow-hidden' : ''}`}>
+                {content}
+            </pre>
+            {isLong && (
+                <div className={!expanded ? 'absolute bottom-0 inset-x-0 bg-gradient-to-t from-muted/80 pt-6 text-center' : 'text-center mt-1'}>
+                    <button
+                        onClick={() => setExpanded(v => !v)}
+                        className="text-[11px] text-primary hover:underline"
+                    >
+                        {expanded ? '↑ 收起' : `↓ 展开全部 (${lines} 行)`}
+                    </button>
+                </div>
+            )}
+        </div>
+    );
+}
+
+// ─── Shared: CopyOutputButton ─────────────────────────────────────────────────
+
+function CopyOutputButton({ text }: { text: string }) {
+    const [copied, setCopied] = useState(false);
+    return (
+        <button
+            onClick={() => {
+                navigator.clipboard.writeText(text);
+                setCopied(true);
+                setTimeout(() => setCopied(false), 2000);
+            }}
+            className="ml-auto flex items-center gap-0.5 text-[10px] text-muted-foreground hover:text-foreground transition-colors"
+            title="复制结果"
+        >
+            {copied
+                ? <><Check className="w-3 h-3 text-green-500" /><span>已复制</span></>
+                : <><Copy className="w-3 h-3" /><span>复制</span></>
+            }
+        </button>
+    );
+}
 
 function StatusBadge({ status }: { status: { type: string } }) {
     if (status.type === "running") {
@@ -25,6 +73,9 @@ export const ShellToolUI = makeAssistantToolUI<{ command: string }, unknown>({
     toolName: "shell.execute",
     render: ({ args, result, status }) => {
         const isDangerous = /\b(rm|drop|truncate|format|mkfs|del\s+\/[sf])\b/i.test(args?.command ?? "");
+        const output = result !== undefined
+            ? (typeof result === "string" ? result : JSON.stringify(result, null, 2))
+            : null;
         return (
             <div className="border rounded-lg p-3 text-xs font-mono my-2 bg-card">
                 <div className="flex items-center gap-2 mb-2 text-primary">
@@ -34,17 +85,14 @@ export const ShellToolUI = makeAssistantToolUI<{ command: string }, unknown>({
                     {isDangerous && (
                         <Badge variant="destructive" className="text-[10px] h-4 px-1">危险命令</Badge>
                     )}
+                    {output !== null && <CopyOutputButton text={output} />}
                 </div>
                 {args?.command && (
                     <pre className="bg-muted/50 p-2 rounded text-xs overflow-x-auto whitespace-pre-wrap break-all">
                         $ {args.command}
                     </pre>
                 )}
-                {result !== undefined && (
-                    <pre className="mt-2 text-muted-foreground text-xs overflow-x-auto max-h-[150px] whitespace-pre-wrap break-all">
-                        {typeof result === "string" ? result : JSON.stringify(result, null, 2)}
-                    </pre>
-                )}
+                {output !== null && <CollapsibleOutput content={output} />}
             </div>
         );
     },
@@ -55,9 +103,7 @@ export const ShellToolUI = makeAssistantToolUI<{ command: string }, unknown>({
 export const FileManagerReadToolUI = makeAssistantToolUI<{ path: string }, unknown>({
     toolName: "file-manager.read",
     render: ({ args, result, status }) => {
-        const [collapsed, setCollapsed] = useState(true);
         const content = result !== undefined ? (typeof result === "string" ? result : JSON.stringify(result, null, 2)) : null;
-        const isLong = content && content.length > 800;
 
         return (
             <div className="border rounded-lg p-3 text-xs font-mono my-2 bg-card">
@@ -65,25 +111,12 @@ export const FileManagerReadToolUI = makeAssistantToolUI<{ path: string }, unkno
                     <FileText className="w-4 h-4" />
                     <span className="font-semibold text-sm font-sans">Read File</span>
                     <StatusBadge status={status} />
+                    {content !== null && <CopyOutputButton text={content} />}
                 </div>
                 {args?.path && (
                     <div className="bg-muted/50 p-2 rounded text-xs overflow-x-auto text-muted-foreground">{args.path}</div>
                 )}
-                {content !== null && (
-                    <div className="mt-2">
-                        <pre className={`text-muted-foreground text-xs overflow-x-auto whitespace-pre-wrap break-all ${isLong && collapsed ? "max-h-[150px] overflow-hidden" : ""}`}>
-                            {content}
-                        </pre>
-                        {isLong && (
-                            <button
-                                className="mt-1 text-[11px] text-primary hover:underline"
-                                onClick={() => setCollapsed(c => !c)}
-                            >
-                                {collapsed ? "展开全部 ↓" : "折叠 ↑"}
-                            </button>
-                        )}
-                    </div>
-                )}
+                {content !== null && <CollapsibleOutput content={content} />}
             </div>
         );
     },
@@ -149,7 +182,6 @@ export const FileManagerListToolUI = makeAssistantToolUI<{ path: string }, unkno
 export const HttpClientToolUI = makeAssistantToolUI<{ url: string; method?: string }, unknown>({
     toolName: "http-client.request",
     render: ({ args, result, status }) => {
-        const [collapsed, setCollapsed] = useState(true);
         const method = args?.method || "GET";
         const methodColors: Record<string, string> = {
             GET: "text-green-600", POST: "text-blue-600", PUT: "text-amber-600",
@@ -157,9 +189,7 @@ export const HttpClientToolUI = makeAssistantToolUI<{ url: string; method?: stri
         };
         const statusCode = (result as any)?.status ?? (result as any)?.statusCode;
         const isSuccess = statusCode ? statusCode < 400 : true;
-
         const body = result !== undefined ? (typeof result === "string" ? result : JSON.stringify(result, null, 2)) : null;
-        const isLong = body && body.length > 500;
 
         return (
             <div className="border rounded-lg p-3 text-xs font-mono my-2 bg-card">
@@ -172,6 +202,7 @@ export const HttpClientToolUI = makeAssistantToolUI<{ url: string; method?: stri
                             {statusCode}
                         </Badge>
                     )}
+                    {body !== null && <CopyOutputButton text={body} />}
                 </div>
                 {args?.url && (
                     <div className="bg-muted/50 p-2 rounded text-xs overflow-x-auto">
@@ -179,21 +210,7 @@ export const HttpClientToolUI = makeAssistantToolUI<{ url: string; method?: stri
                         <span className="text-muted-foreground">{args.url}</span>
                     </div>
                 )}
-                {body !== null && (
-                    <div className="mt-2">
-                        <pre className={`text-muted-foreground text-xs overflow-x-auto whitespace-pre-wrap break-all ${isLong && collapsed ? "max-h-[120px] overflow-hidden" : ""}`}>
-                            {body}
-                        </pre>
-                        {isLong && (
-                            <button
-                                className="mt-1 text-[11px] text-primary hover:underline"
-                                onClick={() => setCollapsed(c => !c)}
-                            >
-                                {collapsed ? "展开响应 ↓" : "折叠 ↑"}
-                            </button>
-                        )}
-                    </div>
-                )}
+                {body !== null && <CollapsibleOutput content={body} />}
             </div>
         );
     },
@@ -210,6 +227,7 @@ export const DatabaseQueryToolUI = makeAssistantToolUI<{ query: string; datasour
         const [page, setPage] = useState(0);
         const PAGE_SIZE = 10;
         const pageRows = rows.slice(page * PAGE_SIZE, (page + 1) * PAGE_SIZE);
+        const copyText = rows.length > 0 ? JSON.stringify(rows, null, 2) : (args?.query ?? "");
 
         return (
             <div className="border rounded-lg p-3 my-2 bg-card text-xs">
@@ -218,6 +236,7 @@ export const DatabaseQueryToolUI = makeAssistantToolUI<{ query: string; datasour
                     <span className="font-semibold text-sm font-sans">SQL 查询</span>
                     <StatusBadge status={status} />
                     {rows.length > 0 && <Badge variant="secondary" className="text-[10px]">{rows.length} 行</Badge>}
+                    <CopyOutputButton text={copyText} />
                 </div>
                 {args?.query && (
                     <pre className="bg-muted/50 p-2 rounded text-xs overflow-x-auto mb-2 text-muted-foreground">{args.query}</pre>
@@ -350,6 +369,10 @@ export const KnowledgeSearchToolUI = makeAssistantToolUI<{ query: string; depth?
     render: ({ args, result, status }) => {
         const nodes: any[] = Array.isArray((result as any)?.nodes) ? (result as any).nodes
             : Array.isArray(result) ? result : [];
+        const [expanded, setExpanded] = useState(false);
+        const displayNodes = expanded ? nodes : nodes.slice(0, 3);
+        const copyText = nodes.length > 0 ? JSON.stringify(nodes, null, 2) : "";
+
         return (
             <div className="border rounded-lg p-3 my-2 bg-card">
                 <div className="flex items-center gap-2 mb-2 text-teal-500">
@@ -357,13 +380,14 @@ export const KnowledgeSearchToolUI = makeAssistantToolUI<{ query: string; depth?
                     <span className="font-semibold text-sm font-sans">知识库检索</span>
                     <StatusBadge status={status} />
                     {nodes.length > 0 && <Badge variant="secondary" className="text-[10px]">{nodes.length} 结果</Badge>}
+                    {nodes.length > 0 && <CopyOutputButton text={copyText} />}
                 </div>
                 {args?.query && (
                     <div className="bg-muted/50 p-2 rounded text-xs mb-2 text-muted-foreground">"{args.query}"</div>
                 )}
                 {nodes.length > 0 && (
-                    <div className="space-y-2 max-h-[300px] overflow-y-auto">
-                        {nodes.slice(0, 5).map((node: any, i: number) => (
+                    <div className="space-y-2">
+                        {displayNodes.map((node: any, i: number) => (
                             <div key={i} className="border rounded p-2 hover:bg-muted/30 transition-colors">
                                 <div className="font-medium text-xs mb-1">{node.title ?? `节点 ${i + 1}`}</div>
                                 <div className="text-xs text-muted-foreground line-clamp-3">
@@ -374,6 +398,14 @@ export const KnowledgeSearchToolUI = makeAssistantToolUI<{ query: string; depth?
                                 )}
                             </div>
                         ))}
+                        {nodes.length > 3 && (
+                            <button
+                                onClick={() => setExpanded(v => !v)}
+                                className="w-full text-center text-[11px] text-primary hover:underline py-1"
+                            >
+                                {expanded ? '↑ 收起' : `↓ 展开全部 (${nodes.length} 个结果)`}
+                            </button>
+                        )}
                     </div>
                 )}
             </div>

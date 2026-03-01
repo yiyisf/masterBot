@@ -268,7 +268,7 @@ export class Agent {
      * 处理用户输入并返回响应
      */
     async *run(
-        input: string,
+        input: string | import('../types.js').MessageContentPart[],
         context: {
             sessionId: string;
             userId?: string;
@@ -278,11 +278,16 @@ export class Agent {
             attachments?: Attachment[];
         }
     ): AsyncGenerator<ExecutionStep> {
+        // Extract plain-text representation of input for memory/suggestion APIs
+        const inputText = typeof input === 'string'
+            ? input
+            : input.filter(p => p.type === 'text').map(p => (p as { type: 'text'; text: string }).text).join(' ');
+
         // Auto-inject relevant long-term memories into system prompt
         let systemContent = SYSTEM_PROMPT;
         if (this.longTermMemory) {
             try {
-                const memories = await this.longTermMemory.search(input, 3);
+                const memories = await this.longTermMemory.search(inputText, 3);
                 if (memories.length > 0) {
                     const memoryContext = memories.map(m => `- ${m.content}`).join('\n');
                     systemContent += `\n\n相关记忆:\n${memoryContext}`;
@@ -356,7 +361,7 @@ export class Agent {
 
                 // Generate follow-up suggestions asynchronously
                 try {
-                    const suggestions = await this.generateSuggestions(input, answerContent);
+                    const suggestions = await this.generateSuggestions(inputText, answerContent);
                     if (suggestions.length > 0) {
                         yield {
                             type: 'suggestions',

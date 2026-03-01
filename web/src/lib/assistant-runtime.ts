@@ -19,7 +19,25 @@ export class MyRuntimeAdapter implements ChatModelAdapter {
         // Extract attachments from the last message (user message)
         const attachments = (lastMessage as any).attachments || [];
 
-        const userContent = lastMessage.content[0]?.type === "text" ? lastMessage.content[0].text : "";
+        // Build multimodal content array from message content parts
+        // @assistant-ui/react uses type:"image" internally; we map to type:"image_url" for the backend
+        const contentParts = Array.isArray(lastMessage.content) ? lastMessage.content : [];
+        const hasNonText = contentParts.some((p: any) => p.type !== "text");
+
+        const userContent = contentParts.length > 0 && contentParts[0]?.type === "text"
+            ? (contentParts[0] as any).text
+            : (typeof lastMessage.content === "string" ? lastMessage.content : "");
+
+        // Build messageContent for multimodal requests
+        const messageContent = hasNonText ? contentParts.map((p: any) => {
+            if (p.type === "image" && p.image) {
+                return { type: "image_url" as const, image_url: { url: p.image } };
+            }
+            if (p.type === "image_url") {
+                return { type: "image_url" as const, image_url: { url: p.image_url?.url ?? "" } };
+            }
+            return { type: "text" as const, text: p.text ?? "" };
+        }) : undefined;
 
         // Transform history for backend
         const history = messages.slice(0, -1).map(m => ({
@@ -45,7 +63,7 @@ export class MyRuntimeAdapter implements ChatModelAdapter {
         });
 
         try {
-            const requestBody = {
+            const requestBody: Record<string, unknown> = {
                 message: userContent,
                 sessionId: this.sessionId,
                 history: history,
@@ -56,6 +74,9 @@ export class MyRuntimeAdapter implements ChatModelAdapter {
                     url: (a as any).url
                 }))
             };
+            if (messageContent) {
+                requestBody.messageContent = messageContent;
+            }
 
             for await (const chunk of streamApi("/api/chat/stream", requestBody, abortSignal)) {
                 if (chunk.type === "content") {

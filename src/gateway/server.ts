@@ -172,7 +172,7 @@ export class GatewayServer {
 
         // Chat API (streaming via SSE)
         this.app.post<{ Body: ChatRequest }>('/api/chat/stream', async (request, reply) => {
-            const { message, sessionId = nanoid(), userId, history: clientHistory, attachments } = request.body;
+            const { message, messageContent, sessionId = nanoid(), userId, history: clientHistory, attachments } = request.body;
 
             this.logger.info(`Stream chat request: session=${sessionId}`);
 
@@ -200,8 +200,11 @@ export class GatewayServer {
 
             let assistantAnswer = '';
 
+            // Use multimodal content if provided, otherwise fall back to plain string
+            const userInput = (messageContent && messageContent.length > 0 ? messageContent : message) as string;
+
             try {
-                for await (const step of this.agent.run(message, {
+                for await (const step of this.agent.run(userInput, {
                     sessionId,
                     userId,
                     memory,
@@ -224,7 +227,7 @@ export class GatewayServer {
                 if (!abortController.signal.aborted && assistantAnswer) {
                     const { assistantMsgId } = historyRepository.saveConversationTurn(
                         sessionId,
-                        { role: 'user', content: message, attachments },
+                        { role: 'user', content: messageContent && messageContent.length > 0 ? messageContent : message, attachments },
                         { role: 'assistant', content: assistantAnswer }
                     );
 
