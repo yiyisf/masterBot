@@ -186,37 +186,70 @@ const CustomAssistantMessage = memo(() => {
     const sessionId = searchParams.get("sessionId") || "";
 
     const handleSuggestionSelect = (text: string) => {
-        // Append the suggestion as a new user message
         thread.append({
             role: "user",
             content: [{ type: "text", text }],
         });
     };
 
+    const isRunning = message.status?.type === 'running';
     const isComplete = message.status?.type === 'complete';
+    const isIncomplete = message.status?.type === 'incomplete';
     const hasContent = message.content.some(
         (c) => c.type === 'text' && (c as { type: 'text'; text: string }).text.trim().length > 0
     );
     const showActionBar = isComplete && hasContent;
 
+    const completedAt = isComplete && message.createdAt
+        ? new Date(message.createdAt).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })
+        : null;
+
     return (
         <div className="group flex flex-col gap-4 items-start mb-10 w-full max-w-3xl mx-auto animate-in fade-in duration-500">
             <div className="flex gap-4 items-start w-full">
-                <div className="w-9 h-9 rounded-lg bg-primary/10 border border-primary/20 flex items-center justify-center shrink-0 mt-1 shadow-sm">
-                    <span className="text-[11px] font-bold text-primary">CM</span>
+                {/* Avatar — with streaming indicator dot */}
+                <div className="relative shrink-0 mt-1">
+                    <div className="w-9 h-9 rounded-lg bg-primary/10 border border-primary/20 flex items-center justify-center shadow-sm">
+                        <span className="text-[11px] font-bold text-primary">CM</span>
+                    </div>
+                    {isRunning && (
+                        <span className="absolute bottom-0 right-0 w-2.5 h-2.5 rounded-full bg-emerald-500 border-2 border-background animate-pulse" />
+                    )}
                 </div>
+
                 <div className="flex-1 max-w-full overflow-hidden">
                     <div className="prose prose-sm dark:prose-invert max-w-none leading-relaxed text-[15px] text-foreground/90">
                         <MessagePrimitive.Content components={{ Text: MarkdownText }} />
+                        {/* Typing dots — shown while waiting for first token */}
+                        {isRunning && !hasContent && (
+                            <div className="flex gap-1.5 items-center py-1">
+                                {[0, 150, 300].map((delay, i) => (
+                                    <span
+                                        key={i}
+                                        className="w-2 h-2 rounded-full bg-muted-foreground/40 animate-bounce"
+                                        style={{ animationDelay: `${delay}ms` }}
+                                    />
+                                ))}
+                            </div>
+                        )}
                     </div>
+
+                    {/* Incomplete/error state */}
+                    {isIncomplete && (
+                        <div className="mt-2 flex items-center gap-2 text-xs text-amber-600 dark:text-amber-400 bg-amber-50 dark:bg-amber-950/20 border border-amber-200 dark:border-amber-900/40 rounded-md px-3 py-2">
+                            <span className="font-medium">响应中断，可点击重试</span>
+                        </div>
+                    )}
+
                     {steps.length > 0 && (
                         <div className="w-full mt-4 max-w-3xl">
                             <ChatThinking steps={steps} />
                             <DagView steps={steps} />
                         </div>
                     )}
+
                     {/* ActionBar: copy, retry, feedback — only visible after completion with content */}
-                    <div className={`flex gap-1 mt-2 transition-opacity ${showActionBar ? 'opacity-100' : 'opacity-0 pointer-events-none'}`}>
+                    <div className={`flex items-center gap-1 mt-2 transition-opacity ${showActionBar ? 'opacity-100' : 'opacity-0 pointer-events-none'}`}>
                         <CopyButton />
                         <ActionBarPrimitive.Reload asChild>
                             <button
@@ -229,7 +262,11 @@ const CustomAssistantMessage = memo(() => {
                         <div className="w-px h-5 bg-border mx-1 self-center" />
                         <FeedbackButton rating="positive" messageId={assistantMessageId} sessionId={sessionId} />
                         <FeedbackButton rating="negative" messageId={assistantMessageId} sessionId={sessionId} />
+                        {completedAt && (
+                            <span className="ml-auto text-[10px] text-muted-foreground/50 pl-2">{completedAt}</span>
+                        )}
                     </div>
+
                     {/* Dynamic follow-up suggestions */}
                     <SuggestionButtons suggestions={suggestions} onSelect={handleSuggestionSelect} />
                 </div>
@@ -239,12 +276,48 @@ const CustomAssistantMessage = memo(() => {
 });
 
 const CustomUserMessage = memo(() => {
+    const message = useMessage();
+    const [copied, setCopied] = useState(false);
+
+    const textContent = message.content
+        .filter(c => c.type === 'text')
+        .map(c => (c as { type: 'text'; text: string }).text)
+        .join('');
+
+    const sentAt = message.createdAt
+        ? new Date(message.createdAt).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })
+        : null;
+
+    const handleCopy = useCallback(() => {
+        navigator.clipboard.writeText(textContent);
+        setCopied(true);
+        setTimeout(() => setCopied(false), 2000);
+    }, [textContent]);
+
     return (
-        <div className="flex flex-col gap-3 items-end mb-10 w-full max-w-3xl mx-auto animate-in slide-in-from-right-4 fade-in duration-300">
+        <div className="group flex flex-col gap-1.5 items-end mb-10 w-full max-w-3xl mx-auto animate-in slide-in-from-right-4 fade-in duration-300">
             <div className="max-w-[75%] bg-muted/80 text-foreground px-5 py-3 rounded-2xl rounded-tr-none shadow-sm border border-border/50 backdrop-blur-sm">
                 <div className="text-[15px] leading-relaxed">
                     <MessagePrimitive.Content components={{ Text: MarkdownText }} />
                 </div>
+            </div>
+            {/* Footer: timestamp + copy — visible on hover */}
+            <div className="flex items-center gap-2 opacity-0 group-hover:opacity-100 transition-opacity pr-1">
+                {sentAt && (
+                    <span className="text-[10px] text-muted-foreground/50">{sentAt}</span>
+                )}
+                {textContent && (
+                    <button
+                        onClick={handleCopy}
+                        className="inline-flex items-center gap-1 text-[10px] text-muted-foreground/50 hover:text-muted-foreground transition-colors"
+                        title="复制消息"
+                    >
+                        {copied
+                            ? <><Check className="w-3 h-3 text-green-500" /><span>已复制</span></>
+                            : <><Copy className="w-3 h-3" /><span>复制</span></>
+                        }
+                    </button>
+                )}
             </div>
         </div>
     );
