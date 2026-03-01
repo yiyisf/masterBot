@@ -873,19 +873,48 @@ export class GatewayServer {
 
         // ===== WORKFLOWS =====
         this.app.get('/api/workflows', async () => {
-            const rows = (db as any).prepare('SELECT id, name, description, created_at, updated_at FROM workflows ORDER BY updated_at DESC').all();
-            return rows;
+            const rows = (db as any).prepare('SELECT id, name, description, definition, created_at, updated_at FROM workflows ORDER BY updated_at DESC').all() as any[];
+            return rows.map((r: any) => {
+                const def = (() => { try { return JSON.parse(r.definition); } catch { return {}; } })();
+                return {
+                    id: r.id,
+                    name: r.name,
+                    description: r.description,
+                    nodes: def.nodes ?? [],
+                    createdAt: r.created_at,
+                    updatedAt: r.updated_at,
+                };
+            });
         });
 
-        this.app.post<{ Body: { name: string; description?: string; definition: any } }>('/api/workflows', async (request, reply) => {
+        this.app.post<{ Body: { name: string; description?: string; nodes?: any[]; definition?: any } }>('/api/workflows', async (request, reply) => {
             try {
                 const { nanoid } = await import('nanoid');
                 const id = nanoid();
                 const now = new Date().toISOString();
-                const { name, description, definition } = request.body;
+                const { name, description, nodes, definition } = request.body;
+                // Frontend sends `nodes`; backend stores as `definition: { nodes }`
+                const defObj = definition ?? (nodes !== undefined ? { nodes } : { nodes: [] });
                 (db as any).prepare(`INSERT INTO workflows (id, name, description, definition, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)`)
-                    .run(id, name, description || null, JSON.stringify(definition), now, now);
+                    .run(id, name, description || null, JSON.stringify(defObj), now, now);
                 return { success: true, id };
+            } catch (err: any) {
+                reply.status(500); return { error: err.message };
+            }
+        });
+
+        this.app.put<{ Params: { id: string }; Body: { name: string; description?: string; nodes?: any[]; definition?: any } }>('/api/workflows/:id', async (request, reply) => {
+            try {
+                const { id } = request.params;
+                const existing = (db as any).prepare('SELECT id FROM workflows WHERE id = ?').get(id);
+                if (!existing) { reply.status(404); return { error: 'Workflow not found' }; }
+                const now = new Date().toISOString();
+                const { name, description, nodes, definition } = request.body;
+                const defObj = definition ?? (nodes !== undefined ? { nodes } : { nodes: [] });
+                (db as any).prepare(
+                    'UPDATE workflows SET name = ?, description = ?, definition = ?, updated_at = ? WHERE id = ?'
+                ).run(name, description || null, JSON.stringify(defObj), now, id);
+                return { success: true };
             } catch (err: any) {
                 reply.status(500); return { error: err.message };
             }
