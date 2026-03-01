@@ -3,7 +3,6 @@
 import { useState, useMemo } from "react";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
-import { ScrollArea } from "@/components/ui/scroll-area";
 import { Search, ChevronDown, ChevronRight, Lock, Wifi, Copy, Check } from "lucide-react";
 
 // ─────────────────────────────────────────────
@@ -803,8 +802,8 @@ export default function ApiDocsPage() {
 
   return (
     <div className="flex flex-col h-full">
-      {/* Sticky header */}
-      <div className="border-b bg-background/95 backdrop-blur sticky top-0 z-10">
+      {/* Fixed header — shrink-0 keeps it out of the scroll area */}
+      <div className="shrink-0 border-b bg-background/95 backdrop-blur">
         <div className="max-w-4xl mx-auto px-4 py-4 space-y-3">
           <div className="flex items-start justify-between gap-4">
             <div>
@@ -845,8 +844,8 @@ export default function ApiDocsPage() {
         </div>
       </div>
 
-      {/* Content */}
-      <ScrollArea className="flex-1">
+      {/* Content — flex-1 + min-h-0 + overflow-y-auto enables native scroll */}
+      <div className="flex-1 min-h-0 overflow-y-auto">
         <div className="max-w-4xl mx-auto px-4 py-4 divide-y divide-border/30">
           {filtered.length === 0 ? (
             <div className="py-16 text-center text-muted-foreground text-sm">未找到匹配的端点</div>
@@ -856,7 +855,7 @@ export default function ApiDocsPage() {
             ))
           )}
         </div>
-      </ScrollArea>
+      </div>
     </div>
   );
 }
