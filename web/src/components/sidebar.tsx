@@ -24,6 +24,7 @@ import {
   Monitor,
   BarChart2,
   FileText,
+  Wifi,
 } from "lucide-react";
 
 
@@ -175,6 +176,11 @@ const data: SidebarData = {
     },
   ],
   navSecondary: [
+    {
+      title: "API 文档",
+      url: "/api-docs",
+      icon: Wifi,
+    },
     {
       title: "系统设置",
       url: "/settings",
