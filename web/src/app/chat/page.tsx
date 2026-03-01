@@ -20,6 +20,7 @@ import { Copy, Check, RefreshCw, ThumbsUp, ThumbsDown } from "lucide-react";
 
 import { Mermaid } from "@/components/mermaid";
 import { Skeleton } from "@/components/ui/skeleton";
+import { SlashComposer } from "@/components/slash-composer";
 import remarkGfm from "remark-gfm";
 // eslint-disable-next-line @typescript-eslint/no-require-imports
 const atomOneDark = require("react-syntax-highlighter/dist/esm/styles/hljs/atom-one-dark").default;
@@ -380,6 +381,7 @@ function ChatSession({ sessionId }: { sessionId?: string }) {
                         components={{
                             AssistantMessage: CustomAssistantMessage,
                             UserMessage: CustomUserMessage,
+                            Composer: SlashComposer,
                         }}
                     />
                 </div>
