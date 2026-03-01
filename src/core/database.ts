@@ -134,6 +134,19 @@ export function initDatabase(): DatabaseSync {
             trigger_count INTEGER NOT NULL DEFAULT 0
         );
 
+        CREATE TABLE IF NOT EXISTS token_usage (
+            id TEXT PRIMARY KEY,
+            provider TEXT NOT NULL DEFAULT 'openai',
+            model TEXT NOT NULL,
+            session_id TEXT,
+            prompt_tokens INTEGER NOT NULL DEFAULT 0,
+            completion_tokens INTEGER NOT NULL DEFAULT 0,
+            total_tokens INTEGER NOT NULL DEFAULT 0,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+        );
+        CREATE INDEX IF NOT EXISTS idx_token_usage_created ON token_usage(created_at);
+        CREATE INDEX IF NOT EXISTS idx_token_usage_model ON token_usage(model);
+
         CREATE TABLE IF NOT EXISTS improvement_events (
             id TEXT PRIMARY KEY,
             trigger TEXT NOT NULL,

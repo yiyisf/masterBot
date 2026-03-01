@@ -1,4 +1,6 @@
 import OpenAI from 'openai';
+import { nanoid } from 'nanoid';
+import { db } from '../core/database.js';
 import type {
     LLMAdapter,
     Message,
@@ -7,6 +9,17 @@ import type {
     LLMConfig,
     ToolDefinition
 } from '../types.js';
+
+function recordTokenUsage(model: string, usage: { prompt_tokens: number; completion_tokens: number; total_tokens: number } | null | undefined) {
+    if (!usage) return;
+    try {
+        db.prepare(
+            'INSERT INTO token_usage (id, model, prompt_tokens, completion_tokens, total_tokens) VALUES (?, ?, ?, ?, ?)'
+        ).run(nanoid(), model, usage.prompt_tokens, usage.completion_tokens, usage.total_tokens);
+    } catch {
+        // non-fatal
+    }
+}
 
 /**
  * OpenAI 标准适配器
@@ -37,6 +50,8 @@ export class OpenAIAdapter implements LLMAdapter {
         const choice = response.choices[0];
         const message = choice.message;
 
+        recordTokenUsage(options?.model ?? this.config.model, response.usage);
+
         return {
             role: 'assistant',
             content: message.content ?? '',
@@ -52,18 +67,25 @@ export class OpenAIAdapter implements LLMAdapter {
     }
 
     async *chatStream(messages: Message[], options?: ChatOptions): AsyncGenerator<StreamChunk> {
+        const activeModel = options?.model ?? this.config.model;
         const stream = await this.client.chat.completions.create({
-            model: options?.model ?? this.config.model,
+            model: activeModel,
             messages: this.convertMessages(messages),
             temperature: options?.temperature ?? 0.7,
             max_tokens: options?.maxTokens ?? this.config.maxTokens ?? 4096,
             tools: options?.tools ? this.convertTools(options.tools) : undefined,
             stream: true,
+            stream_options: { include_usage: true },
         }, { signal: options?.abortSignal });
 
         let currentToolCall: Partial<StreamChunk['toolCall']> | null = null;
 
         for await (const chunk of stream) {
+            // Record usage from the final usage-bearing chunk
+            if (chunk.usage) {
+                recordTokenUsage(activeModel, chunk.usage);
+            }
+
             const delta = chunk.choices[0]?.delta;
 
             if (delta?.content) {

@@ -8,6 +8,7 @@ import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
 import { Separator } from "@/components/ui/separator";
 import { Badge } from "@/components/ui/badge";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
     Save,
     RotateCw,
@@ -22,9 +23,11 @@ import {
     Eye,
     EyeOff,
     RefreshCw,
+    BarChart2,
 } from "lucide-react";
 import { fetchApi } from "@/lib/api";
 import { toast } from "sonner";
+import { ChartRenderer } from "@/components/chart-renderer";
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
@@ -54,6 +57,14 @@ interface AgentConfig {
 
 type TestStatus = "idle" | "testing" | "ok" | "error";
 
+interface DailyUsage { date: string; prompt_tokens: number; completion_tokens: number; total_tokens: number; }
+interface ModelUsage { model: string; prompt_tokens: number; completion_tokens: number; total_tokens: number; calls: number; }
+interface UsageSummary {
+    monthly: { prompt_tokens: number; completion_tokens: number; total_tokens: number };
+    byModel: ModelUsage[];
+    today: number;
+}
+
 // ── Small helpers ──────────────────────────────────────────────────────────────
 
 function StatusIcon({ status }: { status: TestStatus }) {
@@ -79,6 +90,12 @@ export default function SettingsPage() {
     const [showKeys, setShowKeys] = useState<Record<string, boolean>>({});
     const [loading, setLoading] = useState(true);
 
+    // Usage stats
+    const [dailyUsage, setDailyUsage] = useState<DailyUsage[]>([]);
+    const [usageSummary, setUsageSummary] = useState<UsageSummary | null>(null);
+    const [usageDays, setUsageDays] = useState(7);
+    const [loadingUsage, setLoadingUsage] = useState(false);
+
     // ─ load all config sections
     const loadAll = useCallback(async () => {
         setLoading(true);
@@ -98,7 +115,24 @@ export default function SettingsPage() {
         }
     }, []);
 
+    const loadUsage = useCallback(async (days: number) => {
+        setLoadingUsage(true);
+        try {
+            const [daily, summary] = await Promise.all([
+                fetchApi<DailyUsage[]>(`/api/usage/daily?days=${days}`),
+                fetchApi<UsageSummary>("/api/usage/summary"),
+            ]);
+            setDailyUsage(daily);
+            setUsageSummary(summary);
+        } catch (err: any) {
+            toast.error("加载用量统计失败: " + err.message);
+        } finally {
+            setLoadingUsage(false);
+        }
+    }, []);
+
     useEffect(() => { loadAll(); }, [loadAll]);
+    useEffect(() => { loadUsage(usageDays); }, [loadUsage, usageDays]);
 
     // ─ helpers
     const updateProvider = (name: string, field: keyof ProviderConfig, value: string | number) => {
@@ -185,20 +219,70 @@ export default function SettingsPage() {
 
     const providerNames = Object.keys(models?.providers ?? {});
 
+    // Build ECharts config for daily usage line chart
+    const dailyChartConfig = {
+        backgroundColor: "transparent",
+        tooltip: { trigger: "axis" },
+        legend: { data: ["提示词 Tokens", "输出 Tokens"], textStyle: { color: "#aaa" } },
+        grid: { left: "3%", right: "4%", bottom: "3%", containLabel: true },
+        xAxis: {
+            type: "category",
+            data: dailyUsage.map(d => d.date),
+            axisLabel: { color: "#aaa", fontSize: 11 },
+        },
+        yAxis: { type: "value", axisLabel: { color: "#aaa", fontSize: 11 } },
+        series: [
+            {
+                name: "提示词 Tokens",
+                type: "line",
+                smooth: true,
+                data: dailyUsage.map(d => d.prompt_tokens),
+                itemStyle: { color: "#6366f1" },
+                areaStyle: { color: "rgba(99,102,241,0.1)" },
+            },
+            {
+                name: "输出 Tokens",
+                type: "line",
+                smooth: true,
+                data: dailyUsage.map(d => d.completion_tokens),
+                itemStyle: { color: "#10b981" },
+                areaStyle: { color: "rgba(16,185,129,0.1)" },
+            },
+        ],
+    };
+
+    function fmtK(n: number) {
+        if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(2)}M`;
+        if (n >= 1_000) return `${(n / 1_000).toFixed(1)}K`;
+        return String(n);
+    }
+
     return (
         <div className="h-full overflow-y-auto">
-            <div className="max-w-4xl mx-auto space-y-8 p-6 pb-20">
+            <div className="max-w-4xl mx-auto space-y-6 p-6 pb-20">
                 {/* Header */}
                 <div className="flex items-center justify-between">
                     <div>
                         <h1 className="text-2xl font-bold tracking-tight">系统设置</h1>
-                        <p className="text-muted-foreground text-sm mt-1">配置 AI 模型、Agent 参数和安全选项</p>
+                        <p className="text-muted-foreground text-sm mt-1">配置 AI 模型、Agent 参数、安全选项及用量统计</p>
                     </div>
                     <Button variant="outline" size="sm" onClick={loadAll}>
                         <RefreshCw className="w-4 h-4 mr-2" />
                         重置
                     </Button>
                 </div>
+
+                <Tabs defaultValue="config">
+                    <TabsList className="mb-4">
+                        <TabsTrigger value="config">系统配置</TabsTrigger>
+                        <TabsTrigger value="usage">
+                            <BarChart2 className="w-3.5 h-3.5 mr-1.5" />
+                            用量统计
+                        </TabsTrigger>
+                    </TabsList>
+
+                    {/* ══════════ Tab 1: 系统配置 ══════════ */}
+                    <TabsContent value="config" className="space-y-8 mt-0">
 
                 {/* ── Card 1: AI 模型 ── */}
                 <Card>
@@ -586,6 +670,123 @@ export default function SettingsPage() {
                         </dl>
                     </CardContent>
                 </Card>
+
+                    </TabsContent>
+
+                    {/* ══════════ Tab 2: 用量统计 ══════════ */}
+                    <TabsContent value="usage" className="space-y-6 mt-0">
+
+                        {/* Summary cards */}
+                        <div className="grid grid-cols-3 gap-4">
+                            <Card>
+                                <CardHeader className="pb-1 pt-4 px-5">
+                                    <CardDescription className="text-xs">今日 Tokens</CardDescription>
+                                </CardHeader>
+                                <CardContent className="px-5 pb-4">
+                                    <p className="text-2xl font-bold">{fmtK(usageSummary?.today ?? 0)}</p>
+                                </CardContent>
+                            </Card>
+                            <Card>
+                                <CardHeader className="pb-1 pt-4 px-5">
+                                    <CardDescription className="text-xs">本月提示词 Tokens</CardDescription>
+                                </CardHeader>
+                                <CardContent className="px-5 pb-4">
+                                    <p className="text-2xl font-bold">{fmtK(usageSummary?.monthly.prompt_tokens ?? 0)}</p>
+                                </CardContent>
+                            </Card>
+                            <Card>
+                                <CardHeader className="pb-1 pt-4 px-5">
+                                    <CardDescription className="text-xs">本月输出 Tokens</CardDescription>
+                                </CardHeader>
+                                <CardContent className="px-5 pb-4">
+                                    <p className="text-2xl font-bold">{fmtK(usageSummary?.monthly.completion_tokens ?? 0)}</p>
+                                </CardContent>
+                            </Card>
+                        </div>
+
+                        {/* Daily chart */}
+                        <Card>
+                            <CardHeader className="pb-3">
+                                <div className="flex items-center justify-between">
+                                    <div className="flex items-center gap-2">
+                                        <BarChart2 className="w-5 h-5 text-primary" />
+                                        <div>
+                                            <CardTitle>每日用量趋势</CardTitle>
+                                            <CardDescription>提示词与输出 Token 消耗</CardDescription>
+                                        </div>
+                                    </div>
+                                    <div className="flex items-center gap-2">
+                                        {loadingUsage && <Loader2 className="w-4 h-4 animate-spin text-muted-foreground" />}
+                                        <select
+                                            className="h-8 px-2 rounded-md border bg-background text-xs"
+                                            value={usageDays}
+                                            onChange={(e) => setUsageDays(Number(e.target.value))}
+                                        >
+                                            <option value={7}>近 7 天</option>
+                                            <option value={14}>近 14 天</option>
+                                            <option value={30}>近 30 天</option>
+                                        </select>
+                                        <Button
+                                            variant="outline"
+                                            size="sm"
+                                            onClick={() => loadUsage(usageDays)}
+                                            disabled={loadingUsage}
+                                        >
+                                            <RefreshCw className="w-3.5 h-3.5" />
+                                        </Button>
+                                    </div>
+                                </div>
+                            </CardHeader>
+                            <CardContent>
+                                {dailyUsage.length === 0 ? (
+                                    <div className="flex items-center justify-center h-48 text-muted-foreground text-sm">
+                                        暂无数据 — 发起对话后将开始记录 Token 用量
+                                    </div>
+                                ) : (
+                                    <ChartRenderer config={dailyChartConfig} height={280} />
+                                )}
+                            </CardContent>
+                        </Card>
+
+                        {/* By-model table */}
+                        <Card>
+                            <CardHeader className="pb-3">
+                                <CardTitle className="text-base">本月按模型用量</CardTitle>
+                            </CardHeader>
+                            <CardContent>
+                                {(!usageSummary?.byModel.length) ? (
+                                    <p className="text-sm text-muted-foreground text-center py-6">暂无数据</p>
+                                ) : (
+                                    <table className="w-full text-sm">
+                                        <thead>
+                                            <tr className="border-b text-muted-foreground text-xs">
+                                                <th className="pb-2 text-left font-medium">模型</th>
+                                                <th className="pb-2 text-right font-medium">调用次数</th>
+                                                <th className="pb-2 text-right font-medium">提示词</th>
+                                                <th className="pb-2 text-right font-medium">输出</th>
+                                                <th className="pb-2 text-right font-medium">合计</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody>
+                                            {usageSummary!.byModel.map((row) => (
+                                                <tr key={row.model} className="border-b last:border-0">
+                                                    <td className="py-2.5">
+                                                        <Badge variant="secondary" className="font-mono text-xs">{row.model}</Badge>
+                                                    </td>
+                                                    <td className="py-2.5 text-right tabular-nums">{row.calls}</td>
+                                                    <td className="py-2.5 text-right tabular-nums">{fmtK(row.prompt_tokens)}</td>
+                                                    <td className="py-2.5 text-right tabular-nums">{fmtK(row.completion_tokens)}</td>
+                                                    <td className="py-2.5 text-right tabular-nums font-medium">{fmtK(row.total_tokens)}</td>
+                                                </tr>
+                                            ))}
+                                        </tbody>
+                                    </table>
+                                )}
+                            </CardContent>
+                        </Card>
+
+                    </TabsContent>
+                </Tabs>
             </div>
         </div>
     );

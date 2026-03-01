@@ -1089,6 +1089,54 @@ export class GatewayServer {
             }
         });
 
+        // ===== TOKEN USAGE =====
+        this.app.get<{ Querystring: { days?: string } }>('/api/usage/daily', async (request) => {
+            const days = Math.min(parseInt((request.query as any).days ?? '7', 10), 90);
+            try {
+                return db.prepare(`
+                    SELECT date(created_at) as date,
+                           SUM(prompt_tokens) as prompt_tokens,
+                           SUM(completion_tokens) as completion_tokens,
+                           SUM(total_tokens) as total_tokens
+                    FROM token_usage
+                    WHERE created_at >= date('now', '-' || ? || ' days')
+                    GROUP BY date(created_at)
+                    ORDER BY date ASC
+                `).all(days);
+            } catch { return []; }
+        });
+
+        this.app.get('/api/usage/summary', async () => {
+            try {
+                const monthly = db.prepare(`
+                    SELECT SUM(prompt_tokens) as prompt_tokens,
+                           SUM(completion_tokens) as completion_tokens,
+                           SUM(total_tokens) as total_tokens
+                    FROM token_usage
+                    WHERE created_at >= date('now', 'start of month')
+                `).get() as any;
+                const byModel = db.prepare(`
+                    SELECT model,
+                           SUM(prompt_tokens) as prompt_tokens,
+                           SUM(completion_tokens) as completion_tokens,
+                           SUM(total_tokens) as total_tokens,
+                           COUNT(*) as calls
+                    FROM token_usage
+                    WHERE created_at >= date('now', 'start of month')
+                    GROUP BY model
+                    ORDER BY total_tokens DESC
+                `).all() as any[];
+                const today = (db.prepare(
+                    `SELECT SUM(total_tokens) as t FROM token_usage WHERE date(created_at) = date('now')`
+                ).get() as any)?.t ?? 0;
+                return {
+                    monthly: monthly ?? { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 },
+                    byModel: byModel ?? [],
+                    today,
+                };
+            } catch { return { monthly: { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 }, byModel: [], today: 0 }; }
+        });
+
         // ===== LONG-TERM MEMORIES =====
         this.app.get<{ Querystring: { q?: string; limit?: string } }>('/api/memories', async (request) => {
             const { q, limit } = request.query as { q?: string; limit?: string };
