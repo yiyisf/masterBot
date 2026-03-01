@@ -1,7 +1,8 @@
 "use client";
 
 import { makeAssistantToolUI } from "@assistant-ui/react";
-import { Terminal, FileText, Globe, Loader2, CheckCircle2, XCircle, Table2, Camera, Eye, Search, ListTree, GitFork, ClipboardList, AlertTriangle, Copy, Check } from "lucide-react";
+import type { ToolCallMessagePartProps } from "@assistant-ui/react";
+import { Terminal, FileText, Globe, Loader2, CheckCircle2, XCircle, AlertCircle, Table2, Camera, Eye, Search, ListTree, GitFork, ClipboardList, AlertTriangle, Copy, Check } from "lucide-react";
 import { useState } from "react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -474,6 +475,60 @@ export const DagCreateTaskToolUI = makeAssistantToolUI<{ description: string; se
         );
     },
 });
+
+// ─── Fallback Tool UI ────────────────────────────────────────────────────────
+
+export function FallbackToolUI({ toolName, args, result, status }: ToolCallMessagePartProps) {
+    const isRunning = status.type === "running";
+    const isError = status.type === "incomplete";
+
+    const argsSummary = (() => {
+        try {
+            const entries = Object.entries(args as Record<string, unknown>);
+            if (entries.length === 0) return null;
+            return entries
+                .slice(0, 3)
+                .map(([k, v]) => `${k}: ${String(v).slice(0, 40)}`)
+                .join("  ·  ");
+        } catch {
+            return String(args).slice(0, 120);
+        }
+    })();
+
+    const resultPreview = (() => {
+        if (isRunning || result === undefined) return null;
+        try {
+            const s = typeof result === "string" ? result : JSON.stringify(result);
+            return s.slice(0, 100) + (s.length > 100 ? "…" : "");
+        } catch {
+            return null;
+        }
+    })();
+
+    return (
+        <div className="my-2 rounded-lg border bg-muted/30 px-3 py-2.5 font-mono text-sm">
+            <div className="flex items-center gap-2 mb-0.5">
+                {isRunning ? (
+                    <Loader2 className="w-3.5 h-3.5 text-blue-500 animate-spin shrink-0" />
+                ) : isError ? (
+                    <AlertCircle className="w-3.5 h-3.5 text-destructive shrink-0" />
+                ) : (
+                    <CheckCircle2 className="w-3.5 h-3.5 text-green-500 shrink-0" />
+                )}
+                <span className="font-semibold text-foreground">{toolName}</span>
+                <span className="ml-auto text-[10px] text-muted-foreground">
+                    {isRunning ? "执行中…" : isError ? "执行失败" : "执行完成"}
+                </span>
+            </div>
+            {argsSummary && (
+                <p className="text-[11px] text-muted-foreground truncate pl-5">{argsSummary}</p>
+            )}
+            {resultPreview && (
+                <p className="text-[11px] text-muted-foreground/60 truncate pl-5 mt-0.5">→ {resultPreview}</p>
+            )}
+        </div>
+    );
+}
 
 // ─── Export ──────────────────────────────────────────────────────────────────
 

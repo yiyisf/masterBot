@@ -1,6 +1,6 @@
 "use client";
 
-import { AssistantRuntimeProvider, useLocalRuntime, useMessage, MessagePrimitive, useThreadRuntime, ActionBarPrimitive, CompositeAttachmentAdapter, SimpleImageAttachmentAdapter, SimpleTextAttachmentAdapter } from "@assistant-ui/react";
+import { AssistantRuntimeProvider, useLocalRuntime, useMessage, MessagePrimitive, useThreadRuntime, ActionBarPrimitive, BranchPickerPrimitive, ComposerPrimitive, CompositeAttachmentAdapter, SimpleImageAttachmentAdapter, SimpleTextAttachmentAdapter } from "@assistant-ui/react";
 import {
     Thread,
     makeMarkdownText
@@ -9,14 +9,14 @@ import { makeLightAsyncSyntaxHighlighter } from "@assistant-ui/react-syntax-high
 import { MyRuntimeAdapter } from "@/lib/assistant-runtime";
 import { ChatThinking } from "@/components/chat-thinking";
 import { DagView } from "@/components/dag-view";
-import { allToolUIs } from "@/components/tool-ui";
+import { allToolUIs, FallbackToolUI } from "@/components/tool-ui";
 import { useMemo, memo, useRef, useEffect, useState, Suspense, useCallback } from "react";
 import "@assistant-ui/react-ui/styles/index.css";
 import "@assistant-ui/react-ui/styles/markdown.css";
 import { nanoid } from "nanoid";
 import { useSearchParams } from "next/navigation";
 import { fetchApi } from "@/lib/api";
-import { Copy, Check, RefreshCw, ThumbsUp, ThumbsDown, ChevronRight, ShieldAlert, ShieldCheck, ShieldX } from "lucide-react";
+import { Copy, Check, RefreshCw, ThumbsUp, ThumbsDown, ChevronLeft, ChevronRight, BotMessageSquare, Pencil, ShieldAlert, ShieldCheck, ShieldX } from "lucide-react";
 
 import { Mermaid } from "@/components/mermaid";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -314,8 +314,8 @@ const CustomAssistantMessage = memo(() => {
             <div className="flex gap-4 items-start w-full">
                 {/* Avatar — with streaming indicator dot */}
                 <div className="relative shrink-0 mt-1">
-                    <div className="w-9 h-9 rounded-lg bg-primary/10 border border-primary/20 flex items-center justify-center shadow-sm">
-                        <span className="text-[11px] font-bold text-primary">CM</span>
+                    <div className="w-9 h-9 rounded-full bg-gradient-to-br from-blue-500 to-violet-600 flex items-center justify-center shadow-sm">
+                        <BotMessageSquare className="w-4 h-4 text-white" />
                     </div>
                     {isRunning && (
                         <span className="absolute bottom-0 right-0 w-2.5 h-2.5 rounded-full bg-emerald-500 border-2 border-background animate-pulse" />
@@ -379,6 +379,28 @@ const CustomAssistantMessage = memo(() => {
                         <div className="w-px h-5 bg-border mx-1 self-center" />
                         <FeedbackButton rating="positive" messageId={assistantMessageId} sessionId={sessionId} />
                         <FeedbackButton rating="negative" messageId={assistantMessageId} sessionId={sessionId} />
+                        <BranchPickerPrimitive.Root
+                            hideWhenSingleBranch
+                            className="flex items-center gap-0.5 border-l pl-2 ml-1 border-border"
+                        >
+                            <BranchPickerPrimitive.Previous asChild>
+                                <button
+                                    className="h-6 w-6 inline-flex items-center justify-center rounded text-muted-foreground hover:text-foreground hover:bg-muted/80 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+                                >
+                                    <ChevronLeft className="w-3.5 h-3.5" />
+                                </button>
+                            </BranchPickerPrimitive.Previous>
+                            <span className="text-[11px] text-muted-foreground tabular-nums min-w-[28px] text-center">
+                                <BranchPickerPrimitive.Number /><span className="opacity-50">/</span><BranchPickerPrimitive.Count />
+                            </span>
+                            <BranchPickerPrimitive.Next asChild>
+                                <button
+                                    className="h-6 w-6 inline-flex items-center justify-center rounded text-muted-foreground hover:text-foreground hover:bg-muted/80 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+                                >
+                                    <ChevronRight className="w-3.5 h-3.5" />
+                                </button>
+                            </BranchPickerPrimitive.Next>
+                        </BranchPickerPrimitive.Root>
                         {completedAt && (
                             <span className="ml-auto text-[10px] text-muted-foreground/50 pl-2">{completedAt}</span>
                         )}
@@ -418,7 +440,7 @@ const CustomUserMessage = memo(() => {
                     <MessagePrimitive.Content components={{ Text: MarkdownText }} />
                 </div>
             </div>
-            {/* Footer: timestamp + copy — visible on hover */}
+            {/* Footer: timestamp + copy + edit — visible on hover */}
             <div className="flex items-center gap-2 opacity-0 group-hover:opacity-100 transition-opacity pr-1">
                 {sentAt && (
                     <span className="text-[10px] text-muted-foreground/50">{sentAt}</span>
@@ -435,7 +457,45 @@ const CustomUserMessage = memo(() => {
                         }
                     </button>
                 )}
+                <ActionBarPrimitive.Edit asChild>
+                    <button
+                        className="inline-flex items-center gap-1 text-[10px] text-muted-foreground/50 hover:text-muted-foreground transition-colors"
+                        title="编辑消息"
+                    >
+                        <Pencil className="w-3 h-3" /><span>编辑</span>
+                    </button>
+                </ActionBarPrimitive.Edit>
             </div>
+        </div>
+    );
+});
+
+/**
+ * Inline edit composer for user messages (renders when editing mode is active)
+ */
+const CustomUserEditComposer = memo(() => {
+    return (
+        <div className="flex flex-col gap-1.5 items-end mb-10 w-full max-w-3xl mx-auto animate-in fade-in duration-200">
+            <ComposerPrimitive.Root className="w-full max-w-[75%]">
+                <div className="rounded-2xl rounded-tr-none border border-primary/50 bg-muted/80 px-4 py-3 shadow-sm">
+                    <ComposerPrimitive.Input
+                        className="w-full bg-transparent text-[15px] leading-relaxed resize-none outline-none min-h-[60px] max-h-[240px] overflow-y-auto"
+                        rows={2}
+                    />
+                </div>
+                <div className="flex justify-end gap-2 mt-2 pr-1">
+                    <ComposerPrimitive.Cancel asChild>
+                        <button className="text-xs px-3 py-1 rounded-md border border-border text-muted-foreground hover:bg-muted/60 transition-colors">
+                            取消
+                        </button>
+                    </ComposerPrimitive.Cancel>
+                    <ComposerPrimitive.Send asChild>
+                        <button className="text-xs px-3 py-1 rounded-md bg-primary text-primary-foreground hover:bg-primary/90 transition-colors">
+                            重新发送
+                        </button>
+                    </ComposerPrimitive.Send>
+                </div>
+            </ComposerPrimitive.Root>
         </div>
     );
 });
@@ -608,6 +668,11 @@ function ChatSession({ sessionId }: { sessionId?: string }) {
                     )}
 
                     <Thread
+                        assistantMessage={{
+                            components: {
+                                ToolFallback: FallbackToolUI,
+                            },
+                        }}
                         welcome={{
                             message: "您好！我是 CMaster Bot — 您的企业 AI 工作助手。\n我能查询企业数据、检索内部知识、自动化重复流程，还会在工作中持续学习新技能。",
                             suggestions: [
@@ -625,6 +690,7 @@ function ChatSession({ sessionId }: { sessionId?: string }) {
                         components={{
                             AssistantMessage: CustomAssistantMessage,
                             UserMessage: CustomUserMessage,
+                            EditComposer: CustomUserEditComposer,
                             Composer: SlashComposer,
                         }}
                     />
