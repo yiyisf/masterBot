@@ -14,6 +14,44 @@ import { ContextManager } from './context-manager.js';
 import type { LongTermMemory } from '../memory/long-term.js';
 import { taskRepository } from './task-repository.js';
 import { DAGExecutor } from './dag-executor.js';
+import { waitForApproval } from './interrupt-coordinator.js';
+
+/**
+ * Detect whether a tool call requires human confirmation before execution.
+ * Returns a human-readable reason string if dangerous, null if safe.
+ */
+function isDangerousToolCall(toolName: string, params: Record<string, unknown>): string | null {
+    if (toolName === 'shell.execute') {
+        const cmd = (params.command as string) ?? '';
+        const patterns: Array<[RegExp, string]> = [
+            [/\brm\s+(-[rRfF]+\s+)?\//, '删除系统路径'],
+            [/\brm\s+-[rRfF]{2,}/, '递归强制删除文件'],
+            [/\bmkfs\b/, '格式化磁盘分区'],
+            [/\bdd\b.+of=\/dev\//, '直接写入磁盘设备'],
+            [/\bdrop\s+(table|database|schema)\b/i, '删除数据库对象'],
+            [/\btruncate\b/i, '清空表数据'],
+            [/[|;`]\s*rm\b/, '管道/链接删除命令'],
+            [/\bshred\b/, '安全擦除文件'],
+            [/\b(poweroff|shutdown|reboot|init\s+0)\b/, '关机/重启操作'],
+        ];
+        for (const [pattern, reason] of patterns) {
+            if (pattern.test(cmd)) return reason;
+        }
+    }
+    if (toolName === 'database-connector.execute_query') {
+        const query = (params.query as string) ?? '';
+        if (/\b(drop\s+(table|database|schema)|truncate\s+table)\b/i.test(query)) {
+            return 'SQL 删除/清空数据库对象';
+        }
+    }
+    if (toolName === 'file-manager.write') {
+        const filePath = (params.path as string) ?? '';
+        if (/^\/?(etc|usr|bin|sbin|boot|sys|proc)\//i.test(filePath)) {
+            return `写入系统目录: ${filePath}`;
+        }
+    }
+    return null;
+}
 
 const SYSTEM_PROMPT = `你是 CMaster Bot，一个强大的企业级 AI 助手。
 
@@ -515,6 +553,47 @@ export class Agent {
                         timestamp: new Date(),
                     };
                 }
+
+                // ── Human-in-the-Loop: check for dangerous tool calls ──────────
+                const firstDangerous = parsedCalls
+                    .map(c => ({ ...c, reason: isDangerousToolCall(c.toolName, c.params) }))
+                    .find(c => c.reason !== null);
+
+                if (firstDangerous) {
+                    const interruptId = nanoid();
+                    yield {
+                        type: 'interrupt',
+                        interruptId,
+                        interruptReason: firstDangerous.reason!,
+                        toolName: firstDangerous.toolName,
+                        toolInput: firstDangerous.params,
+                        content: `需要确认：${firstDangerous.reason}`,
+                        timestamp: new Date(),
+                    };
+
+                    let approved = false;
+                    try {
+                        approved = await waitForApproval(context.sessionId);
+                    } catch {
+                        // Client disconnected mid-interrupt — treat as rejected
+                        approved = false;
+                    }
+
+                    if (!approved) {
+                        // Push cancelled tool results so LLM can respond appropriately
+                        for (const { toolCall } of parsedCalls) {
+                            messages.push({ role: 'tool', content: '用户已取消该操作。', toolCallId: toolCall.id });
+                        }
+                        yield {
+                            type: 'observation',
+                            content: '操作已取消（用户拒绝）。',
+                            toolName: firstDangerous.toolName,
+                            timestamp: new Date(),
+                        };
+                        continue; // back to LLM for a graceful response
+                    }
+                }
+                // ── end Human-in-the-Loop ──────────────────────────────────────
 
                 const skillContext: SkillContext = {
                     sessionId: context.sessionId,

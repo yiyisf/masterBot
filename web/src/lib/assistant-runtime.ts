@@ -127,6 +127,19 @@ export class MyRuntimeAdapter implements ChatModelAdapter {
                     suggestions = chunk.items || [];
                     yield buildYield();
 
+                } else if (chunk.type === "interrupt") {
+                    // Human-in-the-Loop: agent is paused waiting for user approval
+                    currentSteps.push({
+                        interrupt: {
+                            id: chunk.interruptId,
+                            tool: chunk.toolName,
+                            args: chunk.toolInput ?? {},
+                            reason: chunk.interruptReason ?? chunk.content ?? '操作需要确认',
+                            resolved: null, // null = pending user response
+                        }
+                    });
+                    yield buildYield();
+
                 } else if (chunk.type === "answer") {
                     // Final answer replaces any partial content chunks
                     currentContent = chunk.content;

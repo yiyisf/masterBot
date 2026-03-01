@@ -173,7 +173,7 @@ export interface AgentTask {
 }
 
 export interface ExecutionStep {
-    type: 'thought' | 'plan' | 'action' | 'observation' | 'answer' | 'content' | 'task_created' | 'task_completed' | 'task_failed' | 'meta' | 'suggestions';
+    type: 'thought' | 'plan' | 'action' | 'observation' | 'answer' | 'content' | 'task_created' | 'task_completed' | 'task_failed' | 'meta' | 'suggestions' | 'interrupt';
     content: string;
     toolName?: string;
     toolInput?: Record<string, unknown>;
@@ -182,6 +182,9 @@ export interface ExecutionStep {
     taskId?: string;
     assistantMessageId?: string;
     items?: string[];
+    // interrupt fields
+    interruptId?: string;
+    interruptReason?: string;
     timestamp: Date;
 }
 

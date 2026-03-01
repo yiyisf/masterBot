@@ -10,6 +10,7 @@ import { execFile } from 'child_process';
 import { resolveCliCommand } from '../skills/utils.js';
 import { llmFactory } from '../llm/index.js';
 import type { Config, ChatRequest, Logger, Message, McpServerConfig } from '../types.js';
+import { resolveInterrupt, cancelInterrupt } from '../core/interrupt-coordinator.js';
 import { Agent } from '../core/agent.js';
 import { SessionMemoryManager } from '../memory/short-term.js';
 import { historyRepository } from '../core/repository.js';
@@ -195,6 +196,8 @@ export class GatewayServer {
                 if (!reply.raw.writableFinished) {
                     this.logger.warn(`Stream request interrupted by client (disconnection detected): session=${sessionId}`);
                     abortController.abort();
+                    // Cancel any pending human-in-the-loop interrupt so the agent doesn't hang
+                    cancelInterrupt(sessionId);
                 }
             });
 
@@ -560,6 +563,22 @@ export class GatewayServer {
                 return { error: error.message };
             }
         });
+
+        // Human-in-the-Loop: user approves or rejects a pending interrupt
+        this.app.post<{ Params: { id: string }; Body: { approved: boolean } }>(
+            '/api/sessions/:id/interrupt-response',
+            async (request, reply) => {
+                const { id: sessionId } = request.params;
+                const { approved } = request.body;
+                const resolved = resolveInterrupt(sessionId, approved === true);
+                if (!resolved) {
+                    reply.status(404);
+                    return { error: 'No pending interrupt for this session' };
+                }
+                this.logger.info(`Interrupt resolved for session ${sessionId}: approved=${approved}`);
+                return { ok: true };
+            }
+        );
 
         // Update session title
         this.app.patch<{ Params: { id: string }, Body: { title: string } }>('/api/sessions/:id/title', async (request, reply) => {
