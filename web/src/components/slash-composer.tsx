@@ -192,7 +192,17 @@ export function SlashComposer() {
     const router = useRouter();
     const composerRuntime = useComposerRuntime();
     const [slashQuery, setSlashQuery] = useState<string | null>(null);
+    const [attachmentCount, setAttachmentCount] = useState(0);
     const inputRef = useRef<HTMLTextAreaElement>(null);
+
+    // Track attachment count for button highlight
+    useEffect(() => {
+        const unsub = composerRuntime.subscribe(() => {
+            const state = composerRuntime.getState();
+            setAttachmentCount((state as any).attachments?.length ?? 0);
+        });
+        return unsub;
+    }, [composerRuntime]);
 
     const handleChange = useCallback(
         (e: React.ChangeEvent<HTMLTextAreaElement>) => {
@@ -264,14 +274,23 @@ export function SlashComposer() {
                 onInput={handleInput}
             />
 
-            {/* Paperclip add-attachment button */}
+            {/* Paperclip add-attachment button — highlights when attachments exist */}
             <ComposerPrimitive.AddAttachment asChild>
                 <button
                     type="button"
-                    title="添加附件（图片/PDF/CSV/文本）"
-                    className="inline-flex items-center justify-center h-8 w-8 rounded-md text-muted-foreground hover:text-foreground hover:bg-muted/80 transition-colors shrink-0"
+                    title={`添加附件 — 支持图片（PNG/JPG/GIF/WebP）、PDF、CSV、TXT、MD${attachmentCount > 0 ? `（已添加 ${attachmentCount} 个）` : ''}`}
+                    className={`relative inline-flex items-center justify-center h-8 w-8 rounded-md transition-colors shrink-0 ${
+                        attachmentCount > 0
+                            ? 'text-primary hover:bg-primary/10'
+                            : 'text-muted-foreground hover:text-foreground hover:bg-muted/80'
+                    }`}
                 >
                     <Paperclip className="w-4 h-4" />
+                    {attachmentCount > 0 && (
+                        <span className="absolute -top-1 -right-1 h-4 min-w-4 px-0.5 rounded-full bg-primary text-primary-foreground text-[9px] font-bold flex items-center justify-center leading-none">
+                            {attachmentCount > 9 ? '9+' : attachmentCount}
+                        </span>
+                    )}
                 </button>
             </ComposerPrimitive.AddAttachment>
 
