@@ -86,6 +86,9 @@ export class MyRuntimeAdapter implements ChatModelAdapter {
                         // Prefer chunk.content (always set by backend), fall back to chunk.result
                         currentSteps[currentSteps.length - 1].observation =
                             chunk.content ?? chunk.result ?? chunk.toolOutput ?? "";
+                        if (chunk.duration !== undefined) {
+                            currentSteps[currentSteps.length - 1].duration = chunk.duration;
+                        }
                     }
                     yield buildYield();
 

@@ -1,0 +1,17 @@
+services:
+  cmaster:
+    build: .
+    ports:
+      - "3000:3000"
+    volumes:
+      - ./data:/app/data           # SQLite 持久化
+      - ./skills/local:/app/skills/local   # 用户自定义技能
+    env_file:
+      - .env
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:3000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s

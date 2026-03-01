@@ -13,10 +13,7 @@ import {
   BookOpen,
   Library,
   ChevronsUpDown,
-  CreditCard,
   LogOut,
-  Bell,
-  BadgeCheck,
   Plus,
   Trash2,
   Pin,
@@ -26,6 +23,7 @@ import {
   BookText,
   Monitor,
   BarChart2,
+  FileText,
 } from "lucide-react";
 
 
@@ -153,6 +151,7 @@ const data: SidebarData = {
       items: [
         { title: "技能管理", url: "/skills" },
         { title: "企业连接器", url: "/connectors" },
+        { title: "Prompt 模板库", url: "/prompts", badge: "NEW" },
       ],
     },
     {
@@ -183,7 +182,7 @@ const data: SidebarData = {
     },
     {
       title: "技术文档",
-      url: "#",
+      url: "https://github.com/anthropics/cmaster-bot/blob/main/docs/getting-started.md",
       icon: BookOpen,
     },
   ],
@@ -496,21 +495,15 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
                 </DropdownMenuLabel>
                 <DropdownMenuSeparator />
                 <DropdownMenuGroup>
-                  <DropdownMenuItem>
-                    <BadgeCheck className="mr-2 size-4" />
-                    身份账号
-                  </DropdownMenuItem>
-                  <DropdownMenuItem>
-                    <CreditCard className="mr-2 size-4" />
-                    计费方案
-                  </DropdownMenuItem>
-                  <DropdownMenuItem>
-                    <Bell className="mr-2 size-4" />
-                    消息通知
+                  <DropdownMenuItem asChild>
+                    <a href="/settings" className="flex items-center">
+                      <Settings className="mr-2 size-4" />
+                      前往设置
+                    </a>
                   </DropdownMenuItem>
                 </DropdownMenuGroup>
                 <DropdownMenuSeparator />
-                <DropdownMenuItem className="text-destructive focus:bg-destructive/10 focus:text-destructive">
+                <DropdownMenuItem className="text-muted-foreground">
                   <LogOut className="mr-2 size-4" />
                   退出登录
                 </DropdownMenuItem>

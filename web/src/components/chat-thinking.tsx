@@ -19,6 +19,7 @@ export interface ChatStep {
     plan?: string[]; // Array of plan steps
     action?: string;
     observation?: string;
+    duration?: number;  // ms — tool execution time
     status?: 'pending' | 'running' | 'completed' | 'failed';
 }
 
@@ -85,6 +86,13 @@ export function ChatThinking({ steps }: { steps: ChatStep[] }) {
                                         <ChevronRight className="w-3 h-3" />
                                         {step.action}
                                     </div>
+                                    {step.duration !== undefined && (
+                                        <span className="text-[10px] text-muted-foreground">
+                                            {step.duration >= 1000
+                                                ? `${(step.duration / 1000).toFixed(1)}s`
+                                                : `${step.duration}ms`}
+                                        </span>
+                                    )}
                                 </div>
                                 {step.observation && (() => {
                                     const isError = isErrorObservation(step.observation);

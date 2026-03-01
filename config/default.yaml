@@ -52,6 +52,15 @@ auth:
     - ${API_KEY:changeme}
   jwtSecret: ${JWT_SECRET:changeme}
 
+# 细粒度权限控制 (默认关闭，向后兼容)
+permissions:
+  enabled: false
+  rules:
+    - skills: ['database-connector', 'shell']
+      roles: ['admin', 'developer']
+    - skills: ['hr-api', 'hr-portal']
+      roles: ['hr', 'admin']
+
 queue:
   redis:
     url: ${REDIS_URL:redis://localhost:6379}

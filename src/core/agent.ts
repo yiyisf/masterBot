@@ -519,7 +519,8 @@ export class Agent {
                     config: this.skillConfig,
                 };
 
-                // Execute all external tool calls in parallel
+                // Execute all external tool calls in parallel (with duration tracking)
+                const toolStartTimes = parsedCalls.map(() => Date.now());
                 const results = await Promise.allSettled(
                     parsedCalls.map(({ toolName, params }) =>
                         this.executeWithTimeout(
@@ -534,6 +535,7 @@ export class Agent {
                 for (let i = 0; i < results.length; i++) {
                     const { toolCall, toolName } = parsedCalls[i];
                     const result = results[i];
+                    const duration = Date.now() - toolStartTimes[i];
 
                     if (result.status === 'fulfilled') {
                         const resultStr = typeof result.value === 'string'
@@ -545,6 +547,7 @@ export class Agent {
                             content: resultStr,
                             toolName,
                             toolOutput: result.value,
+                            duration,
                             timestamp: new Date(),
                         };
                         messages.push({ role: 'tool', content: resultStr, toolCallId: toolCall.id });
@@ -555,6 +558,7 @@ export class Agent {
                             content: errorMsg,
                             toolName,
                             toolOutput: { error: result.reason?.message },
+                            duration,
                             timestamp: new Date(),
                         };
                         messages.push({ role: 'tool', content: errorMsg, toolCallId: toolCall.id });

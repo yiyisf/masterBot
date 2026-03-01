@@ -16,6 +16,7 @@ import { KnowledgeGraph } from './memory/knowledge-graph.js';
 import { MultiAgentOrchestrator } from './core/multi-agent.js';
 import { SkillGenerator } from './core/skill-generator.js';
 import { ConnectorManager } from './skills/connector-source.js';
+import { SelfImprovementEngine } from './core/self-improvement.js';
 
 async function main() {
     console.log(`
@@ -113,6 +114,10 @@ async function main() {
 
     const scheduler = new SchedulerService(logger);
 
+    // Initialize self-improvement engine
+    const selfImprovementEngine = new SelfImprovementEngine(agent, logger);
+    logger.info('Self-improvement engine initialized');
+
     // Load MCP server configs and register sources
     const mcpConfigPath = path.join(process.cwd(), 'mcp-servers.json');
     if (fs.existsSync(mcpConfigPath)) {
@@ -146,6 +151,7 @@ async function main() {
         skillRegistry,
         connectorManager,
         scheduler,
+        selfImprovementEngine,
     });
 
     await server.start(config.server.port, config.server.host);

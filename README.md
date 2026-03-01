@@ -1,6 +1,10 @@
-# CMaster Bot — 企业级 AI 智能体平台
+# CMaster Bot — 企业员工 AI 助手操作系统
 
-一个功能完备、可自我进化的企业级 AI 助手系统，集成现代化 Web 控制台、可热加载的技能引擎、AIOps 运维自动化、跨平台 RPA 以及自然语言数据分析等全套企业级能力。
+**融合知识检索、数据查询、流程自动化，会自我进化** — 面向 HR、财务、业务、运营等企业员工，无需 IT 人员维护。
+
+[![Node.js >=22](https://img.shields.io/badge/node-%3E%3D22-brightgreen)](https://nodejs.org/)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+[![CI](https://github.com/YOUR_ORG/cmaster-bot/actions/workflows/ci.yml/badge.svg)](https://github.com/YOUR_ORG/cmaster-bot/actions)
 
 ## 🌟 核心特性
 
@@ -12,35 +16,50 @@
 - 🪟 **上下文窗口管理** — 滑动窗口 + LLM 摘要压缩，防止超出模型上下文限制
 - 🔒 **安全加固** — Shell 命令沙箱（黑名单/白名单）+ 认证中间件（API Key / JWT）
 
-### 企业扩展能力（Phase 10–18）
+### 企业扩展能力
 - ⚡ **Auto-Skill Generator** — 自然语言描述 → AI 自动生成技能代码 → 热加载，60 秒上线
+- 🧬 **自我学习闭环** — 负向反馈自动触发 LLM 分析 → 按需生成新技能，持续进化
 - 🕸️ **GraphRAG 知识图谱** — 实体-关系多跳推理，自动增量同步内部知识体系
-- 🔀 **Multi-Agent 多智能体** — Supervisor + Worker DAG 并行编排
+- 🔀 **Multi-Agent 多智能体** — Supervisor + Worker DAG 并行编排，支持 HTTP 网关远程调度
 - 🗓️ **定时主动 AI** — Cron 调度，无需用户触发自动执行任务
 - 🔗 **企业连接器框架** — 30 行 YAML 连接任意 REST/GraphQL 内部系统
 - 📊 **NL2Insight 数据分析** — 自然语言 → SQL → ECharts 可视化，只读安全沙箱
 - 🚨 **AIOps 运维中枢** — Webhook 告警入站 + YAML Runbook 声明式自动执行
 - 🖥️ **AI-RPA 浏览器自动化** — Playwright 驱动，跨平台（Windows Edge / macOS Chrome）
-- 🌓 **跨平台兼容** — Windows PowerShell / macOS bash 自动路由，`~` 路径处理
+- 📝 **Prompt 模板库** — 20+ 内置企业场景模板（HR/数据/运维/文档/流程），支持自定义
+- 🔒 **细粒度权限模型** — 按角色限制技能访问，企业多部门安全隔离
+- 🐳 **Docker 一键部署** — 多阶段 node:22-alpine 镜像，SQLite volume 持久化
 
 ---
 
 ## 🚀 快速开始
 
-### 环境要求
-
-- Node.js >= 20
-- npm >= 10
-
-### 安装依赖
+### Docker 部署（推荐）
 
 ```bash
-# 后端
-npm install
-
-# 前端
-cd web && npm install && cd ..
+git clone https://github.com/YOUR_ORG/cmaster-bot.git && cd cmaster-bot
+cp .env.example .env  # 编辑 OPENAI_API_KEY 和 OPENAI_BASE_URL
+docker compose up -d
+# 访问 http://localhost:3000
 ```
+
+### 本地安装
+
+```bash
+# macOS/Linux 一键安装
+bash scripts/install.sh
+
+# Windows
+scripts\install.bat
+
+# 手动安装
+npm install && cd web && npm install && cd ..
+```
+
+### 环境要求
+
+- **Node.js >= 22**（`node:sqlite` 内置模块要求）
+- npm >= 10
 
 ### 配置
 

@@ -12,7 +12,8 @@
     "start:win": "chcp 65001 && node dist/index.js",
     "test": "vitest",
     "test:run": "vitest run",
-    "lint": "eslint src --ext .ts"
+    "lint": "eslint src --ext .ts",
+    "setup": "bash scripts/install.sh || powershell -ExecutionPolicy Bypass -File scripts/install.ps1"
   },
   "keywords": [
     "ai",
@@ -55,6 +56,6 @@
     "vitest": "^4.0.18"
   },
   "engines": {
-    "node": ">=20.0.0"
+    "node": ">=22.0.0"
   }
 }

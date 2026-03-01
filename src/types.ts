@@ -124,9 +124,11 @@ export interface SkillSource {
 export interface SkillContext {
     sessionId: string;
     userId?: string;
+    role?: string;
     memory: MemoryAccess;
     logger: Logger;
     config: Record<string, unknown>;
+    llm?: unknown;
 }
 
 export interface SkillResult {
@@ -176,6 +178,7 @@ export interface ExecutionStep {
     toolName?: string;
     toolInput?: Record<string, unknown>;
     toolOutput?: unknown;
+    duration?: number;    // ms — tool call duration
     taskId?: string;
     assistantMessageId?: string;
     items?: string[];

@@ -109,12 +109,24 @@ function parseActionsFromMarkdown(content: string): ParsedSkillMd['actions'] {
  * 技能注册中心 (Registry 2.0)
  * 管理多源技能接入 (Local + MCP)
  */
+interface PermissionRule {
+    skills: string[];
+    roles: string[];
+}
+
+interface PermissionsConfig {
+    enabled: boolean;
+    rules: PermissionRule[];
+}
+
 export class SkillRegistry {
     private sources: Map<string, SkillSource> = new Map();
     private logger: Logger;
+    private permissions?: PermissionsConfig;
 
-    constructor(logger: Logger) {
+    constructor(logger: Logger, permissions?: PermissionsConfig) {
         this.logger = logger;
+        this.permissions = permissions;
     }
 
     /**
@@ -182,11 +194,32 @@ export class SkillRegistry {
      * - getTools() 失败时跳过该 source 继续找
      * - execute() 失败时直接向上传播（不吞掉实际错误）
      */
+    /**
+     * 校验权限（仅在 permissions.enabled=true 时执行）
+     */
+    private checkPermission(toolName: string, context: SkillContext): void {
+        if (!this.permissions?.enabled) return;
+        const skillName = toolName.split('.')[0];
+        const userRole = context.role ?? 'user';
+        for (const rule of this.permissions.rules) {
+            if (rule.skills.includes(skillName)) {
+                if (!rule.roles.includes(userRole)) {
+                    throw new Error(
+                        `Access denied: skill "${skillName}" requires role [${rule.roles.join('/')}], current role is "${userRole}"`
+                    );
+                }
+            }
+        }
+    }
+
     async executeAction(
         toolName: string,
         params: Record<string, unknown>,
         context: SkillContext
     ): Promise<unknown> {
+        // Permission check
+        this.checkPermission(toolName, context);
+
         for (const source of this.sources.values()) {
             let tools: ToolDefinition[];
             try {

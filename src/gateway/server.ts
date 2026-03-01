@@ -20,6 +20,8 @@ import { createAuthHook } from './auth.js';
 import { db } from '../core/database.js';
 import { webhookRepository } from '../core/webhook-repository.js';
 import { RunbookEngine } from '../core/runbook-engine.js';
+import { SelfImprovementEngine } from '../core/self-improvement.js';
+import { AgentGateway } from '../core/agent-gateway.js';
 
 /**
  * Gateway 服务器
@@ -37,6 +39,8 @@ export class GatewayServer {
     private skillRegistry?: any;
     private connectorManager?: any;
     private scheduler?: any;
+    private selfImprovementEngine?: SelfImprovementEngine;
+    private agentGateway: AgentGateway;
 
     constructor(options: {
         agent: Agent;
@@ -49,6 +53,7 @@ export class GatewayServer {
         skillRegistry?: any;
         connectorManager?: any;
         scheduler?: any;
+        selfImprovementEngine?: SelfImprovementEngine;
     }) {
         this.agent = options.agent;
         this.sessionManager = options.sessionManager;
@@ -60,6 +65,8 @@ export class GatewayServer {
         this.skillRegistry = options.skillRegistry;
         this.connectorManager = options.connectorManager;
         this.scheduler = options.scheduler;
+        this.selfImprovementEngine = options.selfImprovementEngine;
+        this.agentGateway = new AgentGateway(options.logger);
 
         this.app = Fastify({
             logger: options.config.logging.prettyPrint
@@ -588,6 +595,14 @@ export class GatewayServer {
             }
             try {
                 const id = historyRepository.saveFeedback(messageId, sessionId, rating);
+
+                // Trigger self-improvement on negative feedback (async, non-blocking)
+                if (rating === 'negative' && this.selfImprovementEngine) {
+                    this.selfImprovementEngine.onNegativeFeedback(messageId, sessionId).catch(err => {
+                        this.logger.error(`Self-improvement trigger failed: ${err.message}`);
+                    });
+                }
+
                 return { success: true, id };
             } catch (error: any) {
                 this.logger.error(`Feedback error: ${error.message}`);
@@ -599,6 +614,19 @@ export class GatewayServer {
         // System status
         this.app.get('/api/status', async () => {
             const sessions = historyRepository.getSessions();
+            const memoryCount = (() => {
+                try { return (db.prepare('SELECT COUNT(*) as c FROM memories').get() as any)?.c ?? 0; } catch { return 0; }
+            })();
+            const knowledgeNodeCount = (() => {
+                try { return (db.prepare('SELECT COUNT(*) as c FROM knowledge_nodes').get() as any)?.c ?? 0; } catch { return 0; }
+            })();
+            const activeScheduledTaskCount = (() => {
+                try { return (db.prepare('SELECT COUNT(*) as c FROM scheduled_tasks WHERE enabled=1').get() as any)?.c ?? 0; } catch { return 0; }
+            })();
+            const recentImprovements = (() => {
+                try { return db.prepare('SELECT * FROM improvement_events ORDER BY created_at DESC LIMIT 3').all(); } catch { return []; }
+            })();
+
             return {
                 status: 'active',
                 version: '0.1.0',
@@ -606,6 +634,9 @@ export class GatewayServer {
                     totalSessions: sessions.length,
                     totalMessages: historyRepository.getTotalMessageCount(),
                     skillCount: (await this.agent.getSkillRegistry().getToolDefinitions()).length,
+                    memoryCount,
+                    knowledgeNodeCount,
+                    activeScheduledTaskCount,
                 },
                 sessions: sessions.map(s => ({
                     id: s.id,
@@ -614,8 +645,8 @@ export class GatewayServer {
                 })),
                 llm: {
                     provider: this.agent.getLLMAdapter().provider,
-                    // More info can be added here
-                }
+                },
+                recentImprovements,
             };
         });
 
@@ -1047,6 +1078,106 @@ export class GatewayServer {
                 reply.status(500); return { error: err.message };
             }
         });
+
+        // ===== SELF-IMPROVEMENT =====
+        this.app.get<{ Querystring: { limit?: string } }>('/api/improvements', async (request) => {
+            const limit = parseInt((request.query as any).limit ?? '50', 10);
+            try {
+                return db.prepare('SELECT * FROM improvement_events ORDER BY created_at DESC LIMIT ?').all(limit);
+            } catch {
+                return [];
+            }
+        });
+
+        // ===== LONG-TERM MEMORIES =====
+        this.app.get<{ Querystring: { q?: string; limit?: string } }>('/api/memories', async (request) => {
+            const { q, limit } = request.query as { q?: string; limit?: string };
+            const lim = parseInt(limit ?? '50', 10);
+            try {
+                if (q) {
+                    return db.prepare(
+                        `SELECT id, key, content, session_id, created_at FROM memories WHERE content LIKE ? ORDER BY created_at DESC LIMIT ?`
+                    ).all(`%${q}%`, lim);
+                }
+                return db.prepare('SELECT id, key, content, session_id, created_at FROM memories ORDER BY created_at DESC LIMIT ?').all(lim);
+            } catch {
+                return [];
+            }
+        });
+
+        this.app.delete<{ Params: { id: string } }>('/api/memories/:id', async (request, reply) => {
+            try {
+                db.prepare('DELETE FROM memories WHERE id = ?').run(request.params.id);
+                return { success: true };
+            } catch (err: any) {
+                reply.status(500); return { error: err.message };
+            }
+        });
+
+        // ===== PROMPT TEMPLATES =====
+        this.app.get<{ Querystring: { category?: string; q?: string } }>('/api/prompts', async (request) => {
+            const { category, q } = request.query as { category?: string; q?: string };
+            try {
+                if (category && q) {
+                    return db.prepare('SELECT * FROM prompt_templates WHERE category = ? AND (title LIKE ? OR prompt LIKE ?) ORDER BY use_count DESC, created_at DESC').all(category, `%${q}%`, `%${q}%`);
+                } else if (category) {
+                    return db.prepare('SELECT * FROM prompt_templates WHERE category = ? ORDER BY use_count DESC, created_at DESC').all(category);
+                } else if (q) {
+                    return db.prepare('SELECT * FROM prompt_templates WHERE title LIKE ? OR prompt LIKE ? ORDER BY use_count DESC').all(`%${q}%`, `%${q}%`);
+                }
+                return db.prepare('SELECT * FROM prompt_templates ORDER BY use_count DESC, category, created_at DESC').all();
+            } catch { return []; }
+        });
+
+        this.app.post<{ Body: { title: string; description?: string; prompt: string; category?: string } }>('/api/prompts', async (request, reply) => {
+            const { title, description, prompt: promptText, category } = request.body;
+            if (!title || !promptText) { reply.status(400); return { error: 'title and prompt are required' }; }
+            const id = nanoid();
+            const now = new Date().toISOString();
+            try {
+                db.prepare('INSERT INTO prompt_templates (id, title, description, prompt, category, is_builtin, created_at) VALUES (?, ?, ?, ?, ?, 0, ?)').run(id, title, description ?? null, promptText, category ?? 'general', now);
+                return { success: true, id };
+            } catch (err: any) { reply.status(500); return { error: err.message }; }
+        });
+
+        this.app.patch<{ Params: { id: string }; Body: { title?: string; description?: string; prompt?: string; category?: string } }>('/api/prompts/:id', async (request, reply) => {
+            const { title, description, prompt: promptText, category } = request.body;
+            try {
+                if (title) db.prepare('UPDATE prompt_templates SET title = ? WHERE id = ?').run(title, request.params.id);
+                if (description !== undefined) db.prepare('UPDATE prompt_templates SET description = ? WHERE id = ?').run(description, request.params.id);
+                if (promptText) db.prepare('UPDATE prompt_templates SET prompt = ? WHERE id = ?').run(promptText, request.params.id);
+                if (category) db.prepare('UPDATE prompt_templates SET category = ? WHERE id = ?').run(category, request.params.id);
+                return { success: true };
+            } catch (err: any) { reply.status(500); return { error: err.message }; }
+        });
+
+        this.app.delete<{ Params: { id: string } }>('/api/prompts/:id', async (request, reply) => {
+            try {
+                const row = db.prepare('SELECT is_builtin FROM prompt_templates WHERE id = ?').get(request.params.id) as any;
+                if (row?.is_builtin) { reply.status(403); return { error: 'Cannot delete built-in templates' }; }
+                db.prepare('DELETE FROM prompt_templates WHERE id = ?').run(request.params.id);
+                return { success: true };
+            } catch (err: any) { reply.status(500); return { error: err.message }; }
+        });
+
+        this.app.post<{ Params: { id: string } }>('/api/prompts/:id/use', async (request, reply) => {
+            try {
+                db.prepare('UPDATE prompt_templates SET use_count = use_count + 1 WHERE id = ?').run(request.params.id);
+                return { success: true };
+            } catch (err: any) { reply.status(500); return { error: err.message }; }
+        });
+
+        // POST /api/sessions — create a new session
+        this.app.post<{ Body: { title?: string } }>('/api/sessions', async (request) => {
+            const id = nanoid();
+            const title = request.body?.title || '新对话';
+            const now = new Date().toISOString();
+            db.prepare('INSERT INTO sessions (id, title, created_at, updated_at) VALUES (?, ?, ?, ?)').run(id, title, now, now);
+            return { id, title, createdAt: now, updatedAt: now };
+        });
+
+        // ===== AGENT GATEWAY =====
+        this.agentGateway.registerRoutes(this.app);
     }
 
     async start(port: number, host: string): Promise<void> {
