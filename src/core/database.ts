@@ -171,6 +171,93 @@ export function initDatabase(): DatabaseSync {
         CREATE INDEX IF NOT EXISTS idx_prompt_templates_category ON prompt_templates(category);
     `);
 
+    // 执行审计 + IM 集成新增表
+    db.exec(`
+        CREATE TABLE IF NOT EXISTS execution_records (
+            id              TEXT PRIMARY KEY,
+            type            TEXT NOT NULL,
+            name            TEXT NOT NULL,
+            session_id      TEXT,
+            trigger_source  TEXT NOT NULL DEFAULT 'user',
+            trigger_ref     TEXT,
+            status          TEXT NOT NULL DEFAULT 'running',
+            input_summary   TEXT,
+            output_summary  TEXT,
+            error_message   TEXT,
+            duration_ms     INTEGER,
+            started_at      TEXT NOT NULL,
+            finished_at     TEXT,
+            created_at      TEXT NOT NULL DEFAULT (datetime('now'))
+        );
+        CREATE INDEX IF NOT EXISTS idx_exec_records_type    ON execution_records(type);
+        CREATE INDEX IF NOT EXISTS idx_exec_records_status  ON execution_records(status);
+        CREATE INDEX IF NOT EXISTS idx_exec_records_started ON execution_records(started_at);
+        CREATE INDEX IF NOT EXISTS idx_exec_records_session ON execution_records(session_id);
+
+        CREATE TABLE IF NOT EXISTS audit_approvals (
+            id               TEXT PRIMARY KEY,
+            execution_id     TEXT,
+            session_id       TEXT NOT NULL,
+            interrupt_id     TEXT NOT NULL,
+            action_name      TEXT,
+            action_params    TEXT,
+            danger_reason    TEXT,
+            decision         TEXT NOT NULL,
+            operator         TEXT,
+            operator_channel TEXT NOT NULL DEFAULT 'web',
+            decided_at       TEXT NOT NULL,
+            created_at       TEXT NOT NULL DEFAULT (datetime('now'))
+        );
+        CREATE INDEX IF NOT EXISTS idx_audit_approvals_session  ON audit_approvals(session_id);
+        CREATE INDEX IF NOT EXISTS idx_audit_approvals_decision ON audit_approvals(decision);
+        CREATE INDEX IF NOT EXISTS idx_audit_approvals_decided  ON audit_approvals(decided_at);
+
+        CREATE TABLE IF NOT EXISTS scheduled_task_runs (
+            id                TEXT PRIMARY KEY,
+            scheduled_task_id TEXT NOT NULL,
+            task_name         TEXT NOT NULL,
+            cron_expr         TEXT NOT NULL,
+            session_id        TEXT,
+            trigger_type      TEXT NOT NULL DEFAULT 'auto',
+            status            TEXT NOT NULL DEFAULT 'running',
+            prompt            TEXT,
+            result_summary    TEXT,
+            error_message     TEXT,
+            duration_ms       INTEGER,
+            started_at        TEXT NOT NULL,
+            finished_at       TEXT,
+            created_at        TEXT NOT NULL DEFAULT (datetime('now'))
+        );
+        CREATE INDEX IF NOT EXISTS idx_sched_runs_task    ON scheduled_task_runs(scheduled_task_id);
+        CREATE INDEX IF NOT EXISTS idx_sched_runs_started ON scheduled_task_runs(started_at);
+
+        CREATE TABLE IF NOT EXISTS im_sessions (
+            id                   TEXT PRIMARY KEY,
+            platform             TEXT NOT NULL,
+            im_conversation_id   TEXT NOT NULL,
+            im_user_id           TEXT NOT NULL,
+            session_id           TEXT NOT NULL,
+            is_active            INTEGER NOT NULL DEFAULT 1,
+            created_at           TEXT NOT NULL,
+            last_active_at       TEXT NOT NULL
+        );
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_im_sessions_conv
+            ON im_sessions(platform, im_conversation_id, is_active);
+
+        CREATE TABLE IF NOT EXISTS im_users (
+            id           TEXT PRIMARY KEY,
+            platform     TEXT NOT NULL,
+            im_user_id   TEXT NOT NULL,
+            name         TEXT,
+            role         TEXT NOT NULL DEFAULT 'user',
+            enabled      INTEGER NOT NULL DEFAULT 1,
+            created_at   TEXT NOT NULL,
+            updated_at   TEXT NOT NULL
+        );
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_im_users_platform_user
+            ON im_users(platform, im_user_id);
+    `);
+
     // Auto-migration for existing databases
     try {
         db.prepare('ALTER TABLE sessions ADD COLUMN is_pinned BOOLEAN DEFAULT 0').run();

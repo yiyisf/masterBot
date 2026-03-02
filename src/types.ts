@@ -274,6 +274,22 @@ export interface Config {
         level: string;
         prettyPrint: boolean;
     };
+    im?: {
+        enabled: boolean;
+        platform: string;
+        feishu?: {
+            appId: string;
+            appSecret: string;
+            verificationToken: string;
+            encryptKey: string;
+        };
+        defaultRole?: string;
+        hitlTimeoutMinutes?: number;
+    };
+    audit?: {
+        enabled: boolean;
+        retentionDays: number;
+    };
 }
 
 export interface McpServerConfig {

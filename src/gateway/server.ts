@@ -23,6 +23,8 @@ import { webhookRepository } from '../core/webhook-repository.js';
 import { RunbookEngine } from '../core/runbook-engine.js';
 import { SelfImprovementEngine } from '../core/self-improvement.js';
 import { AgentGateway } from '../core/agent-gateway.js';
+import { auditRepository } from '../core/audit-repository.js';
+import { ImGateway, FeishuAdapter, imUserRegistry, imSessionMapper } from './im-gateway.js';
 
 /**
  * Gateway 服务器
@@ -42,6 +44,7 @@ export class GatewayServer {
     private scheduler?: any;
     private selfImprovementEngine?: SelfImprovementEngine;
     private agentGateway: AgentGateway;
+    private imGateway?: ImGateway;
 
     constructor(options: {
         agent: Agent;
@@ -68,6 +71,27 @@ export class GatewayServer {
         this.scheduler = options.scheduler;
         this.selfImprovementEngine = options.selfImprovementEngine;
         this.agentGateway = new AgentGateway(options.logger);
+
+        // Initialize IM Gateway if enabled
+        if (options.config.im?.enabled && options.config.im.platform === 'feishu') {
+            const feishuCfg = options.config.im.feishu;
+            if (feishuCfg?.appId) {
+                const adapter = new FeishuAdapter(feishuCfg, options.logger);
+                this.imGateway = new ImGateway({
+                    adapter,
+                    logger: options.logger,
+                    defaultRole: options.config.im.defaultRole,
+                    hitlTimeoutMinutes: options.config.im.hitlTimeoutMinutes,
+                    baseUrl: `http://${options.config.server.host}:${options.config.server.port}`,
+                    runAgent: async (prompt, sessionId) => {
+                        const memory = options.sessionManager.getSession(sessionId);
+                        const { answer } = await options.agent.execute(prompt, { sessionId, memory });
+                        return answer ?? '';
+                    },
+                });
+                options.logger.info('[im-gateway] Feishu adapter initialized');
+            }
+        }
 
         this.app = Fastify({
             logger: options.config.logging.prettyPrint
@@ -852,9 +876,32 @@ export class GatewayServer {
                 const { nanoid } = await import('nanoid');
                 const sessionId = task.sessionId || nanoid();
                 const memory = this.sessionManager.getSession(sessionId);
+
+                // Create audit run record for manual trigger
+                const runId = auditRepository.createScheduledRun({
+                    scheduledTaskId: task.id,
+                    taskName: task.name,
+                    cronExpr: task.cronExpr,
+                    sessionId,
+                    triggerType: 'manual',
+                    prompt: task.prompt,
+                });
+                const manualStartMs = Date.now();
+
                 // Run async
-                this.agent.execute(task.prompt, { sessionId, memory }).catch(err => {
+                this.agent.execute(task.prompt, { sessionId, memory }).then(({ answer }) => {
+                    auditRepository.updateScheduledRun(runId, {
+                        status: 'success',
+                        resultSummary: answer?.slice(0, 500),
+                        durationMs: Date.now() - manualStartMs,
+                    });
+                }).catch(err => {
                     this.logger.error(`Manual trigger failed: ${err.message}`);
+                    auditRepository.updateScheduledRun(runId, {
+                        status: 'failed',
+                        errorMessage: err.message,
+                        durationMs: Date.now() - manualStartMs,
+                    });
                 });
                 return { success: true, sessionId };
             } catch (err: any) {
@@ -1038,8 +1085,30 @@ export class GatewayServer {
                 const payload = JSON.stringify(request.body || {});
                 const prompt = `Webhook "${wh.name}" triggered with payload: ${payload}\n请分析此 Webhook 事件并采取相应行动。`;
 
-                this.agent.execute(prompt, { sessionId, memory }).catch(err => {
+                // Record webhook execution
+                const webhookExecId = auditRepository.createExecution({
+                    type: 'webhook',
+                    name: wh.name,
+                    sessionId,
+                    triggerSource: 'webhook',
+                    triggerRef: id,
+                    inputSummary: payload.slice(0, 500),
+                });
+                const webhookStartMs = Date.now();
+
+                this.agent.execute(prompt, { sessionId, memory }).then(({ answer }) => {
+                    auditRepository.updateExecution(webhookExecId, {
+                        status: 'success',
+                        outputSummary: answer?.slice(0, 500),
+                        durationMs: Date.now() - webhookStartMs,
+                    });
+                }).catch(err => {
                     this.logger.error(`Webhook agent execution failed: ${err.message}`);
+                    auditRepository.updateExecution(webhookExecId, {
+                        status: 'failed',
+                        errorMessage: err.message,
+                        durationMs: Date.now() - webhookStartMs,
+                    });
                 });
 
                 return { success: true, sessionId, message: 'Webhook received, agent triggered' };
@@ -1274,6 +1343,217 @@ export class GatewayServer {
             db.prepare('INSERT INTO sessions (id, title, created_at, updated_at) VALUES (?, ?, ?, ?)').run(id, title, now, now);
             return { id, title, createdAt: now, updatedAt: now };
         });
+
+        // ===== AUDIT API =====
+        this.app.get<{ Querystring: any }>('/api/audit/executions', async (request) => {
+            const q = request.query as any;
+            const filter = {
+                type: q.type,
+                status: q.status,
+                triggerSource: q.triggerSource,
+                startAfter: q.startAfter,
+                startBefore: q.startBefore,
+                sessionId: q.sessionId,
+                limit: q.limit ? parseInt(q.limit, 10) : 50,
+                offset: q.offset ? parseInt(q.offset, 10) : 0,
+            };
+            const total = auditRepository.countExecutions(filter);
+            const items = auditRepository.listExecutions(filter);
+            return { total, items };
+        });
+
+        this.app.get<{ Params: { id: string } }>('/api/audit/executions/:id', async (request, reply) => {
+            const record = auditRepository.getExecution(request.params.id);
+            if (!record) { reply.status(404); return { error: 'Not found' }; }
+            return record;
+        });
+
+        this.app.get<{ Querystring: any }>('/api/audit/approvals', async (request) => {
+            const q = request.query as any;
+            const filter = {
+                decision: q.decision,
+                sessionId: q.sessionId,
+                startAfter: q.startAfter,
+                startBefore: q.startBefore,
+                limit: q.limit ? parseInt(q.limit, 10) : 50,
+                offset: q.offset ? parseInt(q.offset, 10) : 0,
+            };
+            const total = auditRepository.countApprovals(filter);
+            const items = auditRepository.listApprovals(filter);
+            return { total, items };
+        });
+
+        this.app.get<{ Querystring: any }>('/api/audit/scheduled-runs', async (request) => {
+            const q = request.query as any;
+            const filter = {
+                scheduledTaskId: q.scheduledTaskId,
+                status: q.status,
+                startAfter: q.startAfter,
+                limit: q.limit ? parseInt(q.limit, 10) : 50,
+                offset: q.offset ? parseInt(q.offset, 10) : 0,
+            };
+            const items = auditRepository.listScheduledRuns(filter);
+            return { total: items.length, items };
+        });
+
+        this.app.get<{ Params: { taskId: string }; Querystring: { limit?: string } }>(
+            '/api/audit/scheduled-runs/:taskId/history',
+            async (request) => {
+                const limit = request.query.limit ? parseInt(request.query.limit, 10) : 20;
+                const runs = auditRepository.getRunsForTask(request.params.taskId, limit);
+                const successCount = runs.filter(r => r.status === 'success').length;
+                const durations = runs.filter(r => r.durationMs != null).map(r => r.durationMs!);
+                const avgDurationMs = durations.length
+                    ? Math.round(durations.reduce((a, b) => a + b, 0) / durations.length)
+                    : 0;
+                return {
+                    runs,
+                    stats: {
+                        successRate: runs.length ? Math.round((successCount / runs.length) * 1000) / 10 : 0,
+                        avgDurationMs,
+                    },
+                };
+            }
+        );
+
+        this.app.get<{ Querystring: { from: string; to: string; format?: string } }>(
+            '/api/audit/report',
+            async (request, reply) => {
+                const { from, to, format } = request.query as { from: string; to: string; format?: string };
+                if (!from || !to) { reply.status(400); return { error: 'from and to are required' }; }
+                const report = auditRepository.generateReportData(from, to);
+                if (format === 'csv') {
+                    const csv = auditRepository.exportToCSV(report);
+                    reply.header('Content-Type', 'text/csv; charset=utf-8');
+                    reply.header('Content-Disposition', `attachment; filename="audit-report-${from}-${to}.csv"`);
+                    return reply.send(csv);
+                }
+                return report;
+            }
+        );
+
+        // ===== IM GATEWAY API =====
+        // GET /api/im/status — IM integration status
+        this.app.get('/api/im/status', async () => {
+            return {
+                enabled: this.config.im?.enabled ?? false,
+                platform: this.config.im?.platform ?? null,
+                connected: !!this.imGateway,
+            };
+        });
+
+        // POST /api/im/inbound — IM event push endpoint
+        this.app.post<{ Body: unknown }>('/api/im/inbound', {
+            config: { rawBody: true },
+        }, async (request, reply) => {
+            if (!this.imGateway) {
+                reply.status(503);
+                return { error: 'IM gateway not configured' };
+            }
+            const rawBody = (request as any).rawBody ?? JSON.stringify(request.body);
+            const headers: Record<string, string> = {};
+            for (const [k, v] of Object.entries(request.headers)) {
+                if (typeof v === 'string') headers[k] = v;
+            }
+            const result = await this.imGateway.handleInbound(rawBody, headers) as any;
+            if (result?.code === 401) { reply.status(401); return { error: result.error }; }
+            if (result?.code === 400) { reply.status(400); return { error: result.error }; }
+            return result;
+        });
+
+        // POST /api/im/card-action — HitL approval card callback
+        this.app.post<{ Body: unknown }>('/api/im/card-action', async (request, reply) => {
+            if (!this.imGateway) {
+                reply.status(503);
+                return { error: 'IM gateway not configured' };
+            }
+            return this.imGateway.handleCardAction(request.body);
+        });
+
+        // GET /api/im/users — list IM users
+        this.app.get<{ Querystring: { platform?: string } }>('/api/im/users', async (request) => {
+            return imUserRegistry.listUsers(request.query.platform);
+        });
+
+        // POST /api/im/users — add/update IM user whitelist
+        this.app.post<{ Body: { platform: string; imUserId: string; name?: string; role?: string; enabled?: boolean } }>(
+            '/api/im/users',
+            async (request, reply) => {
+                try {
+                    const { platform, imUserId, name, role, enabled } = request.body;
+                    if (!platform || !imUserId) { reply.status(400); return { error: 'platform and imUserId are required' }; }
+                    const id = imUserRegistry.upsertUser({ platform, imUserId, name, role, enabled });
+                    return { success: true, id };
+                } catch (err: any) {
+                    reply.status(500); return { error: err.message };
+                }
+            }
+        );
+
+        // PATCH /api/im/users/:id — update user
+        this.app.patch<{ Params: { id: string }; Body: { role?: string; enabled?: boolean; name?: string } }>(
+            '/api/im/users/:id',
+            async (request, reply) => {
+                try {
+                    const row = db.prepare('SELECT * FROM im_users WHERE id = ?').get(request.params.id) as any;
+                    if (!row) { reply.status(404); return { error: 'User not found' }; }
+                    const now = new Date().toISOString();
+                    const { role, enabled, name } = request.body;
+                    db.prepare('UPDATE im_users SET role = ?, enabled = ?, name = ?, updated_at = ? WHERE id = ?')
+                        .run(
+                            role ?? row.role,
+                            enabled !== undefined ? (enabled ? 1 : 0) : row.enabled,
+                            name ?? row.name,
+                            now,
+                            request.params.id
+                        );
+                    return { success: true };
+                } catch (err: any) {
+                    reply.status(500); return { error: err.message };
+                }
+            }
+        );
+
+        // DELETE /api/im/users/:id
+        this.app.delete<{ Params: { id: string } }>('/api/im/users/:id', async (request, reply) => {
+            try {
+                imUserRegistry.deleteUser(request.params.id);
+                return { success: true };
+            } catch (err: any) {
+                reply.status(500); return { error: err.message };
+            }
+        });
+
+        // GET /api/im/sessions
+        this.app.get<{ Querystring: { platform?: string } }>('/api/im/sessions', async (request) => {
+            return imSessionMapper.listSessions(request.query.platform);
+        });
+
+        // POST /api/im/send — internal API used by im-bot skill to send messages
+        this.app.post<{ Body: { platform: string; conversationId: string; userId: string; type: string; content?: string; title?: string; template?: string } }>(
+            '/api/im/send',
+            async (request, reply) => {
+                if (!this.imGateway) {
+                    // Mock mode: log only
+                    this.logger.info(`[im-bot] Mock send: ${JSON.stringify(request.body)}`);
+                    return { success: true, mock: true };
+                }
+                try {
+                    const { platform, conversationId, userId, type, content, title, template } = request.body;
+                    const target = { platform, conversationId, userId };
+                    if (type === 'text') {
+                        await (this.imGateway as any).adapter.sendMessage(target, content ?? '');
+                    } else if (type === 'card') {
+                        await (this.imGateway as any).adapter.sendMessage(target,
+                            `**${title}**\n\n${content}`
+                        );
+                    }
+                    return { success: true };
+                } catch (err: any) {
+                    reply.status(500); return { error: err.message };
+                }
+            }
+        );
 
         // ===== AGENT GATEWAY =====
         this.agentGateway.registerRoutes(this.app);

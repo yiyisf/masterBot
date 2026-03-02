@@ -1,5 +1,6 @@
 import { nanoid } from 'nanoid';
 import { db } from './database.js';
+import { auditRepository } from './audit-repository.js';
 import type { Logger } from '../types.js';
 
 export interface ScheduledTask {
@@ -88,13 +89,13 @@ function rowToTask(row: any): ScheduledTask {
 export class SchedulerService {
     private logger: Logger;
     private timer?: NodeJS.Timeout;
-    private onTrigger?: (task: ScheduledTask) => Promise<void>;
+    private onTrigger?: (task: ScheduledTask, runId: string) => Promise<string | undefined | void>;
 
     constructor(logger: Logger) {
         this.logger = logger;
     }
 
-    setTriggerHandler(handler: (task: ScheduledTask) => Promise<void>) {
+    setTriggerHandler(handler: (task: ScheduledTask, runId: string) => Promise<string | undefined | void>) {
         this.onTrigger = handler;
     }
 
@@ -133,8 +134,29 @@ export class SchedulerService {
                     this.logger.info(`[scheduler] Triggering task: ${task.name}`);
                     this.updateLastRun(task.id, now.toISOString());
                     if (this.onTrigger) {
-                        this.onTrigger(task).catch(err => {
+                        // Create audit run record before triggering
+                        const runId = auditRepository.createScheduledRun({
+                            scheduledTaskId: task.id,
+                            taskName: task.name,
+                            cronExpr: task.cronExpr,
+                            sessionId: task.sessionId,
+                            triggerType: 'auto',
+                            prompt: task.prompt,
+                        });
+                        const startMs = Date.now();
+                        this.onTrigger(task, runId).then((answer) => {
+                            auditRepository.updateScheduledRun(runId, {
+                                status: 'success',
+                                resultSummary: typeof answer === 'string' ? answer.slice(0, 500) : undefined,
+                                durationMs: Date.now() - startMs,
+                            });
+                        }).catch(err => {
                             this.logger.error(`[scheduler] Task ${task.name} failed: ${err.message}`);
+                            auditRepository.updateScheduledRun(runId, {
+                                status: 'failed',
+                                errorMessage: err.message,
+                                durationMs: Date.now() - startMs,
+                            });
                         });
                     }
                 }

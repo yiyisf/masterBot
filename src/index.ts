@@ -157,11 +157,13 @@ async function main() {
     await server.start(config.server.port, config.server.host);
 
     // Start scheduler after server is running
-    scheduler.setTriggerHandler(async (task) => {
+    scheduler.setTriggerHandler(async (task, _runId) => {
         const sessionId = task.sessionId || nanoid();
         const memory = sessionManager.getSession(sessionId);
         logger.info(`[scheduler] Executing task "${task.name}"`);
-        await agent.execute(task.prompt, { sessionId, memory });
+        const { answer } = await agent.execute(task.prompt, { sessionId, memory });
+        // runId is already updated by SchedulerService's .then()/.catch() handlers
+        return answer;
     });
     scheduler.start();
     logger.info('Scheduler started');

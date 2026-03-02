@@ -573,7 +573,12 @@ export class Agent {
 
                     let approved = false;
                     try {
-                        approved = await waitForApproval(context.sessionId);
+                        approved = await waitForApproval(context.sessionId, {
+                            interruptId,
+                            actionName: firstDangerous.toolName,
+                            actionParams: JSON.stringify(firstDangerous.params).slice(0, 1000),
+                            dangerReason: firstDangerous.reason ?? undefined,
+                        });
                     } catch {
                         // Client disconnected mid-interrupt — treat as rejected
                         approved = false;

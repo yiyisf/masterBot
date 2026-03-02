@@ -24,6 +24,7 @@ import {
     EyeOff,
     RefreshCw,
     BarChart2,
+    MessageSquare,
 } from "lucide-react";
 import { fetchApi } from "@/lib/api";
 import { toast } from "sonner";
@@ -72,6 +73,137 @@ function StatusIcon({ status }: { status: TestStatus }) {
     if (status === "ok") return <CheckCircle2 className="w-4 h-4 text-green-500" />;
     if (status === "error") return <XCircle className="w-4 h-4 text-red-500" />;
     return null;
+}
+
+// ── IM Integration Card ────────────────────────────────────────────────────────
+
+function ImIntegrationCard() {
+    const [status, setStatus] = useState<{ enabled: boolean; platform: string | null; connected: boolean } | null>(null);
+    const [loading, setLoading] = useState(false);
+    const [users, setUsers] = useState<Array<{ id: string; platform: string; imUserId: string; name?: string; role: string; enabled: boolean }>>([]);
+
+    const loadStatus = async () => {
+        setLoading(true);
+        try {
+            const [st, us] = await Promise.all([
+                fetch('/api/im/status').then(r => r.json()),
+                fetch('/api/im/users').then(r => r.json()),
+            ]);
+            setStatus(st);
+            setUsers(Array.isArray(us) ? us : []);
+        } catch {
+            setStatus(null);
+        } finally {
+            setLoading(false);
+        }
+    };
+
+    useEffect(() => { loadStatus(); }, []);
+
+    const toggleUser = async (id: string, enabled: boolean) => {
+        try {
+            await fetch(`/api/im/users/${id}`, {
+                method: 'PATCH',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ enabled }),
+            });
+            setUsers(us => us.map(u => u.id === id ? { ...u, enabled } : u));
+            toast.success('已更新');
+        } catch (err: any) {
+            toast.error('更新失败: ' + err.message);
+        }
+    };
+
+    return (
+        <Card>
+            <CardHeader className="pb-3">
+                <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                        <MessageSquare className="w-5 h-5 text-primary" />
+                        <div>
+                            <CardTitle>IM 集成</CardTitle>
+                            <CardDescription>飞书等 IM 平台双向命令触发与结果回传</CardDescription>
+                        </div>
+                    </div>
+                    <Button variant="outline" size="sm" onClick={loadStatus} disabled={loading}>
+                        <RefreshCw className={`w-3 h-3 mr-1 ${loading ? "animate-spin" : ""}`} />刷新
+                    </Button>
+                </div>
+            </CardHeader>
+            <CardContent className="space-y-4">
+                {/* Status */}
+                <div className="flex items-center gap-3 p-3 rounded-lg border">
+                    {loading ? (
+                        <Loader2 className="w-4 h-4 animate-spin text-muted-foreground" />
+                    ) : status?.connected ? (
+                        <CheckCircle2 className="w-4 h-4 text-green-500" />
+                    ) : (
+                        <XCircle className="w-4 h-4 text-muted-foreground" />
+                    )}
+                    <div className="flex-1">
+                        <div className="text-sm font-medium">
+                            {status?.enabled ? `IM 集成已启用 (${status.platform})` : 'IM 集成未启用'}
+                        </div>
+                        <div className="text-xs text-muted-foreground mt-0.5">
+                            {status?.connected ? '适配器已连接' : '未配置或未启用'}
+                        </div>
+                    </div>
+                    <Badge variant={status?.connected ? 'default' : 'secondary'}>
+                        {status?.connected ? '已连接' : '未连接'}
+                    </Badge>
+                </div>
+
+                {!status?.enabled && (
+                    <div className="text-xs text-muted-foreground bg-muted/50 rounded-lg p-3">
+                        在 <code className="font-mono">config/default.yaml</code> 中设置 <code className="font-mono">im.enabled: true</code>
+                        并配置 <code className="font-mono">FEISHU_APP_ID</code>、<code className="font-mono">FEISHU_APP_SECRET</code> 等环境变量后重启服务以启用 IM 集成。
+                    </div>
+                )}
+
+                {/* User whitelist */}
+                {users.length > 0 && (
+                    <div>
+                        <div className="text-sm font-medium mb-2">IM 用户白名单 ({users.length})</div>
+                        <div className="border rounded-lg overflow-hidden">
+                            <table className="w-full text-xs">
+                                <thead className="bg-muted">
+                                    <tr>
+                                        <th className="text-left p-2 font-medium">平台</th>
+                                        <th className="text-left p-2 font-medium">用户 ID</th>
+                                        <th className="text-left p-2 font-medium">名称</th>
+                                        <th className="text-left p-2 font-medium">角色</th>
+                                        <th className="p-2 font-medium">启用</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    {users.map(u => (
+                                        <tr key={u.id} className="border-t">
+                                            <td className="p-2"><Badge variant="outline" className="text-xs">{u.platform}</Badge></td>
+                                            <td className="p-2 font-mono">{u.imUserId}</td>
+                                            <td className="p-2 text-muted-foreground">{u.name ?? '-'}</td>
+                                            <td className="p-2"><Badge variant={u.role === 'admin' ? 'default' : 'secondary'} className="text-xs">{u.role}</Badge></td>
+                                            <td className="p-2 text-center">
+                                                <Switch
+                                                    checked={u.enabled}
+                                                    onCheckedChange={v => toggleUser(u.id, v)}
+                                                    className="scale-75"
+                                                />
+                                            </td>
+                                        </tr>
+                                    ))}
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                )}
+
+                <div className="text-xs text-muted-foreground">
+                    入站 Webhook：<code className="font-mono bg-muted px-1 rounded">POST /api/im/inbound</code> &nbsp;·&nbsp;
+                    卡片回调：<code className="font-mono bg-muted px-1 rounded">POST /api/im/card-action</code>
+                </div>
+            </CardContent>
+        </Card>
+    );
 }
 
 // ── Main page ──────────────────────────────────────────────────────────────────
@@ -613,6 +745,9 @@ export default function SettingsPage() {
                         </div>
                     </CardContent>
                 </Card>
+
+                {/* ── Card IM: IM 集成 ── */}
+                <ImIntegrationCard />
 
                 {/* ── Card 4: 关于 ── */}
                 <Card>

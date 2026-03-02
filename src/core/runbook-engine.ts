@@ -3,6 +3,7 @@ import { join } from 'path';
 import { nanoid } from 'nanoid';
 import type { Logger, SkillContext } from '../types.js';
 import { SkillRegistry } from '../skills/registry.js';
+import { auditRepository, type TriggerSource } from './audit-repository.js';
 
 export interface RunbookStep {
     tool?: string;
@@ -171,12 +172,27 @@ export class RunbookEngine {
      */
     async execute(
         runbook: Runbook,
-        context: { sessionId?: string; variables?: Record<string, unknown>; skillContext?: SkillContext }
+        context: {
+            sessionId?: string;
+            variables?: Record<string, unknown>;
+            skillContext?: SkillContext;
+            triggerSource?: TriggerSource;
+            triggerRef?: string;
+        }
     ): Promise<RunbookExecutionResult> {
         const sessionId = context.sessionId || nanoid();
         const startTime = Date.now();
 
         this.logger.info(`[runbook] Executing "${runbook.name}" (${runbook.steps.length} steps)`);
+
+        const execId = auditRepository.createExecution({
+            type: 'runbook',
+            name: runbook.name,
+            sessionId,
+            triggerSource: context.triggerSource ?? 'user',
+            triggerRef: context.triggerRef,
+            inputSummary: runbook.description,
+        });
 
         const execContext = {
             ...runbook.variables,
@@ -218,12 +234,26 @@ export class RunbookEngine {
             }
         }
 
+        const duration = Date.now() - startTime;
+        const lastStepResult = stepResults[stepResults.length - 1];
+        const outputSummary = lastStepResult?.result
+            ? String(lastStepResult.result).slice(0, 500)
+            : undefined;
+        const lastError = stepResults.find(s => s.error)?.error;
+
+        auditRepository.updateExecution(execId, {
+            status: success ? 'success' : 'failed',
+            outputSummary,
+            errorMessage: lastError,
+            durationMs: duration,
+        });
+
         return {
             runbookName: runbook.name,
             sessionId,
             steps: stepResults,
             success,
-            duration: Date.now() - startTime,
+            duration,
         };
     }
 

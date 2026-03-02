@@ -25,6 +25,7 @@ import {
   BarChart2,
   FileText,
   Wifi,
+  ShieldCheck,
 } from "lucide-react";
 
 
@@ -172,6 +173,14 @@ const data: SidebarData = {
         { title: "Webhook 管理", url: "/webhooks" },
         { title: "Runbook 执行", url: "/runbooks" },
         { title: "AI-RPA 自动化", url: "/rpa" },
+      ],
+    },
+    {
+      title: "合规审计",
+      url: "/audit",
+      icon: ShieldCheck,
+      items: [
+        { title: "审计日志", url: "/audit" },
       ],
     },
   ],

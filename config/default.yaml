@@ -73,3 +73,18 @@ queue:
 logging:
   level: ${LOG_LEVEL:info}
   prettyPrint: true
+
+im:
+  enabled: false
+  platform: feishu
+  feishu:
+    appId:             ${FEISHU_APP_ID:}
+    appSecret:         ${FEISHU_APP_SECRET:}
+    verificationToken: ${FEISHU_VERIFY_TOKEN:}
+    encryptKey:        ${FEISHU_ENCRYPT_KEY:}
+  defaultRole: user
+  hitlTimeoutMinutes: 30
+
+audit:
+  enabled: true
+  retentionDays: 90
