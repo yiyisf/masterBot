@@ -4,7 +4,7 @@
 
 [![Node.js >=22](https://img.shields.io/badge/node-%3E%3D22-brightgreen)](https://nodejs.org/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
-[![CI](https://github.com/YOUR_ORG/cmaster-bot/actions/workflows/ci.yml/badge.svg)](https://github.com/YOUR_ORG/cmaster-bot/actions)
+[![CI](https://github.com/yiyisf/masterBot/actions/workflows/ci.yml/badge.svg)](https://github.com/yiyisf/masterBot/actions)
 
 ## 🌟 核心特性
 
