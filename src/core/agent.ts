@@ -15,6 +15,8 @@ import type { LongTermMemory } from '../memory/long-term.js';
 import { taskRepository } from './task-repository.js';
 import { DAGExecutor } from './dag-executor.js';
 import { waitForApproval } from './interrupt-coordinator.js';
+import { spanRecorder } from './trace.js';
+import type { MemoryRouter } from '../memory/memory-router.js';
 
 /**
  * Detect whether a tool call requires human confirmation before execution.
@@ -263,6 +265,7 @@ export class Agent {
     private maxIterations: number;
     private contextManager: ContextManager;
     private longTermMemory?: LongTermMemory;
+    private memoryRouter?: MemoryRouter;
     private skillConfig: Record<string, unknown>;
     private skillGenerator?: any;
     private orchestrator?: any;
@@ -275,6 +278,7 @@ export class Agent {
         maxIterations?: number;
         maxContextTokens?: number;
         longTermMemory?: LongTermMemory;
+        memoryRouter?: MemoryRouter;
         skillConfig?: Record<string, unknown>;
         skillGenerator?: any;
         orchestrator?: any;
@@ -285,6 +289,7 @@ export class Agent {
         this.logger = options.logger;
         this.maxIterations = options.maxIterations ?? 10;
         this.longTermMemory = options.longTermMemory;
+        this.memoryRouter = options.memoryRouter;
         this.skillConfig = options.skillConfig ?? {};
         this.skillGenerator = options.skillGenerator;
         this.orchestrator = options.orchestrator;
@@ -314,8 +319,16 @@ export class Agent {
             history?: Message[];
             abortSignal?: AbortSignal;
             attachments?: Attachment[];
+            traceId?: string;
         }
     ): AsyncGenerator<ExecutionStep> {
+        // Phase 21: 分布式追踪 — 开启 agent:run span
+        const traceId = context.traceId ?? nanoid();
+        const agentSpanId = spanRecorder.startSpan(traceId, undefined, 'agent:run', {
+            sessionId: context.sessionId,
+            userId: context.userId,
+        });
+
         // Extract plain-text representation of input for memory/suggestion APIs
         const inputText = typeof input === 'string'
             ? input
@@ -391,9 +404,12 @@ export class Agent {
             // 如果没有工具调用，返回最终答案
             if (!response.toolCalls || response.toolCalls.length === 0) {
                 const answerContent = typeof response.content === 'string' ? response.content : JSON.stringify(response.content);
+                // Phase 21: 结束 agent span
+                spanRecorder.endSpan(agentSpanId, answerContent.slice(0, 300));
                 yield {
                     type: 'answer',
                     content: answerContent,
+                    traceId,
                     timestamp: new Date(),
                 };
 
@@ -447,9 +463,21 @@ export class Agent {
                     messages.push({ role: 'tool', content: result, toolCallId: toolCall.id });
                 } else if (toolName === 'memory_recall' && this.longTermMemory) {
                     const { query, limit: recallLimit } = params;
-                    const memories = await this.longTermMemory.search(query, recallLimit ?? 5);
-                    const resultStr = memories.length > 0 ? memories.map(m => `- ${m.content}`).join('\n') : 'No relevant memories found.';
-                    yield { type: 'observation', content: resultStr, toolName, toolOutput: memories, timestamp: new Date() };
+                    let resultStr: string;
+                    let toolOutput: unknown;
+                    if (this.memoryRouter) {
+                        // Phase 21: 使用统一内存路由器
+                        const unified = await this.memoryRouter.query(query, { sessionId: context.sessionId, limit: recallLimit ?? 8 });
+                        toolOutput = unified;
+                        resultStr = unified.length > 0
+                            ? unified.map(m => `[${m.source}] ${m.content}`).join('\n')
+                            : 'No relevant memories found.';
+                    } else {
+                        const memories = await this.longTermMemory.search(query, recallLimit ?? 5);
+                        toolOutput = memories;
+                        resultStr = memories.length > 0 ? memories.map(m => `- ${m.content}`).join('\n') : 'No relevant memories found.';
+                    }
+                    yield { type: 'observation', content: resultStr, toolName, toolOutput, timestamp: new Date() };
                     messages.push({ role: 'tool', content: resultStr, toolCallId: toolCall.id });
                 } else if (toolName === 'dag_create_task') {
                     const { description: taskDesc, dependencies: deps } = params;
@@ -505,14 +533,24 @@ export class Agent {
                         messages.push({ role: 'tool', content: errorMsg, toolCallId: toolCall.id });
                     }
                 } else if (toolName === 'delegate_to_agent' && this.orchestrator) {
-                    const { worker_id, task, context_summary } = params as { worker_id: string; task: string; context_summary?: string };
+                    const { worker_id, task } = params as { worker_id: string; task: string; context_summary?: string };
                     yield { type: 'action', content: `Delegating to agent: ${worker_id}`, toolName, toolInput: params, timestamp: new Date() };
+                    // Phase 21: 开 delegate span
+                    const delegateSpanId = spanRecorder.startSpan(traceId, agentSpanId, `delegate:${worker_id}`, {
+                        sessionId: context.sessionId, workerId: worker_id,
+                    });
                     try {
-                        const result = await this.orchestrator.delegate(worker_id, task, context);
-                        const resultStr = `[${result.workerName}] ${result.answer}`;
-                        yield { type: 'observation', content: resultStr, toolName, toolOutput: result, timestamp: new Date() };
-                        messages.push({ role: 'tool', content: resultStr, toolCallId: toolCall.id });
+                        // Phase 21: 流式委托 — 实时 yield Worker 每个步骤
+                        let lastAnswer = '';
+                        const delegateCtx = { ...context, traceId };
+                        for await (const step of this.orchestrator.delegateStream(worker_id, task, delegateCtx)) {
+                            yield step; // 已带 delegatedFrom 标记
+                            if (step.type === 'answer') lastAnswer = step.content;
+                        }
+                        spanRecorder.endSpan(delegateSpanId, lastAnswer.slice(0, 300));
+                        messages.push({ role: 'tool', content: lastAnswer || '(no answer)', toolCallId: toolCall.id });
                     } catch (err: any) {
+                        spanRecorder.endSpan(delegateSpanId, undefined, err.message);
                         const errorMsg = `委托失败: ${err.message}`;
                         yield { type: 'observation', content: errorMsg, toolName, timestamp: new Date() };
                         messages.push({ role: 'tool', content: errorMsg, toolCallId: toolCall.id });
@@ -608,6 +646,14 @@ export class Agent {
                     config: this.skillConfig,
                 };
 
+                // Phase 21: 为每个外部工具调用开 span
+                const toolSpanIds = parsedCalls.map(({ toolName, params: p }) =>
+                    spanRecorder.startSpan(traceId, agentSpanId, `tool:${toolName}`, {
+                        sessionId: context.sessionId,
+                        input_summary: JSON.stringify(p).slice(0, 200),
+                    })
+                );
+
                 // Execute all external tool calls in parallel (with duration tracking)
                 const toolStartTimes = parsedCalls.map(() => Date.now());
                 const results = await Promise.allSettled(
@@ -631,6 +677,9 @@ export class Agent {
                             ? result.value
                             : JSON.stringify(result.value, null, 2);
 
+                        // Phase 21: 结束工具 span
+                        spanRecorder.endSpan(toolSpanIds[i], resultStr.slice(0, 300));
+
                         yield {
                             type: 'observation',
                             content: resultStr,
@@ -642,6 +691,10 @@ export class Agent {
                         messages.push({ role: 'tool', content: resultStr, toolCallId: toolCall.id });
                     } else {
                         const errorMsg = `Error: ${result.reason?.message || 'Unknown error'}`;
+
+                        // Phase 21: 结束工具 span（失败）
+                        spanRecorder.endSpan(toolSpanIds[i], undefined, errorMsg);
+
                         yield {
                             type: 'observation',
                             content: errorMsg,
@@ -657,9 +710,12 @@ export class Agent {
         }
 
         if (iteration >= this.maxIterations) {
+            const errMsg = '抱歉，我已达到最大执行步骤限制。请尝试将任务拆分为更小的步骤。';
+            spanRecorder.endSpan(agentSpanId, undefined, errMsg);
             yield {
                 type: 'answer',
-                content: '抱歉，我已达到最大执行步骤限制。请尝试将任务拆分为更小的步骤。',
+                content: errMsg,
+                traceId,
                 timestamp: new Date(),
             };
         }

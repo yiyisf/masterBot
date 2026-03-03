@@ -1,4 +1,4 @@
-import type { Logger, Message, ExecutionStep, MemoryAccess } from '../types.js';
+import type { Logger, Message, ExecutionStep, MemoryAccess, LLMAdapter } from '../types.js';
 import { Agent } from './agent.js';
 
 export interface WorkerAgentConfig {
@@ -16,8 +16,18 @@ export interface DelegationResult {
     steps: ExecutionStep[];
 }
 
+export interface DelegateContext {
+    sessionId: string;
+    userId?: string;
+    memory: MemoryAccess;
+    history?: Message[];
+    abortSignal?: AbortSignal;
+    traceId?: string;
+}
+
 /**
  * Orchestrator that manages worker agents and delegates tasks
+ * Phase 21: added delegateStream + supervisorDelegate
  */
 export class MultiAgentOrchestrator {
     private workers: Map<string, Agent> = new Map();
@@ -38,18 +48,12 @@ export class MultiAgentOrchestrator {
     }
 
     /**
-     * Delegate a task to a specific worker
+     * Delegate a task to a specific worker (non-streaming, waits for full result)
      */
     async delegate(
         workerId: string,
         task: string,
-        context: {
-            sessionId: string;
-            userId?: string;
-            memory: MemoryAccess;
-            history?: Message[];
-            abortSignal?: AbortSignal;
-        }
+        context: DelegateContext
     ): Promise<DelegationResult> {
         const worker = this.workers.get(workerId);
         const config = this.workerConfigs.get(workerId);
@@ -71,12 +75,68 @@ export class MultiAgentOrchestrator {
     }
 
     /**
+     * 流式委托 — Phase 21
+     * 将 Worker 的每个 ExecutionStep 实时 yield 给父 Agent
+     */
+    async *delegateStream(
+        workerId: string,
+        task: string,
+        context: DelegateContext
+    ): AsyncGenerator<ExecutionStep> {
+        const worker = this.workers.get(workerId);
+        const config = this.workerConfigs.get(workerId);
+
+        if (!worker || !config) {
+            throw new Error(`Worker agent "${workerId}" not found. Available workers: ${Array.from(this.workerConfigs.keys()).join(', ')}`);
+        }
+
+        this.logger.info(`[multi-agent] Stream-delegating to ${config.name}: ${task.substring(0, 100)}`);
+
+        for await (const step of worker.run(task, context)) {
+            // 携带 delegatedFrom 标记，前端可区分来源
+            yield { ...step, delegatedFrom: workerId } as ExecutionStep;
+        }
+    }
+
+    /**
+     * Supervisor 模式 — Phase 21
+     * 让 LLM 根据 Worker 描述自动选择最佳 Worker，再委托
+     */
+    async supervisorDelegate(
+        task: string,
+        context: DelegateContext,
+        llmAdapter: LLMAdapter
+    ): Promise<DelegationResult> {
+        const descriptions = this.getWorkerDescriptions();
+
+        const prompt = `你是一个任务路由器。根据以下可用 Worker 的描述，为任务选择最合适的 Worker。
+
+可用 Workers:
+${descriptions}
+
+任务: ${task.substring(0, 500)}
+
+请直接回复最合适的 Worker ID（一个单词，不加任何解释）:`;
+
+        const response = await llmAdapter.chat([{ role: 'user', content: prompt }]);
+        const rawContent = typeof response.content === 'string'
+            ? response.content
+            : (response.content as Array<{ type: string; text?: string }>)
+                .filter(p => p.type === 'text').map(p => p.text ?? '').join('');
+
+        const workerId = rawContent.trim().split(/[\s\n]/)[0].trim();
+        this.logger.info(`[multi-agent] Supervisor selected worker: ${workerId}`);
+
+        return this.delegate(workerId, task, context);
+    }
+
+    /**
      * Get list of registered workers for the LLM
      */
     getWorkerDescriptions(): string {
         if (this.workers.size === 0) return '(no workers registered)';
         return Array.from(this.workerConfigs.values())
-            .map(w => `- ${w.id}: ${w.name} — ${w.description || w.systemPrompt.substring(0, 80)}`)
+            .map(w => `- ${w.id}: ${w.name} — ${(w.description || w.systemPrompt).substring(0, 200)}`)
             .join('\n');
     }
 
