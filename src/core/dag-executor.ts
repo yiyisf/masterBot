@@ -15,6 +15,7 @@ const MAX_ROUNDS = 50;
 /**
  * DAG parallel execution engine
  * Executes ready tasks in parallel, respecting dependency ordering
+ * Phase 21: adds cycle detection + retry logic
  */
 export class DAGExecutor {
     private sessionId: string;
@@ -38,6 +39,11 @@ export class DAGExecutor {
     }
 
     async *execute(): AsyncGenerator<DAGStepResult> {
+        // Phase 21: 执行前检测循环依赖
+        if (this.taskRepo.detectCycles(this.sessionId)) {
+            throw new Error('DAG contains circular dependencies. Execution aborted to prevent infinite loop.');
+        }
+
         let round = 0;
 
         while (round < MAX_ROUNDS) {
@@ -64,19 +70,27 @@ export class DAGExecutor {
             );
 
             // Process results
-            for (const settledResult of results) {
+            for (let i = 0; i < results.length; i++) {
+                const settledResult = results[i];
+                const task = readyTasks[i];
+
                 if (settledResult.status === 'fulfilled') {
                     const { taskId, description, result } = settledResult.value;
                     const resultStr = typeof result === 'string' ? result : JSON.stringify(result);
                     this.taskRepo.updateStatus(taskId, 'completed', resultStr);
                     yield { type: 'task_completed', taskId, description, result: resultStr };
                 } else {
-                    // Find the taskId from the original tasks
-                    const idx = results.indexOf(settledResult);
-                    const task = readyTasks[idx];
                     const errorMsg = settledResult.reason?.message || String(settledResult.reason);
-                    this.taskRepo.updateStatus(task.id, 'failed', errorMsg);
-                    yield { type: 'task_failed', taskId: task.id, description: task.description, error: errorMsg };
+
+                    // Phase 21: 重试逻辑
+                    if (task.retry_count < task.max_retries) {
+                        this.logger.info(`[dag] Task ${task.id} failed, retrying (${task.retry_count + 1}/${task.max_retries})`);
+                        this.taskRepo.incrementRetry(task.id);
+                        // 不 yield failed，重新入队等下一轮
+                    } else {
+                        this.taskRepo.updateStatus(task.id, 'failed', errorMsg);
+                        yield { type: 'task_failed', taskId: task.id, description: task.description, error: errorMsg };
+                    }
                 }
             }
         }

@@ -1,0 +1,33 @@
+# Source files
+src/
+tests/
+web/
+
+# Development configurations
+tsconfig.json
+vitest.config.ts
+.env
+.env.example
+.dockerignore
+Dockerfile
+docker-compose.yml
+
+# Tooling and docs
+.github/
+.claude/
+.gemini/
+agents/
+docs/
+runbooks/
+connectors/
+
+# Runtime and data
+data/
+node_modules/
+mcp-servers.json
+dist/*.map
+dist/*.tsbuildinfo
+
+# OS / Editor
+.DS_Store
+*.log

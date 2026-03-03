@@ -43,16 +43,18 @@ docker compose up -d
 # 访问 http://localhost:3000
 ```
 
-### 本地安装
+### 本地及 NPM 安装
 
 ```bash
-# macOS/Linux 一键安装
-bash scripts/install.sh
+# 从 NPM 安装（推荐）
+npm install -g cmaster-bot
+cmaster-bot
 
-# Windows
-scripts\install.bat
+# 或使用 npx 直接运行
+npx cmaster-bot
 
-# 手动安装
+# 源码安装
+git clone https://github.com/yiyisf/masterBot.git && cd cmaster-bot
 npm install && cd web && npm install && cd ..
 ```
 
@@ -85,10 +87,13 @@ ANTHROPIC_MODEL=claude-3-5-sonnet-20241022
 npm run dev                  # 后端 :3000
 cd web && npm run dev        # 前端 :3001（仅修改 UI 时需要）
 
-# 生产部署
+# 生产部署与发布
 npm run build                # 编译后端 TypeScript
 cd web && npm run build      # 构建前端静态文件
-cd .. && npm start           # 统一服务 :3000（后端托管前端）
+cd .. && npm start           # 统一服务 :3000
+
+# 发布到 NPM (维护者使用)
+bash scripts/release.sh patch|minor|major
 ```
 
 ---

@@ -4,6 +4,34 @@
   "description": "Enterprise AI Assistant with extensible skill system",
   "main": "dist/index.js",
   "type": "module",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/yiyisf/masterBot.git"
+  },
+  "homepage": "https://github.com/yiyisf/masterBot#readme",
+  "bugs": {
+    "url": "https://github.com/yiyisf/masterBot/issues"
+  },
+  "files": [
+    "dist/",
+    "config/",
+    "skills/built-in/",
+    "scripts/",
+    "README.md",
+    "LICENSE"
+  ],
+  "exports": {
+    ".": {
+      "import": "./dist/index.js",
+      "types": "./dist/index.d.ts"
+    }
+  },
+  "bin": {
+    "cmaster-bot": "./dist/index.js"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
   "scripts": {
     "dev": "tsx watch src/index.ts",
     "dev:win": "chcp 65001 && tsx watch src/index.ts",
@@ -13,7 +41,10 @@
     "test": "vitest",
     "test:run": "vitest run",
     "lint": "eslint src --ext .ts",
-    "setup": "bash scripts/install.sh || powershell -ExecutionPolicy Bypass -File scripts/install.ps1"
+    "setup": "bash scripts/install.sh || powershell -ExecutionPolicy Bypass -File scripts/install.ps1",
+    "prepublishOnly": "npm run build",
+    "version": "npm run build",
+    "prepack": "npm run build"
   },
   "keywords": [
     "ai",

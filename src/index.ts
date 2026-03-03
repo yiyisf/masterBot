@@ -17,6 +17,8 @@ import { MultiAgentOrchestrator } from './core/multi-agent.js';
 import { SkillGenerator } from './core/skill-generator.js';
 import { ConnectorManager } from './skills/connector-source.js';
 import { SelfImprovementEngine } from './core/self-improvement.js';
+import { initMemoryRouter } from './memory/memory-router.js';
+import { SoulLoader } from './core/soul-loader.js';
 
 async function main() {
     console.log(`
@@ -92,6 +94,12 @@ async function main() {
     const orchestrator = new MultiAgentOrchestrator(logger);
     const skillGenerator = new SkillGenerator(getLlm(), logger);
 
+    // Phase 21: 初始化统一内存路由器
+    if (longTermMemory) {
+        initMemoryRouter(longTermMemory, knowledgeGraph, sessionManager);
+    }
+    const { memoryRouter } = await import('./memory/memory-router.js');
+
     // Initialize agent with dynamic LLM getter for hot-reloading
     const agent = new Agent({
         llm: () => {
@@ -104,6 +112,7 @@ async function main() {
         maxIterations: config.agent?.maxIterations ?? 10,
         maxContextTokens: config.agent?.maxContextTokens,
         longTermMemory,
+        memoryRouter,
         skillConfig: {
             sandbox: config.skills.shell?.sandbox,
         },
@@ -111,6 +120,10 @@ async function main() {
         orchestrator,
         knowledgeGraph,
     });
+
+    // Phase 21: 加载 SOUL.md Worker Agents
+    const soulLoader = new SoulLoader(orchestrator, skillRegistry, getLlm, logger);
+    await soulLoader.loadAgents(path.join(process.cwd(), 'agents'));
 
     const scheduler = new SchedulerService(logger);
 

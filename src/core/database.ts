@@ -258,6 +258,29 @@ export function initDatabase(): DatabaseSync {
             ON im_users(platform, im_user_id);
     `);
 
+    // agent_spans 表 — Phase 21 分布式追踪
+    db.exec(`
+        CREATE TABLE IF NOT EXISTS agent_spans (
+            id          TEXT PRIMARY KEY,
+            trace_id    TEXT NOT NULL,
+            parent_id   TEXT,
+            name        TEXT NOT NULL,
+            agent_id    TEXT,
+            session_id  TEXT,
+            status      TEXT NOT NULL DEFAULT 'running',
+            meta        TEXT,
+            result      TEXT,
+            error       TEXT,
+            duration_ms INTEGER,
+            started_at  TEXT NOT NULL,
+            ended_at    TEXT,
+            created_at  TEXT NOT NULL DEFAULT (datetime('now'))
+        );
+        CREATE INDEX IF NOT EXISTS idx_spans_trace   ON agent_spans(trace_id);
+        CREATE INDEX IF NOT EXISTS idx_spans_parent  ON agent_spans(parent_id);
+        CREATE INDEX IF NOT EXISTS idx_spans_session ON agent_spans(session_id);
+    `);
+
     // Auto-migration for existing databases
     try {
         db.prepare('ALTER TABLE sessions ADD COLUMN is_pinned BOOLEAN DEFAULT 0').run();
@@ -265,6 +288,27 @@ export function initDatabase(): DatabaseSync {
         // Ignore error if column already exists
         if (!error.message.includes('duplicate column name')) {
             // Log but don't crash if it's another error, though for this simple setup it's fine
+        }
+    }
+
+    // Auto-migration: Phase 21 — tasks 表新增 5 列
+    {
+        const taskColumns = db.prepare('PRAGMA table_info(tasks)').all() as Array<{ name: string }>;
+        const taskColNames = new Set(taskColumns.map(c => c.name));
+        if (!taskColNames.has('condition')) {
+            db.prepare('ALTER TABLE tasks ADD COLUMN condition TEXT').run();
+        }
+        if (!taskColNames.has('priority')) {
+            db.prepare('ALTER TABLE tasks ADD COLUMN priority INTEGER NOT NULL DEFAULT 0').run();
+        }
+        if (!taskColNames.has('retry_count')) {
+            db.prepare('ALTER TABLE tasks ADD COLUMN retry_count INTEGER NOT NULL DEFAULT 0').run();
+        }
+        if (!taskColNames.has('max_retries')) {
+            db.prepare('ALTER TABLE tasks ADD COLUMN max_retries INTEGER NOT NULL DEFAULT 0').run();
+        }
+        if (!taskColNames.has('trace_id')) {
+            db.prepare('ALTER TABLE tasks ADD COLUMN trace_id TEXT').run();
         }
     }
 

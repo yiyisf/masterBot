@@ -32,6 +32,7 @@ import {
     ClipboardList,
     UserCheck,
     CalendarClock,
+    GitBranch,
 } from "lucide-react";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || "";
@@ -106,6 +107,30 @@ interface ComplianceReport {
         avgDurationMs: number;
     };
     topFailures: Array<{ name: string; count: number; lastError?: string }>;
+}
+
+interface TraceListItem {
+    traceId: string;
+    sessionId?: string;
+    spanCount: number;
+    totalDurationMs?: number;
+    startedAt: string;
+}
+
+interface Span {
+    id: string;
+    traceId: string;
+    parentId?: string;
+    name: string;
+    agentId?: string;
+    sessionId?: string;
+    status: "running" | "success" | "failed";
+    meta?: Record<string, unknown>;
+    result?: string;
+    error?: string;
+    durationMs?: number;
+    startedAt: string;
+    endedAt?: string;
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -574,6 +599,211 @@ function ReportTab() {
     );
 }
 
+// ─── Tab 4: Call Traces (Waterfall) ───────────────────────────────────────────
+
+function SpanWaterfall({ spans }: { spans: Span[] }) {
+    if (spans.length === 0) return <div className="text-xs text-muted-foreground p-4">暂无 span 数据</div>;
+
+    // 计算深度（BFS）
+    const depthMap = new Map<string, number>();
+    const rootSpans = spans.filter(s => !s.parentId);
+    for (const s of rootSpans) depthMap.set(s.id, 0);
+
+    // 多次遍历，直到所有 span 深度已确定（最多 10 轮防止无限循环）
+    for (let pass = 0; pass < 10; pass++) {
+        let changed = false;
+        for (const s of spans) {
+            if (depthMap.has(s.id)) continue;
+            if (s.parentId && depthMap.has(s.parentId)) {
+                depthMap.set(s.id, (depthMap.get(s.parentId) ?? 0) + 1);
+                changed = true;
+            }
+        }
+        if (!changed) break;
+    }
+    // 未能确定深度的 span 设为 0
+    for (const s of spans) {
+        if (!depthMap.has(s.id)) depthMap.set(s.id, 0);
+    }
+
+    // 总时长用于计算宽度比例
+    const minStart = Math.min(...spans.map(s => new Date(s.startedAt).getTime()));
+    const maxEnd = Math.max(...spans.map(s =>
+        s.endedAt ? new Date(s.endedAt).getTime() : new Date(s.startedAt).getTime() + (s.durationMs ?? 0)
+    ));
+    const totalMs = Math.max(maxEnd - minStart, 1);
+
+    const spanStatusColor = (status: string) => {
+        if (status === "success") return "bg-green-400";
+        if (status === "failed") return "bg-red-400";
+        return "bg-blue-400 animate-pulse";
+    };
+
+    const spanNameColor = (name: string) => {
+        if (name.startsWith("delegate:")) return "text-purple-600 font-semibold";
+        if (name.startsWith("tool:")) return "text-blue-600";
+        return "text-foreground font-medium";
+    };
+
+    return (
+        <div className="space-y-0.5 font-mono text-xs overflow-x-auto">
+            <div className="flex items-center gap-2 pb-1 border-b mb-2 text-muted-foreground sticky top-0 bg-background">
+                <span className="w-64 shrink-0">Span 名称</span>
+                <span className="w-16 shrink-0 text-right">耗时</span>
+                <span className="flex-1">时序</span>
+                <span className="w-14 shrink-0 text-right">状态</span>
+            </div>
+            {spans.map(span => {
+                const depth = depthMap.get(span.id) ?? 0;
+                const startOffset = new Date(span.startedAt).getTime() - minStart;
+                const barWidth = span.durationMs ? (span.durationMs / totalMs) * 100 : 2;
+                const barLeft = (startOffset / totalMs) * 100;
+                return (
+                    <div key={span.id} className="flex items-center gap-2 py-0.5 hover:bg-muted/40 rounded">
+                        {/* Span name with indent */}
+                        <div
+                            className="w-64 shrink-0 truncate"
+                            style={{ paddingLeft: `${depth * 16}px` }}
+                        >
+                            <span className={spanNameColor(span.name)}>
+                                {depth > 0 && <span className="text-muted-foreground mr-1">└</span>}
+                                {span.name}
+                            </span>
+                        </div>
+                        {/* Duration */}
+                        <div className="w-16 shrink-0 text-right text-muted-foreground">
+                            {fmtDuration(span.durationMs)}
+                        </div>
+                        {/* Timeline bar */}
+                        <div className="flex-1 relative h-4 bg-muted/30 rounded overflow-hidden">
+                            <div
+                                className={`absolute top-0.5 h-3 rounded ${spanStatusColor(span.status)} opacity-80`}
+                                style={{
+                                    left: `${Math.min(barLeft, 99)}%`,
+                                    width: `${Math.max(barWidth, 0.5)}%`,
+                                }}
+                                title={span.error || span.result || span.name}
+                            />
+                        </div>
+                        {/* Status */}
+                        <div className="w-14 shrink-0 text-right">
+                            {statusBadge(span.status)}
+                        </div>
+                    </div>
+                );
+            })}
+        </div>
+    );
+}
+
+function TracesTab() {
+    const [traces, setTraces] = useState<TraceListItem[]>([]);
+    const [loading, setLoading] = useState(false);
+    const [expanded, setExpanded] = useState<string | null>(null);
+    const [spans, setSpans] = useState<Record<string, Span[]>>({});
+    const [spansLoading, setSpansLoading] = useState<string | null>(null);
+    const [page, setPage] = useState(0);
+    const limit = 20;
+
+    const load = useCallback(async () => {
+        setLoading(true);
+        try {
+            const params = new URLSearchParams({ limit: String(limit), offset: String(page * limit) });
+            const res = await fetch(`${API_BASE}/api/audit/traces?${params}`);
+            const data = await res.json();
+            setTraces(data.items ?? []);
+        } finally {
+            setLoading(false);
+        }
+    }, [page]);
+
+    useEffect(() => { load(); }, [load]);
+
+    const toggleTrace = async (traceId: string) => {
+        if (expanded === traceId) {
+            setExpanded(null);
+            return;
+        }
+        setExpanded(traceId);
+        if (!spans[traceId]) {
+            setSpansLoading(traceId);
+            try {
+                const res = await fetch(`${API_BASE}/api/audit/traces/${encodeURIComponent(traceId)}`);
+                const data = await res.json();
+                setSpans(prev => ({ ...prev, [traceId]: data.spans ?? [] }));
+            } finally {
+                setSpansLoading(null);
+            }
+        }
+    };
+
+    return (
+        <div className="space-y-4">
+            <div className="flex items-center gap-2">
+                <Button variant="outline" size="sm" onClick={() => { setPage(0); load(); }} disabled={loading}>
+                    <RefreshCw className={`h-3 w-3 mr-1 ${loading ? "animate-spin" : ""}`} />刷新
+                </Button>
+                <span className="text-xs text-muted-foreground">最近 {traces.length} 条追踪记录</span>
+            </div>
+
+            {traces.length === 0 && !loading && (
+                <div className="text-center text-muted-foreground py-12 text-sm">
+                    暂无追踪记录。执行 Agent 任务后将自动生成追踪数据。
+                </div>
+            )}
+
+            <div className="space-y-2">
+                {traces.map(trace => (
+                    <div key={trace.traceId} className="border rounded-lg overflow-hidden">
+                        <div
+                            className="flex items-center gap-3 p-3 hover:bg-muted/40 cursor-pointer"
+                            onClick={() => toggleTrace(trace.traceId)}
+                        >
+                            <GitBranch className="h-4 w-4 text-muted-foreground shrink-0" />
+                            <div className="flex-1 min-w-0">
+                                <div className="font-mono text-xs truncate text-muted-foreground">{trace.traceId}</div>
+                                {trace.sessionId && (
+                                    <div className="text-xs text-muted-foreground">会话: {trace.sessionId}</div>
+                                )}
+                            </div>
+                            <div className="text-xs text-muted-foreground whitespace-nowrap">
+                                {trace.spanCount} spans
+                            </div>
+                            <div className="text-xs text-muted-foreground whitespace-nowrap">
+                                {fmtDuration(trace.totalDurationMs)}
+                            </div>
+                            <div className="text-xs text-muted-foreground whitespace-nowrap">
+                                {fmtTime(trace.startedAt)}
+                            </div>
+                            {expanded === trace.traceId
+                                ? <ChevronUp className="h-3 w-3 text-muted-foreground" />
+                                : <ChevronDown className="h-3 w-3 text-muted-foreground" />
+                            }
+                        </div>
+                        {expanded === trace.traceId && (
+                            <div className="border-t p-4 bg-muted/10">
+                                {spansLoading === trace.traceId ? (
+                                    <div className="text-xs text-muted-foreground flex items-center gap-2">
+                                        <RefreshCw className="h-3 w-3 animate-spin" />加载 spans...
+                                    </div>
+                                ) : (
+                                    <SpanWaterfall spans={spans[trace.traceId] ?? []} />
+                                )}
+                            </div>
+                        )}
+                    </div>
+                ))}
+            </div>
+
+            <div className="flex gap-2 justify-end">
+                <Button variant="outline" size="sm" disabled={page === 0} onClick={() => setPage(p => p - 1)}>上一页</Button>
+                <span className="text-xs text-muted-foreground self-center">第 {page + 1} 页</span>
+                <Button variant="outline" size="sm" disabled={traces.length < limit} onClick={() => setPage(p => p + 1)}>下一页</Button>
+            </div>
+        </div>
+    );
+}
+
 // ─── Main Page ────────────────────────────────────────────────────────────────
 
 export default function AuditPage() {
@@ -585,7 +815,7 @@ export default function AuditPage() {
                     <h1 className="text-2xl font-bold">合规审计</h1>
                 </div>
                 <p className="text-sm text-muted-foreground">
-                    执行记录追溯、HitL 审批历史与合规报告导出
+                    执行记录追溯、HitL 审批历史、合规报告与多 Agent 调用追踪
                 </p>
             </div>
 
@@ -601,6 +831,9 @@ export default function AuditPage() {
                         <TabsTrigger value="report" className="gap-1.5">
                             <CalendarClock className="h-3.5 w-3.5" />合规报告
                         </TabsTrigger>
+                        <TabsTrigger value="traces" className="gap-1.5">
+                            <GitBranch className="h-3.5 w-3.5" />调用追踪
+                        </TabsTrigger>
                     </TabsList>
 
                     <div className="flex-1 overflow-y-auto pt-4">
@@ -612,6 +845,9 @@ export default function AuditPage() {
                         </TabsContent>
                         <TabsContent value="report" className="mt-0">
                             <ReportTab />
+                        </TabsContent>
+                        <TabsContent value="traces" className="mt-0">
+                            <TracesTab />
                         </TabsContent>
                     </div>
                 </Tabs>

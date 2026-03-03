@@ -1432,6 +1432,36 @@ export class GatewayServer {
             }
         );
 
+        // ===== TRACE API — Phase 21 =====
+        // GET /api/audit/traces — 分页列出最近 traceId
+        this.app.get<{ Querystring: { sessionId?: string; limit?: string; offset?: string } }>(
+            '/api/audit/traces',
+            async (request) => {
+                const { sessionId, limit, offset } = request.query as Record<string, string | undefined>;
+                const { spanRecorder: sr } = await import('../core/trace.js');
+                const items = sr.listTraces({
+                    sessionId,
+                    limit: limit ? parseInt(limit, 10) : 20,
+                    offset: offset ? parseInt(offset, 10) : 0,
+                });
+                return { items };
+            }
+        );
+
+        // GET /api/audit/traces/:traceId — 获取某次 trace 的所有 spans（用于瀑布图）
+        this.app.get<{ Params: { traceId: string } }>(
+            '/api/audit/traces/:traceId',
+            async (request, reply) => {
+                const { spanRecorder: sr } = await import('../core/trace.js');
+                const spans = sr.getTrace(request.params.traceId);
+                if (spans.length === 0) {
+                    reply.status(404);
+                    return { error: 'Trace not found' };
+                }
+                return { traceId: request.params.traceId, spans };
+            }
+        );
+
         // ===== IM GATEWAY API =====
         // GET /api/im/status — IM integration status
         this.app.get('/api/im/status', async () => {

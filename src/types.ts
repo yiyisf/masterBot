@@ -185,6 +185,10 @@ export interface ExecutionStep {
     // interrupt fields
     interruptId?: string;
     interruptReason?: string;
+    // Phase 21: multi-agent delegation
+    delegatedFrom?: string;  // workerId — 标记来自哪个 Worker 的步骤
+    traceId?: string;
+    spanId?: string;
     timestamp: Date;
 }
 
