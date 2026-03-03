@@ -82,6 +82,11 @@ export function spawnCli(
             clearTimeout(timer);
             if (err.code === 'ENOENT') {
                 reject(new Error(`Command not found: ${cmd}. Please ensure it is installed and in PATH.`));
+            } else if (err.code === 'EPERM' || err.code === 'EACCES') {
+                const hint = platform() === 'win32'
+                    ? 'Run as administrator or check execution policy: Set-ExecutionPolicy RemoteSigned'
+                    : `Check file permissions: chmod +x ${cmd}`;
+                reject(new Error(`Permission denied executing: ${cmd}. ${hint}`));
             } else {
                 reject(err);
             }

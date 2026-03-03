@@ -455,7 +455,7 @@ export class GatewayServer {
             if (index >= 0) {
                 // Unregister old source before updating
                 const oldConfig = configs[index];
-                await registry.unregisterSource(`mcp-${oldConfig.name}`).catch(() => {});
+                await registry.unregisterSource(`mcp-${oldConfig.name}`).catch(() => { });
                 configs[index] = newConfig;
             } else {
                 configs.push(newConfig);
@@ -482,7 +482,7 @@ export class GatewayServer {
 
             // Unregister MCP source before removing config
             if (toDelete) {
-                await registry.unregisterSource(`mcp-${toDelete.name}`).catch(() => {});
+                await registry.unregisterSource(`mcp-${toDelete.name}`).catch(() => { });
             }
 
             const newConfigs = configs.filter(c => c.id !== request.params.id);
@@ -718,20 +718,52 @@ export class GatewayServer {
         // Test LLM provider connectivity with a minimal chat call
         this.app.post<{ Body: { providerName: string } }>('/api/config/models/test', async (request, reply) => {
             const { providerName } = request.body;
+            this.logger.info(`[config] Starting connectivity test for provider: ${providerName}`);
+
             const providerConfig = this.config.models.providers[providerName];
             if (!providerConfig) {
+                this.logger.warn(`[config] Provider "${providerName}" not found in configuration`);
                 reply.status(404); return { success: false, error: `Provider "${providerName}" not found` };
             }
+
+            // Detailed debug logging
+            const maskedKey = providerConfig.apiKey ? `${providerConfig.apiKey.slice(0, 4)}...${providerConfig.apiKey.slice(-4)}` : 'missing';
+            this.logger.info(`[config] Testing provider "${providerName}": baseUrl="${providerConfig.baseUrl}", model="${providerConfig.model}", type="${providerConfig.type}", apiKey=${maskedKey}`);
+
             try {
                 const adapter = llmFactory.getAdapter(providerName, providerConfig);
+
+                // Add 30s timeout to prevent hanging if the provider is unreachable
+                const signal = AbortSignal.timeout(30000);
+
                 const result = await adapter.chat(
                     [{ role: 'user', content: 'Reply with "OK" only, no other text.' }],
-                    { maxTokens: 10 }
+                    { maxTokens: 10, abortSignal: signal }
                 );
+
                 const content = typeof result.content === 'string' ? result.content : JSON.stringify(result.content);
-                return { success: true, response: content.trim() };
+                this.logger.info(`[config] Connectivity test success for ${providerName}: ${content.trim()}`);
+                return {
+                    success: true,
+                    response: content.trim(),
+                    debugInfo: {
+                        baseUrl: providerConfig.baseUrl,
+                        model: providerConfig.model,
+                        apiKey: maskedKey
+                    }
+                };
             } catch (err: any) {
-                return { success: false, error: err.message };
+                const isTimeout = err.name === 'TimeoutError' || err.message?.includes('timeout');
+                this.logger.error(`[config] Connectivity test failed for ${providerName}${isTimeout ? ' (Timeout)' : ''}: ${err.message}`);
+                return {
+                    success: false,
+                    error: isTimeout ? 'Request timed out (30s)' : err.message,
+                    debugInfo: {
+                        baseUrl: providerConfig.baseUrl,
+                        model: providerConfig.model,
+                        apiKey: maskedKey
+                    }
+                };
             }
         });
 

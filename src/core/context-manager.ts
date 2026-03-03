@@ -2,6 +2,15 @@ import type { Message, LLMAdapter, Logger } from '../types.js';
 import { countTokens } from './tokenizer.js';
 
 /**
+ * 上下文裁剪结果
+ */
+export interface TrimResult {
+    messages: Message[];
+    droppedCount: number;
+    summaryText?: string;
+}
+
+/**
  * 上下文窗口管理器
  * 防止消息历史超出 LLM context limit
  *
@@ -51,14 +60,14 @@ export class ContextManager {
      * @param history - 历史消息（可被裁剪/摘要）
      * @param currentMessages - 当前轮次的消息（始终保留）
      * @param llm - 用于生成摘要的 LLM 适配器（可选）
-     * @returns 裁剪后的完整消息数组
+     * @returns TrimResult 包含裁剪后的消息数组和压缩信息
      */
     async trimMessages(
         systemMessage: Message,
         history: Message[],
         currentMessages: Message[],
         llm?: LLMAdapter
-    ): Promise<Message[]> {
+    ): Promise<TrimResult> {
         const budget = this.maxTokens - this.reservedTokens;
 
         // Tokens consumed by fixed parts (system + current)
@@ -67,7 +76,7 @@ export class ContextManager {
         if (fixedTokens >= budget) {
             // Even without history we're over budget - just return what we must
             this.logger.warn(`System + current messages alone exceed token budget (${fixedTokens} >= ${budget})`);
-            return [systemMessage, ...currentMessages];
+            return { messages: [systemMessage, ...currentMessages], droppedCount: history.length };
         }
 
         const historyBudget = budget - fixedTokens;
@@ -75,7 +84,7 @@ export class ContextManager {
 
         // History fits within budget - no trimming needed
         if (historyTokens <= historyBudget) {
-            return [systemMessage, ...history, ...currentMessages];
+            return { messages: [systemMessage, ...history, ...currentMessages], droppedCount: 0 };
         }
 
         this.logger.info(`Context window trimming: history ${historyTokens} tokens exceeds budget ${historyBudget}`);
@@ -84,23 +93,31 @@ export class ContextManager {
         const { kept, trimmed } = this.splitHistory(history, historyBudget);
 
         if (trimmed.length === 0) {
-            return [systemMessage, ...kept, ...currentMessages];
+            return { messages: [systemMessage, ...kept, ...currentMessages], droppedCount: 0 };
         }
 
         // Generate summary of trimmed messages
         let summaryMessage: Message;
+        let summaryText: string | undefined;
         if (llm) {
             try {
-                summaryMessage = await this.generateSummary(trimmed, llm);
+                const result = await this.generateSummaryWithText(trimmed, llm);
+                summaryMessage = result.message;
+                summaryText = result.text;
             } catch (error) {
                 this.logger.warn(`Summary generation failed, using fallback: ${(error as Error).message}`);
                 summaryMessage = this.fallbackSummary(trimmed);
+                summaryText = undefined;
             }
         } else {
             summaryMessage = this.fallbackSummary(trimmed);
         }
 
-        return [systemMessage, summaryMessage, ...kept, ...currentMessages];
+        return {
+            messages: [systemMessage, summaryMessage, ...kept, ...currentMessages],
+            droppedCount: trimmed.length,
+            summaryText,
+        };
     }
 
     /**
@@ -140,9 +157,9 @@ export class ContextManager {
     }
 
     /**
-     * 使用 LLM 生成历史消息摘要
+     * 使用 LLM 生成历史消息摘要，返回消息和摘要文本
      */
-    private async generateSummary(messages: Message[], llm: LLMAdapter): Promise<Message> {
+    private async generateSummaryWithText(messages: Message[], llm: LLMAdapter): Promise<{ message: Message; text: string }> {
         const conversationText = messages
             .filter(m => m.role === 'user' || m.role === 'assistant')
             .map(m => {
@@ -165,8 +182,11 @@ export class ContextManager {
         this.logger.info(`Generated context summary (${messages.length} messages → ~${summary.length} chars)`);
 
         return {
-            role: 'system',
-            content: `[以下是之前对话的摘要]\n${summary}\n[摘要结束，以下是最近的对话]`,
+            message: {
+                role: 'system',
+                content: `[以下是之前对话的摘要]\n${summary}\n[摘要结束，以下是最近的对话]`,
+            },
+            text: summary,
         };
     }
 

@@ -356,12 +356,23 @@ export class Agent {
         }];
 
         // Apply context window management to prevent exceeding LLM context limit
-        const messages = await this.contextManager.trimMessages(
+        const trimResult = await this.contextManager.trimMessages(
             systemMessage,
             context.history || [],
             currentInput,
             this.llm
         );
+        const messages = trimResult.messages;
+
+        // 如果发生压缩，通知前端
+        if (trimResult.droppedCount > 0) {
+            yield {
+                type: 'context_compressed',
+                content: trimResult.summaryText ?? `已压缩 ${trimResult.droppedCount} 条历史消息`,
+                droppedCount: trimResult.droppedCount,
+                timestamp: new Date(),
+            } satisfies ExecutionStep;
+        }
 
         // 合并内置工具和外部技能工具
         const externalTools = await this.skillRegistry.getToolDefinitions();
@@ -381,16 +392,56 @@ export class Agent {
             let toolCalls: any[] = [];
 
             // 调用 LLM (流式获取内容和工具调用)
-            for await (const chunk of this.llm.chatStream(messages, { tools, abortSignal: context.abortSignal })) {
-                if (chunk.type === 'content' && chunk.content) {
-                    fullContent += chunk.content;
+            try {
+                for await (const chunk of this.llm.chatStream(messages, { tools, abortSignal: context.abortSignal })) {
+                    if (chunk.type === 'content' && chunk.content) {
+                        fullContent += chunk.content;
+                        yield {
+                            type: 'content',
+                            content: chunk.content,
+                            timestamp: new Date(),
+                        };
+                    } else if (chunk.type === 'tool_call' && chunk.toolCall) {
+                        toolCalls.push(chunk.toolCall);
+                    }
+                }
+            } catch (llmErr: any) {
+                // 处理上下文超限错误：强制丢弃更多历史后重试一次
+                const isContextLimitErr =
+                    llmErr?.message?.includes('context_length_exceeded') ||
+                    llmErr?.message?.includes('maximum context length') ||
+                    llmErr?.message?.includes('reduce the length') ||
+                    llmErr?.status === 400;
+
+                if (isContextLimitErr && messages.length > 3) {
+                    this.logger.warn(`LLM context limit hit, aggressively trimming and retrying...`);
+                    // 强制保留 system + 最后 2 条消息（最小化上下文）
+                    const sysMsg = messages[0];
+                    const lastTwo = messages.slice(-2);
+                    messages.splice(1, messages.length - 3, ...lastTwo.slice(0, 0)); // clear middle
+                    messages.length = 0;
+                    messages.push(sysMsg, ...lastTwo);
                     yield {
-                        type: 'content',
-                        content: chunk.content,
+                        type: 'context_compressed',
+                        content: '上下文超限，已强制压缩历史消息，正在重试…',
+                        droppedCount: -1,
                         timestamp: new Date(),
-                    };
-                } else if (chunk.type === 'tool_call' && chunk.toolCall) {
-                    toolCalls.push(chunk.toolCall);
+                    } satisfies ExecutionStep;
+                    // 重试本轮
+                    for await (const chunk of this.llm.chatStream(messages, { tools, abortSignal: context.abortSignal })) {
+                        if (chunk.type === 'content' && chunk.content) {
+                            fullContent += chunk.content;
+                            yield {
+                                type: 'content',
+                                content: chunk.content,
+                                timestamp: new Date(),
+                            };
+                        } else if (chunk.type === 'tool_call' && chunk.toolCall) {
+                            toolCalls.push(chunk.toolCall);
+                        }
+                    }
+                } else {
+                    throw llmErr;
                 }
             }
 

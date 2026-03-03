@@ -101,3 +101,70 @@ actions:
 ```
 
 放入 `connectors/` 目录后重启或在 `/connectors` 页面上传即生效。
+
+---
+
+## Worker Agent (SOUL.md) — Phase 21
+
+Worker Agent 是具备完整 ReAct 循环的子智能体，由 Supervisor Agent 通过 `delegate_to_agent` 工具调用。
+
+### 目录结构
+
+```
+agents/
+  coder/
+    SOUL.md       ← Worker Agent 定义
+  analyst/
+    SOUL.md
+```
+
+### SOUL.md 格式
+
+```markdown
+---
+name: coder               # workerId，唯一标识（对应 delegate_to_agent 的 workerId 参数）
+version: 1.0.0
+description: 专业代码工程师，负责代码编写、调试和重构
+skills:                   # 空列表 = 继承 Supervisor 全部技能；非空 = 限制到指定技能
+  - shell
+  - file-manager
+systemPrompt: |
+  你是专业代码工程师，专注于：
+  1. 编写高质量、可维护的代码
+  2. 调试和修复 Bug
+  3. 代码重构和优化
+  始终遵循最佳实践，优先使用已有工具完成任务。
+---
+```
+
+`SoulLoader` 在服务启动时自动扫描 `agents/` 目录并注册所有 Worker Agent。
+
+### 调用方式
+
+Supervisor Agent 通过内置工具调用 Worker：
+
+```
+工具: delegate_to_agent
+参数:
+  workerId: "coder"
+  task: "将 src/utils.js 中的 formatDate 函数重构为支持时区的版本"
+```
+
+### 与 Skill 的对比
+
+| 维度 | Skill | Worker Agent |
+|------|-------|-------------|
+| 触发方式 | 工具调用（`skill_name.action`） | `delegate_to_agent` 内置工具 |
+| 能力范围 | 单一原子操作 | 完整 ReAct 推理循环 |
+| 配置文件 | `SKILL.md` | `SOUL.md` |
+| 目录位置 | `skills/` | `agents/` |
+| 工具访问 | N/A（自身即工具） | 可使用指定技能子集 |
+| 适用场景 | 调用外部 API、执行命令 | 复杂子任务、专家代理 |
+
+### 多 Agent 最佳实践
+
+1. **职责分离**：每个 Worker 专注单一领域（代码、数据分析、文档处理）
+2. **技能约束**：通过 `skills` 字段限制 Worker 只能访问必要工具，遵循最小权限原则
+3. **任务描述精确**：`delegate_to_agent` 的 `task` 参数越具体，Worker 效果越好
+4. **避免循环委托**：Worker 不应再次调用 `delegate_to_agent`，防止无限递归
+5. **流式透传**：Worker 的 `ExecutionStep` 会实时透传到前端，用户可看到完整思考链

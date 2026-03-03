@@ -166,6 +166,70 @@ CMaster Bot is an enterprise-grade, self-evolving AI agent platform built on a R
 
 ---
 
+### Phase 19 — Self-Improvement + Enterprise Infrastructure ✅
+*Goal: Closed-loop self-learning, prompt template library, production packaging*
+
+| Item | Details |
+|------|---------|
+| `SelfImprovementEngine` | Negative feedback triggers LLM classification → auto skill generation |
+| Prompt Template Library | 20 built-in enterprise templates (HR/data/ops/doc/workflow), full CRUD UI (`/prompts`) |
+| `AgentGateway` | HTTP endpoints for multi-agent remote coordination (`/agents/*`) |
+| Docker packaging | `Dockerfile` (node:22-alpine multi-stage) + `docker-compose.yml` |
+| Install scripts | `scripts/install.sh` (macOS/Linux) + `scripts/install.ps1/.bat` (Windows) |
+| CI/CD | `.github/workflows/ci.yml` + `docker.yml`; vitest + tsc gates |
+| Docs | `docs/getting-started.md`, `docs/skills-guide.md`, `docs/enterprise-deployment.md` |
+| Settings rewrite | Token usage stats (ECharts daily/model breakdown), model connection test |
+
+---
+
+### Phase 20 — Audit & IM Bidirectional Integration ✅
+*Goal: Compliance audit trail + IM platform (Feishu/DingTalk) native integration*
+
+| Item | Details |
+|------|---------|
+| `AuditRepository` | `execution_records`, `audit_approvals`, `scheduled_task_runs` tables + CSV export |
+| Audit hooks | Injected into `scheduler.ts`, `runbook-engine.ts`, `interrupt-coordinator.ts`, webhook trigger |
+| Audit API | `GET /api/audit/records`, `/api/audit/approvals`, `/api/audit/export`, 3 more endpoints |
+| `ImGateway` | `IImAdapter` interface + `FeishuAdapter`; `HitL` timeout watcher |
+| IM API | `GET/POST/PATCH /api/im/*` — 8 endpoints for status, users, sessions, messaging |
+| `im-bot` skill | `send_message`, `send_card`, `get_session_info` actions |
+| `/audit` UI | 3-tab page: 执行记录 / 审批记录 / 合规报告 + CSV export |
+| Settings IM card | IM integration status + user whitelist management |
+
+---
+
+### Phase 21 — Multi-Agent Architecture Upgrade ✅
+*Goal: Streaming delegation, DAG enhancement, unified memory routing, distributed tracing*
+
+| Item | Details |
+|------|---------|
+| `SpanRecorder` | Singleton trace recorder (`src/core/trace.ts`); `agent_spans` table with `trace_id/parent_id/name/status/duration_ms` |
+| `SoulLoader` | Auto-scan `agents/<name>/SOUL.md` → register Worker Agents at boot |
+| Streaming delegation | `MultiAgentOrchestrator.delegateStream()` — pipes Worker's async generator to Supervisor yield |
+| DAG enhancements | `condition` field on tasks (conditional skip), `priority`, `retry_count/max_retries`, `trace_id` via auto-migration |
+| `MemoryRouter` | Unified `search()` across LongTermMemory + KnowledgeGraph (Phase 21) |
+| `knowledge_search` tool | Agent built-in tool for KG BFS traversal + LTM hybrid retrieval |
+| Tasks table migration | 5 new columns added via `ALTER TABLE IF NOT EXISTS` guard |
+
+---
+
+### Phase 22 — Documentation, Multi-Model, Context Overflow & Windows Compat ✅
+*Goal: Fill documentation gaps, add Gemini/Ollama support, surfacing context compression events, Windows EPERM fix*
+
+| Item | Details |
+|------|---------|
+| Multi-model support | `LLMConfig.type` extended: `gemini` / `ollama` (both routed to `OpenAIAdapter`); default providers in `config/default.yaml` |
+| Factory routing | `src/llm/factory.ts`: `case 'gemini'` → OpenAIAdapter with `generativelanguage.googleapis.com/v1beta/openai/`; `case 'ollama'` → OpenAIAdapter with `localhost:11434/v1` |
+| Settings Provider management | Type badges (color-coded), "+ 添加 Provider" dialog, delete non-default providers, Ollama local model detection (`GET /api/tags`) |
+| `TrimResult` | `ContextManager.trimMessages()` returns `{ messages, droppedCount, summaryText }` instead of bare `Message[]` |
+| `context_compressed` SSE event | Agent yields `context_compressed` step with `droppedCount`; frontend displays system info badge |
+| LLM context limit auto-recovery | `context_length_exceeded` / `400` error caught → aggressive trim → retry once |
+| Shell EPERM fix | `skills/built-in/shell/index.ts`: `exec()` → `spawn()` with explicit shell; `EPERM/EACCES` friendly error messages; Windows Python `.exe` auto-prefix |
+| `spawnCli` EPERM | `src/skills/utils.ts`: added `EPERM/EACCES` case with OS-specific hint |
+| Documentation | README, `docs/skills-guide.md` (SOUL.md protocol), `docs/enterprise-deployment.md` (IM/audit config), `docs/roadmap.md` |
+
+---
+
 ## Version Milestones
 
 | Version | Phases | Status |
@@ -173,6 +237,7 @@ CMaster Bot is an enterprise-grade, self-evolving AI agent platform built on a R
 | v0.1.0 (Alpha) | 1–9 | ✅ Released |
 | v0.2.0 | 10–13 (Enterprise foundation + Innovation) | ✅ Released |
 | v0.3.0 | 14–18 (AIOps + RPA + NL2Insight + Cross-platform) | ✅ Released |
+| v0.4.0 | 19–22 (Self-improvement, Audit, Multi-Agent, Docs) | ✅ Released |
 | v1.0.0 | Production hardening, multi-tenant RBAC, SSO | 🔜 Planned |
 
 ---

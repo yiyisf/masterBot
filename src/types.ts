@@ -69,7 +69,7 @@ export interface LLMAdapter {
 }
 
 export interface LLMConfig {
-    type: 'openai' | 'anthropic' | 'custom';
+    type: 'openai' | 'anthropic' | 'gemini' | 'ollama' | 'custom';
     baseUrl: string;
     apiKey: string;
     model: string;
@@ -173,7 +173,7 @@ export interface AgentTask {
 }
 
 export interface ExecutionStep {
-    type: 'thought' | 'plan' | 'action' | 'observation' | 'answer' | 'content' | 'task_created' | 'task_completed' | 'task_failed' | 'meta' | 'suggestions' | 'interrupt';
+    type: 'thought' | 'plan' | 'action' | 'observation' | 'answer' | 'content' | 'task_created' | 'task_completed' | 'task_failed' | 'meta' | 'suggestions' | 'interrupt' | 'context_compressed';
     content: string;
     toolName?: string;
     toolInput?: Record<string, unknown>;
@@ -189,6 +189,8 @@ export interface ExecutionStep {
     delegatedFrom?: string;  // workerId — 标记来自哪个 Worker 的步骤
     traceId?: string;
     spanId?: string;
+    // Phase 22: context compression
+    droppedCount?: number;
     timestamp: Date;
 }
 

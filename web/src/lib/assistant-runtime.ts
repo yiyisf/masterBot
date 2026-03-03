@@ -127,6 +127,16 @@ export class MyRuntimeAdapter implements ChatModelAdapter {
                     suggestions = chunk.items || [];
                     yield buildYield();
 
+                } else if (chunk.type === "context_compressed") {
+                    // 上下文压缩通知
+                    currentSteps.push({
+                        contextCompressed: {
+                            droppedCount: chunk.droppedCount ?? 0,
+                            summary: chunk.content ?? '对话历史已压缩',
+                        }
+                    });
+                    yield buildYield();
+
                 } else if (chunk.type === "interrupt") {
                     // Human-in-the-Loop: agent is paused waiting for user approval
                     currentSteps.push({

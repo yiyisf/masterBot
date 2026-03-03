@@ -9,12 +9,19 @@
 ## 🌟 核心特性
 
 ### 基础能力
-- 🤖 **多 LLM 适配** — 支持 OpenAI / Anthropic 双接口标准，模型热切换，无需重启
+- 🤖 **多 LLM 适配** — 支持 OpenAI / Anthropic / Gemini / Ollama 四大接口，模型热切换，无需重启
 - 🔧 **可扩展技能系统** — `SKILL.md` 协议 + MCP 协议，内置 Shell、文件、HTTP、通知、文档处理、视觉等技能
 - 🧠 **双层记忆系统** — 短期会话记忆（LRU 淘汰）+ 长期记忆（SQLite 向量余弦检索）
 - 📋 **Task DAG 任务编排** — 复杂任务分解为有向无环图，支持依赖声明和并行执行
 - 🪟 **上下文窗口管理** — 滑动窗口 + LLM 摘要压缩，防止超出模型上下文限制
 - 🔒 **安全加固** — Shell 命令沙箱（黑名单/白名单）+ 认证中间件（API Key / JWT）
+
+### Phase 20-21 新增能力
+- 📋 **合规审计** — 全量执行记录 + 审批日志 + CSV 导出，满足企业安全合规要求
+- 💬 **IM 双向集成** — 飞书/钉钉原生接入，支持 HitL 人工审批、卡片交互
+- 🔍 **分布式追踪** — SpanRecorder 全链路 Trace（trace_id/parent_id），多 Agent 调试无盲区
+- 🤖 **Worker Agent (SOUL.md)** — 声明式 Worker Agent 协议，多 Agent 流式委托，Supervisor 并行调度
+- 🔗 **统一记忆路由** — MemoryRouter 跨 LongTerm + KnowledgeGraph 混合检索
 
 ### 企业扩展能力
 - ⚡ **Auto-Skill Generator** — 自然语言描述 → AI 自动生成技能代码 → 热加载，60 秒上线
@@ -70,13 +77,35 @@ cp .env.example .env
 编辑 `.env` 文件：
 
 ```env
+# OpenAI / 兼容接口（必填，默认 provider）
 OPENAI_BASE_URL=http://your-internal-ai-gateway/v1
 OPENAI_API_KEY=your-api-key
-OPENAI_MODEL=gpt-4
+OPENAI_MODEL=gpt-4o
+
 # Anthropic (可选)
 ANTHROPIC_API_KEY=your-anthropic-key
 ANTHROPIC_MODEL=claude-3-5-sonnet-20241022
+
+# Gemini (可选) — 通过 OpenAI 兼容接口
+GEMINI_API_KEY=your-gemini-key
+GEMINI_MODEL=gemini-2.0-flash
+
+# Ollama 本地大模型 (可选) — 无需 API Key
+OLLAMA_BASE_URL=http://localhost:11434/v1
+OLLAMA_MODEL=llama3.2
 ```
+
+### 多模型支持
+
+| Provider | 接口协议 | 环境变量 | 默认 Base URL |
+|----------|---------|----------|--------------|
+| OpenAI | OpenAI API | `OPENAI_API_KEY` | 自定义 |
+| Anthropic | Anthropic API | `ANTHROPIC_API_KEY` | `api.anthropic.com` |
+| Gemini | OpenAI 兼容 | `GEMINI_API_KEY` | `generativelanguage.googleapis.com/v1beta/openai/` |
+| Ollama | OpenAI 兼容 | 无需（占位 `ollama`）| `localhost:11434/v1` |
+| Custom | OpenAI 兼容 | 自定义 | 自定义 |
+
+Settings 页面支持运行时添加/删除 Provider，无需重启服务。
 
 ### 启动服务
 

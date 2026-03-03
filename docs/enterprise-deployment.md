@@ -134,3 +134,80 @@ memory:
     maxSessions: 500
     ttlSeconds: 7200
 ```
+
+---
+
+## IM 集成配置（Phase 20）
+
+### 飞书集成
+
+1. 在[飞书开放平台](https://open.feishu.cn/)创建企业自建应用
+2. 获取 App ID、App Secret、Verification Token、Encrypt Key
+3. 配置环境变量：
+
+```env
+FEISHU_APP_ID=cli_xxxx
+FEISHU_APP_SECRET=your_app_secret
+FEISHU_VERIFY_TOKEN=your_verify_token
+FEISHU_ENCRYPT_KEY=your_encrypt_key
+```
+
+4. 在 `config/default.yaml` 中启用 IM：
+
+```yaml
+im:
+  enabled: true
+  platform: feishu
+  feishu:
+    appId:             ${FEISHU_APP_ID}
+    appSecret:         ${FEISHU_APP_SECRET}
+    verificationToken: ${FEISHU_VERIFY_TOKEN}
+    encryptKey:        ${FEISHU_ENCRYPT_KEY}
+  defaultRole: user      # 新 IM 用户的默认角色
+  hitlTimeoutMinutes: 30 # HitL 审批超时时间（分钟）
+```
+
+5. 在飞书开放平台配置事件订阅 Webhook URL：`https://your-domain.com/api/im/inbound`
+6. 在 Settings 页面 → IM 集成 → 管理用户白名单（启用/禁用 IM 用户）
+
+### 钉钉集成
+
+钉钉适配器待接入，配置结构类似飞书，`platform: dingtalk`，支持 HMAC 签名验证。
+
+---
+
+## 审计日志配置（Phase 20）
+
+```yaml
+# config/default.yaml
+audit:
+  enabled: true
+  retentionDays: 90    # 审计记录保留天数（超期自动清理）
+```
+
+### 审计日志表
+
+| 表名 | 内容 |
+|------|------|
+| `execution_records` | 所有 Agent 执行记录（输入/输出/耗时/状态） |
+| `audit_approvals` | HitL 审批记录（工具名/审批人/结论/理由） |
+| `scheduled_task_runs` | 定时任务执行历史 |
+
+### 访问审计数据
+
+```bash
+# REST API 导出（CSV）
+curl http://localhost:3000/api/audit/export?format=csv \
+  -o audit_$(date +%Y%m%d).csv
+
+# Web UI
+# 访问 /audit → 执行记录 / 审批记录 / 合规报告
+```
+
+### 数据保留策略建议
+
+| 场景 | `retentionDays` | 说明 |
+|------|----------------|------|
+| 开发测试 | 7 | 减少磁盘占用 |
+| 一般企业 | 90 | 满足常规审计 |
+| 金融/医疗 | 365+ | 监管合规要求 |

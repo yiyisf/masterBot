@@ -63,10 +63,11 @@ describe('ContextManager', () => {
 
             const result = await cm.trimMessages(system, history, current);
 
-            expect(result).toHaveLength(4); // system + 2 history + current
-            expect(result[0].role).toBe('system');
-            expect(result[1].content).toBe('Hi');
-            expect(result[3].content).toBe('New question');
+            expect(result.messages).toHaveLength(4); // system + 2 history + current
+            expect(result.droppedCount).toBe(0);
+            expect(result.messages[0].role).toBe('system');
+            expect(result.messages[1].content).toBe('Hi');
+            expect(result.messages[3].content).toBe('New question');
         });
 
         it('should trim when history exceeds budget', async () => {
@@ -83,10 +84,11 @@ describe('ContextManager', () => {
             const result = await cm.trimMessages(system, history, current);
 
             // Should be fewer messages than original
-            expect(result.length).toBeLessThan(history.length + 2);
+            expect(result.messages.length).toBeLessThan(history.length + 2);
+            expect(result.droppedCount).toBeGreaterThan(0);
             // Should keep system and current
-            expect(result[0].role).toBe('system');
-            expect(result[result.length - 1].content).toBe('Latest');
+            expect(result.messages[0].role).toBe('system');
+            expect(result.messages[result.messages.length - 1].content).toBe('Latest');
         });
 
         it('should generate LLM summary when adapter provided', async () => {
@@ -111,8 +113,9 @@ describe('ContextManager', () => {
 
             // Should have called LLM for summary
             expect(mockLLM.chat).toHaveBeenCalled();
+            expect(result.droppedCount).toBeGreaterThan(0);
             // Should contain a summary message
-            const summaryMsg = result.find(m =>
+            const summaryMsg = result.messages.find(m =>
                 typeof m.content === 'string' && m.content.includes('摘要')
             );
             expect(summaryMsg).toBeDefined();
@@ -136,8 +139,9 @@ describe('ContextManager', () => {
             const result = await cm.trimMessages(system, history, current, mockLLM as LLMAdapter);
 
             // Should still work with fallback
-            expect(result.length).toBeGreaterThan(0);
-            expect(result[0].role).toBe('system');
+            expect(result.messages.length).toBeGreaterThan(0);
+            expect(result.droppedCount).toBeGreaterThan(0);
+            expect(result.messages[0].role).toBe('system');
         });
 
         it('should handle empty history', async () => {
@@ -147,9 +151,10 @@ describe('ContextManager', () => {
 
             const result = await cm.trimMessages(system, [], current);
 
-            expect(result).toHaveLength(2);
-            expect(result[0].role).toBe('system');
-            expect(result[1].content).toBe('First message');
+            expect(result.messages).toHaveLength(2);
+            expect(result.droppedCount).toBe(0);
+            expect(result.messages[0].role).toBe('system');
+            expect(result.messages[1].content).toBe('First message');
         });
     });
 });

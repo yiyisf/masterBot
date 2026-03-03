@@ -25,6 +25,9 @@ import {
     RefreshCw,
     BarChart2,
     MessageSquare,
+    Plus,
+    Trash2,
+    ChevronDown,
 } from "lucide-react";
 import { fetchApi } from "@/lib/api";
 import { toast } from "sonner";
@@ -57,6 +60,24 @@ interface AgentConfig {
 }
 
 type TestStatus = "idle" | "testing" | "ok" | "error";
+type ProviderType = "openai" | "anthropic" | "gemini" | "ollama" | "custom";
+
+const PROVIDER_META: Record<ProviderType, { label: string; color: string; defaultBaseUrl: string; defaultModel: string }> = {
+    openai:    { label: "OpenAI",    color: "text-green-700 bg-green-50 border-green-200",   defaultBaseUrl: "https://api.openai.com/v1",                                      defaultModel: "gpt-4o" },
+    anthropic: { label: "Anthropic", color: "text-orange-700 bg-orange-50 border-orange-200", defaultBaseUrl: "https://api.anthropic.com",                                     defaultModel: "claude-3-5-sonnet-20241022" },
+    gemini:    { label: "Gemini",    color: "text-blue-700 bg-blue-50 border-blue-200",       defaultBaseUrl: "https://generativelanguage.googleapis.com/v1beta/openai/",     defaultModel: "gemini-2.0-flash" },
+    ollama:    { label: "Ollama",    color: "text-purple-700 bg-purple-50 border-purple-200", defaultBaseUrl: "http://localhost:11434/v1",                                     defaultModel: "llama3.2" },
+    custom:    { label: "Custom",    color: "text-gray-700 bg-gray-50 border-gray-200",        defaultBaseUrl: "",                                                              defaultModel: "" },
+};
+
+function ProviderTypeBadge({ type }: { type: string }) {
+    const meta = PROVIDER_META[type as ProviderType] ?? PROVIDER_META.custom;
+    return (
+        <span className={`text-[10px] px-1.5 py-0.5 rounded border font-medium ${meta.color}`}>
+            {meta.label}
+        </span>
+    );
+}
 
 interface DailyUsage { date: string; prompt_tokens: number; completion_tokens: number; total_tokens: number; }
 interface ModelUsage { model: string; prompt_tokens: number; completion_tokens: number; total_tokens: number; calls: number; }
@@ -228,6 +249,15 @@ export default function SettingsPage() {
     const [usageDays, setUsageDays] = useState(7);
     const [loadingUsage, setLoadingUsage] = useState(false);
 
+    // Add provider dialog
+    const [addProviderOpen, setAddProviderOpen] = useState(false);
+    const [newProviderName, setNewProviderName] = useState("");
+    const [newProviderType, setNewProviderType] = useState<ProviderType>("openai");
+
+    // Ollama model detection
+    const [ollamaModels, setOllamaModels] = useState<Record<string, string[]>>({});
+    const [loadingOllama, setLoadingOllama] = useState<Record<string, boolean>>({});
+
     // ─ load all config sections
     const loadAll = useCallback(async () => {
         setLoading(true);
@@ -278,6 +308,66 @@ export default function SettingsPage() {
                 },
             };
         });
+    };
+
+    const addProvider = () => {
+        const name = newProviderName.trim();
+        if (!name) { toast.error("请输入 Provider 名称"); return; }
+        if (models?.providers[name]) { toast.error(`Provider "${name}" 已存在`); return; }
+        const meta = PROVIDER_META[newProviderType];
+        setModels(prev => {
+            if (!prev) return prev;
+            return {
+                ...prev,
+                providers: {
+                    ...prev.providers,
+                    [name]: {
+                        type: newProviderType,
+                        baseUrl: meta.defaultBaseUrl,
+                        apiKey: "",
+                        model: meta.defaultModel,
+                        maxTokens: 4096,
+                    },
+                },
+            };
+        });
+        setNewProviderName("");
+        setNewProviderType("openai");
+        setAddProviderOpen(false);
+        toast.success(`已添加 Provider "${name}"，请填写 API Key 后保存`);
+    };
+
+    const deleteProvider = (name: string) => {
+        if (models?.default === name) {
+            toast.error("无法删除当前默认 Provider，请先切换默认 Provider");
+            return;
+        }
+        setModels(prev => {
+            if (!prev) return prev;
+            const { [name]: _, ...rest } = prev.providers;
+            return { ...prev, providers: rest };
+        });
+        toast.success(`已移除 Provider "${name}"`);
+    };
+
+    const detectOllamaModels = async (providerName: string) => {
+        const p = models?.providers[providerName];
+        if (!p) return;
+        const baseUrl = p.baseUrl || "http://localhost:11434/v1";
+        const ollamaBase = baseUrl.replace(/\/v1\/?$/, "");
+        setLoadingOllama(prev => ({ ...prev, [providerName]: true }));
+        try {
+            const res = await fetch(`${ollamaBase}/api/tags`);
+            if (!res.ok) throw new Error(`HTTP ${res.status}`);
+            const data = await res.json();
+            const names: string[] = (data.models ?? []).map((m: any) => m.name as string);
+            setOllamaModels(prev => ({ ...prev, [providerName]: names }));
+            if (names.length === 0) toast.info("未检测到本地 Ollama 模型");
+        } catch (err: any) {
+            toast.error(`检测 Ollama 模型失败: ${err.message}`);
+        } finally {
+            setLoadingOllama(prev => ({ ...prev, [providerName]: false }));
+        }
     };
 
     const testConnection = async (providerName: string) => {
@@ -427,6 +517,10 @@ export default function SettingsPage() {
                                     <CardDescription>LLM 提供商连接参数，修改后立即热重载</CardDescription>
                                 </div>
                             </div>
+                            <Button size="sm" variant="outline" onClick={() => setAddProviderOpen(v => !v)}>
+                                <Plus className="w-3.5 h-3.5 mr-1" />
+                                添加 Provider
+                            </Button>
                         </div>
                     </CardHeader>
                     <CardContent className="space-y-6">
@@ -446,6 +540,42 @@ export default function SettingsPage() {
                             </select>
                         </div>
 
+                        {/* Add Provider inline form */}
+                        {addProviderOpen && (
+                            <div className="rounded-lg border border-dashed p-4 space-y-3 bg-muted/30">
+                                <p className="text-sm font-medium">新增 Provider</p>
+                                <div className="grid grid-cols-2 gap-3">
+                                    <div className="space-y-1.5">
+                                        <label className="text-xs text-muted-foreground">Provider 名称（标识符）</label>
+                                        <input
+                                            className="w-full h-9 px-3 rounded-md border bg-background text-sm"
+                                            placeholder="my-openai"
+                                            value={newProviderName}
+                                            onChange={e => setNewProviderName(e.target.value)}
+                                        />
+                                    </div>
+                                    <div className="space-y-1.5">
+                                        <label className="text-xs text-muted-foreground">Provider 类型</label>
+                                        <select
+                                            className="w-full h-9 px-3 rounded-md border bg-background text-sm"
+                                            value={newProviderType}
+                                            onChange={e => setNewProviderType(e.target.value as ProviderType)}
+                                        >
+                                            {Object.entries(PROVIDER_META).map(([k, v]) => (
+                                                <option key={k} value={k}>{v.label}</option>
+                                            ))}
+                                        </select>
+                                    </div>
+                                </div>
+                                <div className="flex gap-2 justify-end">
+                                    <Button size="sm" variant="ghost" onClick={() => setAddProviderOpen(false)}>取消</Button>
+                                    <Button size="sm" onClick={addProvider}>
+                                        <Plus className="w-3.5 h-3.5 mr-1" />确认添加
+                                    </Button>
+                                </div>
+                            </div>
+                        )}
+
                         <Separator />
 
                         {/* Per-provider settings */}
@@ -456,9 +586,10 @@ export default function SettingsPage() {
                             return (
                                 <div key={providerName} className="space-y-4">
                                     <div className="flex items-center justify-between">
-                                        <div className="flex items-center gap-2">
+                                        <div className="flex items-center gap-2 flex-wrap">
                                             <Bot className="w-4 h-4 text-muted-foreground" />
                                             <span className="font-medium">{providerName}</span>
+                                            <ProviderTypeBadge type={p?.type ?? "custom"} />
                                             {models?.default === providerName && (
                                                 <Badge variant="default" className="text-[10px] px-1.5 py-0">Active</Badge>
                                             )}
@@ -472,6 +603,16 @@ export default function SettingsPage() {
                                                 disabled={status === "testing"}
                                             >
                                                 测试连接
+                                            </Button>
+                                            <Button
+                                                size="sm"
+                                                variant="ghost"
+                                                className="text-destructive hover:text-destructive"
+                                                disabled={models?.default === providerName}
+                                                title={models?.default === providerName ? "无法删除默认 Provider" : `删除 ${providerName}`}
+                                                onClick={() => deleteProvider(providerName)}
+                                            >
+                                                <Trash2 className="w-3.5 h-3.5" />
                                             </Button>
                                         </div>
                                     </div>
@@ -533,6 +674,41 @@ export default function SettingsPage() {
                                             </button>
                                         </div>
                                     </div>
+
+                                    {/* Ollama 本地模型检测 */}
+                                    {p?.type === "ollama" && (
+                                        <div className="space-y-2">
+                                            <div className="flex items-center gap-2">
+                                                <Button
+                                                    size="sm"
+                                                    variant="outline"
+                                                    onClick={() => detectOllamaModels(providerName)}
+                                                    disabled={loadingOllama[providerName]}
+                                                >
+                                                    {loadingOllama[providerName]
+                                                        ? <Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" />
+                                                        : <ChevronDown className="w-3.5 h-3.5 mr-1.5" />}
+                                                    检测本地模型
+                                                </Button>
+                                                {ollamaModels[providerName] && (
+                                                    <span className="text-xs text-muted-foreground">
+                                                        共 {ollamaModels[providerName].length} 个模型
+                                                    </span>
+                                                )}
+                                            </div>
+                                            {ollamaModels[providerName]?.length > 0 && (
+                                                <select
+                                                    className="w-full h-9 px-3 rounded-md border bg-background text-sm"
+                                                    value={p.model}
+                                                    onChange={e => updateProvider(providerName, "model", e.target.value)}
+                                                >
+                                                    {ollamaModels[providerName].map(m => (
+                                                        <option key={m} value={m}>{m}</option>
+                                                    ))}
+                                                </select>
+                                            )}
+                                        </div>
+                                    )}
 
                                     {idx < providerNames.length - 1 && <Separator />}
                                 </div>

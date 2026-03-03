@@ -10,26 +10,45 @@ export interface ApiResponse<T> {
     error?: string;
 }
 
-export async function fetchApi<T>(path: string, options?: RequestInit): Promise<T> {
+export interface FetchApiOptions extends RequestInit {
+    timeout?: number;
+}
+
+export async function fetchApi<T>(path: string, options?: FetchApiOptions): Promise<T> {
+    const { timeout = 60000, ...fetchOptions } = options || {};
+
     const headers: Record<string, string> = {
-        ...(options?.headers as Record<string, string>),
+        ...(fetchOptions.headers as Record<string, string>),
     };
 
-    if (options?.body) {
+    if (fetchOptions.body) {
         headers['Content-Type'] = 'application/json';
     }
 
-    const response = await fetch(`${BASE_URL}${path}`, {
-        ...options,
-        headers,
-    });
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), timeout);
 
-    if (!response.ok) {
-        const error = await response.json().catch(() => ({ error: 'Unknown error' }));
-        throw new Error(error.error || response.statusText);
+    try {
+        const response = await fetch(`${BASE_URL}${path}`, {
+            ...fetchOptions,
+            headers,
+            signal: controller.signal,
+        });
+
+        if (!response.ok) {
+            const error = await response.json().catch(() => ({ error: 'Unknown error' }));
+            throw new Error(error.error || response.statusText);
+        }
+
+        return response.json();
+    } catch (error: any) {
+        if (error.name === 'AbortError') {
+            throw new Error('请求超时，请检查网络或后端服务 (Request Timeout)');
+        }
+        throw error;
+    } finally {
+        clearTimeout(timeoutId);
     }
-
-    return response.json();
 }
 
 /**

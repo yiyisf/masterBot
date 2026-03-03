@@ -33,6 +33,19 @@ export class LLMFactory {
                 return new OpenAIAdapter(config);
             case 'anthropic':
                 return new AnthropicAdapter(config);
+            case 'gemini':
+                // Gemini 支持 OpenAI 兼容 API
+                return new OpenAIAdapter({
+                    ...config,
+                    baseUrl: config.baseUrl || 'https://generativelanguage.googleapis.com/v1beta/openai/',
+                });
+            case 'ollama':
+                // Ollama 支持 OpenAI 兼容 API
+                return new OpenAIAdapter({
+                    ...config,
+                    baseUrl: config.baseUrl || 'http://localhost:11434/v1',
+                    apiKey: config.apiKey || 'ollama',
+                });
             case 'custom':
                 // 自定义适配器可以在这里扩展
                 // 目前默认使用 OpenAI 兼容实现
