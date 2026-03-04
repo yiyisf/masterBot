@@ -17,6 +17,7 @@ import { DAGExecutor } from './dag-executor.js';
 import { waitForApproval } from './interrupt-coordinator.js';
 import { spanRecorder } from './trace.js';
 import type { MemoryRouter } from '../memory/memory-router.js';
+import { classifyComplexity, type ReasoningTier } from './complexity-classifier.js';
 
 /**
  * Detect whether a tool call requires human confirmation before execution.
@@ -270,6 +271,7 @@ export class Agent {
     private skillGenerator?: any;
     private orchestrator?: any;
     private knowledgeGraph?: any;
+    private deepThinkingProvider?: () => LLMAdapter;
 
     constructor(options: {
         llm: LLMAdapter | (() => LLMAdapter);
@@ -283,6 +285,7 @@ export class Agent {
         skillGenerator?: any;
         orchestrator?: any;
         knowledgeGraph?: any;
+        deepThinkingProvider?: () => LLMAdapter;
     }) {
         this.llmGetter = typeof options.llm === 'function' ? options.llm : () => options.llm as LLMAdapter;
         this.skillRegistry = options.skillRegistry;
@@ -294,6 +297,7 @@ export class Agent {
         this.skillGenerator = options.skillGenerator;
         this.orchestrator = options.orchestrator;
         this.knowledgeGraph = options.knowledgeGraph;
+        this.deepThinkingProvider = options.deepThinkingProvider;
         this.contextManager = new ContextManager({
             maxTokens: options.maxContextTokens,
             logger: options.logger,
@@ -380,11 +384,33 @@ export class Agent {
         if (this.longTermMemory) {
             builtinTools.push(MEMORY_REMEMBER_TOOL, MEMORY_RECALL_TOOL);
         }
-        const tools = [...builtinTools, ...externalTools];
+        let tools = [...builtinTools, ...externalTools];
+
+        // ─────────────────────────────────────────────────────────────────
+        // Adaptive AI Thinking: Route complexity dynamically
+        // ─────────────────────────────────────────────────────────────────
+        let activeMaxIterations = this.maxIterations;
+        let activeLlm = this.llm;
+
+        const tier = classifyComplexity(inputText, externalTools.length);
+        if (tier === 1) {
+            this.logger.info(`[AdaptiveThinking] Routing to Tier 1: Fast direct reply. Skipping tools.`);
+            activeMaxIterations = 1;
+            tools = []; // Don't give it tools to avoid overthinking simple chats
+        } else if (tier === 3) {
+            this.logger.info(`[AdaptiveThinking] Routing to Tier 3: Deep thinking required.`);
+            activeMaxIterations = 25; // Extended patience
+            if (this.deepThinkingProvider) {
+                this.logger.info(`[AdaptiveThinking] Switching to extended deep-thinking LLM.`);
+                activeLlm = this.deepThinkingProvider();
+            }
+        } else {
+            this.logger.debug(`[AdaptiveThinking] Routing to Tier 2: Standard workflow.`);
+        }
 
         let iteration = 0;
 
-        while (iteration < this.maxIterations) {
+        while (iteration < activeMaxIterations) {
             iteration++;
             this.logger.debug(`Agent iteration ${iteration}`);
 
@@ -393,7 +419,7 @@ export class Agent {
 
             // 调用 LLM (流式获取内容和工具调用)
             try {
-                for await (const chunk of this.llm.chatStream(messages, { tools, abortSignal: context.abortSignal })) {
+                for await (const chunk of activeLlm.chatStream(messages, { tools, abortSignal: context.abortSignal })) {
                     if (chunk.type === 'content' && chunk.content) {
                         fullContent += chunk.content;
                         yield {
@@ -428,7 +454,7 @@ export class Agent {
                         timestamp: new Date(),
                     } satisfies ExecutionStep;
                     // 重试本轮
-                    for await (const chunk of this.llm.chatStream(messages, { tools, abortSignal: context.abortSignal })) {
+                    for await (const chunk of activeLlm.chatStream(messages, { tools, abortSignal: context.abortSignal })) {
                         if (chunk.type === 'content' && chunk.content) {
                             fullContent += chunk.content;
                             yield {
@@ -760,7 +786,7 @@ export class Agent {
             }
         }
 
-        if (iteration >= this.maxIterations) {
+        if (iteration >= activeMaxIterations) {
             const errMsg = '抱歉，我已达到最大执行步骤限制。请尝试将任务拆分为更小的步骤。';
             spanRecorder.endSpan(agentSpanId, undefined, errMsg);
             yield {
