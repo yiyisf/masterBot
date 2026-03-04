@@ -14,7 +14,7 @@ export interface OsSandboxResult {
     stdout: string;
     stderr: string;
     exitCode: number;
-    sandboxMode: 'sandbox-exec' | 'bwrap' | 'none';
+    sandboxMode: 'sandbox-exec' | 'bwrap' | 'windows-restricted' | 'none';
 }
 
 /**
@@ -95,6 +95,10 @@ export class OsSandboxExecutor {
             return this.execMacOS(command, cwd, timeout);
         }
 
+        if (this.os === 'win32') {
+            return this.execWindows(command, cwd, timeout);
+        }
+
         if (this.os === 'linux') {
             if (this.hasBwrap === null) {
                 this.hasBwrap = await binExists('bwrap');
@@ -123,6 +127,17 @@ export class OsSandboxExecutor {
     private async execBwrap(command: string, cwd: string, timeout: number, allowNetwork: boolean): Promise<OsSandboxResult> {
         this.logger?.info(`[OsSandbox] Linux bwrap (net=${allowNetwork}): ${command}`);
         return this.spawnWrapped('bwrap', buildBwrapArgs(command, cwd, allowNetwork), cwd, timeout, 'bwrap');
+    }
+
+    private async execWindows(command: string, cwd: string, timeout: number): Promise<OsSandboxResult> {
+        this.logger?.info(`[OsSandbox] Windows restricted PowerShell: ${command}`);
+        const args = [
+            '-NoProfile',
+            '-NonInteractive',
+            '-ExecutionPolicy', 'Restricted',
+            '-Command', command
+        ];
+        return this.spawnWrapped('powershell.exe', args, cwd, timeout, 'windows-restricted');
     }
 
     private async execDirect(command: string, cwd: string, timeout: number): Promise<OsSandboxResult> {
