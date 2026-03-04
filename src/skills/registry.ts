@@ -4,6 +4,7 @@ import { join, dirname, basename } from 'path';
 import { glob } from 'glob';
 import matter from 'gray-matter';
 import type { Skill, SkillMetadata, SkillAction, SkillContext, SkillSource, ToolDefinition, Logger } from '../types.js';
+import { deepRedact } from '../utils/secret-ref.js';
 
 /**
  * SKILL.md 解析器
@@ -231,8 +232,9 @@ export class SkillRegistry {
 
             const found = tools.find(t => t.function.name === toolName);
             if (found) {
-                // 找到了就直接执行，执行错误自然传播（不 catch）
-                return await source.execute(toolName, params, context);
+                // 找到了就直接执行，对结果进行脱敏，执行错误自然传播（不 catch）
+                const rawResult = await source.execute(toolName, params, context);
+                return deepRedact(rawResult);
             }
         }
 
