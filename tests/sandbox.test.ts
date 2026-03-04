@@ -138,8 +138,8 @@ describe('OsSandboxExecutor', () => {
     it('reports the sandbox mode used', async () => {
         const executor = new OsSandboxExecutor();
         const result = await executor.execute('echo mode-test');
-        // On macOS → 'sandbox-exec', Linux with bwrap → 'bwrap', else 'none'
-        expect(['sandbox-exec', 'bwrap', 'none']).toContain(result.sandboxMode);
+        // On macOS → 'sandbox-exec', Linux with bwrap → 'bwrap', Windows → 'windows-restricted', else 'none'
+        expect(['sandbox-exec', 'bwrap', 'windows-restricted', 'none']).toContain(result.sandboxMode);
     });
 
     it('returns exitCode 1 on invalid command', async () => {
@@ -183,5 +183,13 @@ describe('OsSandboxExecutor', () => {
         }
 
         expect(result.exitCode).not.toBe(0);
+    });
+
+    it('isolates PowerShell profiles on Windows (restricted)', async () => {
+        if (platform() !== 'win32') return; // skip on non-Windows
+        const executor = new OsSandboxExecutor();
+        const result = await executor.execute('Write-Output "windows-sandbox-test"');
+        expect(result.sandboxMode).toBe('windows-restricted');
+        expect(result.stdout).toContain('windows-sandbox-test');
     });
 });
