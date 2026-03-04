@@ -2,6 +2,7 @@ import { spawn } from 'child_process';
 import { platform } from 'os';
 import type { SkillContext } from '../../../src/types.js';
 import { CommandSandbox, type SandboxConfig } from '../../../src/skills/sandbox.js';
+import { OsSandboxExecutor } from '../../../src/skills/os-sandbox.js';
 import { expandPath } from '../../../src/skills/utils.js';
 
 function getSandbox(ctx: SkillContext): CommandSandbox | null {
@@ -34,7 +35,9 @@ function getShellConfig(): { shell: string | boolean; hint: string } {
 
 /**
  * 执行 Shell 命令（跨平台：Windows PowerShell / Unix bash）
- * 使用 spawn 替代 exec，支持 EPERM/EACCES 友好错误提示
+ * 双层防御安全模型：
+ *   Layer 1 — CommandSandbox (regex blocklist/allowlist) — 快速拦截明显恶意命令
+ *   Layer 2 — OsSandboxExecutor (sandbox-exec / bwrap) — 内核级隔离执行容器
  */
 export async function execute(
     ctx: SkillContext,
@@ -44,7 +47,7 @@ export async function execute(
     let { command } = params;
     const cwd = params.cwd ? expandPath(params.cwd) : process.cwd();
 
-    // Sandbox check
+    // Layer 1: Application-level regex sandbox check (fast path)
     const sandbox = getSandbox(ctx);
     if (sandbox) {
         const check = sandbox.validate(command);
@@ -53,14 +56,29 @@ export async function execute(
         }
     }
 
-    const { shell, hint } = getShellConfig();
-    const isWin = platform() === 'win32';
-
     // Windows: python/python3 命令自动补 .exe 避免 AppX 虚拟化 EPERM
-    if (isWin && /^python3?\s/.test(command)) {
+    if (platform() === 'win32' && /^python3?\s/.test(command)) {
         command = command.replace(/^python3?\s/, 'python.exe ');
     }
 
+    ctx.logger.info(`Executing command: ${command}`);
+
+    // Layer 2: OS-level sandbox execution (macOS sandbox-exec / Linux bwrap)
+    // Windows falls back to direct execution (Layer 1 is the only protection there)
+    if (platform() !== 'win32') {
+        const osSandbox = new OsSandboxExecutor(ctx.logger);
+        const result = await osSandbox.execute(command, { cwd, timeout });
+        ctx.logger.info(`[OsSandbox] mode=${result.sandboxMode} exitCode=${result.exitCode}`);
+        return {
+            stdout: result.stdout,
+            stderr: result.stderr,
+            exitCode: result.exitCode,
+            platform: platform(),
+        };
+    }
+
+    // Windows: direct spawn fallback
+    const { shell, hint } = getShellConfig();
     ctx.logger.info(`Executing command [${hint}]: ${command}`);
 
     return new Promise((resolve) => {
@@ -104,18 +122,11 @@ export async function execute(
             if (err.code === 'ENOENT') {
                 errMsg = `命令未找到: ${command.split(' ')[0]}。请确认已安装并在 PATH 中。`;
             } else if (err.code === 'EPERM' || err.code === 'EACCES') {
-                errMsg = isWin
-                    ? `权限不足，无法执行: ${command}。\n请以管理员身份运行，或检查执行策略: Set-ExecutionPolicy RemoteSigned`
-                    : `权限不足，无法执行: ${command}。\n请检查文件权限: chmod +x <file>`;
+                errMsg = `权限不足，无法执行: ${command}。\n请检查执行策略: Set-ExecutionPolicy RemoteSigned`;
             } else {
                 errMsg = err.message;
             }
-            resolve({
-                stdout: '',
-                stderr: errMsg,
-                exitCode: 1,
-                platform: platform(),
-            });
+            resolve({ stdout: '', stderr: errMsg, exitCode: 1, platform: platform() });
         });
     });
 }
