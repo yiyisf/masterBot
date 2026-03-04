@@ -238,55 +238,55 @@ export default function SkillsPage() {
                         {skills.map((skill) => {
                             const isDegraded = skill.status === 'degraded';
                             return (
-                            <Card key={skill.name} className={isDegraded ? 'border-red-200 dark:border-red-900/40' : ''}>
-                                <CardHeader className="flex flex-row items-start justify-between space-y-0">
-                                    <div className="space-y-1 flex-1 min-w-0">
-                                        <CardTitle className="flex items-center gap-2 flex-wrap">
-                                            <Puzzle className="w-4 h-4 text-primary shrink-0" />
-                                            {skill.name}
-                                            <Badge variant="secondary" className="text-[10px]">{skill.version}</Badge>
-                                            {isDegraded && (
-                                                <Badge variant="destructive" className="text-[10px]">不可用</Badge>
-                                            )}
-                                        </CardTitle>
-                                        <CardDescription>{skill.description}</CardDescription>
-                                    </div>
-                                    <Switch checked={!isDegraded} disabled />
-                                </CardHeader>
-                                <CardContent>
-                                    <div className="space-y-3">
-                                        <div className="flex flex-wrap gap-2">
-                                            {skill.actions.map((action: string) => (
-                                                <Badge key={action} variant="outline" className="font-mono text-[10px] flex gap-1 items-center">
-                                                    <Code className="w-3 h-3" />
-                                                    {action}
-                                                </Badge>
-                                            ))}
+                                <Card key={skill.name} className={isDegraded ? 'border-red-200 dark:border-red-900/40' : ''}>
+                                    <CardHeader className="flex flex-row items-start justify-between space-y-0">
+                                        <div className="space-y-1 flex-1 min-w-0">
+                                            <CardTitle className="flex items-center gap-2 flex-wrap">
+                                                <Puzzle className="w-4 h-4 text-primary shrink-0" />
+                                                {skill.name}
+                                                <Badge variant="secondary" className="text-[10px]">{skill.version}</Badge>
+                                                {isDegraded && (
+                                                    <Badge variant="destructive" className="text-[10px]">不可用</Badge>
+                                                )}
+                                            </CardTitle>
+                                            <CardDescription>{skill.description}</CardDescription>
                                         </div>
-                                        {isDegraded && skill.loadError && (
-                                            <div className="flex items-start gap-2 p-2 rounded-md bg-red-50 dark:bg-red-950/20 border border-red-200 dark:border-red-900/40 text-xs text-red-700 dark:text-red-400">
-                                                <AlertCircle className="w-3.5 h-3.5 shrink-0 mt-0.5" />
-                                                <span className="break-all">{skill.loadError}</span>
+                                        <Switch checked={!isDegraded} disabled />
+                                    </CardHeader>
+                                    <CardContent>
+                                        <div className="space-y-3">
+                                            <div className="flex flex-wrap gap-2">
+                                                {skill.actions.map((action: string) => (
+                                                    <Badge key={action} variant="outline" className="font-mono text-[10px] flex gap-1 items-center">
+                                                        <Code className="w-3 h-3" />
+                                                        {action}
+                                                    </Badge>
+                                                ))}
                                             </div>
-                                        )}
-                                        {isDegraded && skill.dependencies && (
-                                            <Button
-                                                size="sm"
-                                                variant="outline"
-                                                className="gap-1.5 text-xs border-red-300 text-red-700 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-950/20"
-                                                onClick={() => repairSkill(skill.name)}
-                                                disabled={repairing === skill.name}
-                                            >
-                                                {repairing === skill.name
-                                                    ? <Loader2 className="w-3 h-3 animate-spin" />
-                                                    : <Wrench className="w-3 h-3" />
-                                                }
-                                                一键安装依赖
-                                            </Button>
-                                        )}
-                                    </div>
-                                </CardContent>
-                            </Card>
+                                            {isDegraded && skill.loadError && (
+                                                <div className="flex items-start gap-2 p-2 rounded-md bg-red-50 dark:bg-red-950/20 border border-red-200 dark:border-red-900/40 text-xs text-red-700 dark:text-red-400">
+                                                    <AlertCircle className="w-3.5 h-3.5 shrink-0 mt-0.5" />
+                                                    <span className="break-all">{skill.loadError}</span>
+                                                </div>
+                                            )}
+                                            {isDegraded && skill.dependencies && (
+                                                <Button
+                                                    size="sm"
+                                                    variant="outline"
+                                                    className="gap-1.5 text-xs border-red-300 text-red-700 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-950/20"
+                                                    onClick={() => repairSkill(skill.name)}
+                                                    disabled={repairing === skill.name}
+                                                >
+                                                    {repairing === skill.name
+                                                        ? <Loader2 className="w-3 h-3 animate-spin" />
+                                                        : <Wrench className="w-3 h-3" />
+                                                    }
+                                                    一键安装依赖
+                                                </Button>
+                                            )}
+                                        </div>
+                                    </CardContent>
+                                </Card>
                             );
                         })}
                         {skills.length === 0 && (
@@ -349,6 +349,22 @@ export default function SkillsPage() {
                                                     try {
                                                         const args = JSON.parse(e.target.value);
                                                         setNewConfig({ ...newConfig, args: Array.isArray(args) ? args : [] });
+                                                    } catch { }
+                                                }}
+                                            />
+                                            <Label className="mt-2">Environment Variables (JSON Object, optional)</Label>
+                                            <p className="text-xs text-muted-foreground mb-1">例如：{`{"GITHUB_TOKEN": "ghp_xxx..."}`}</p>
+                                            <Textarea
+                                                placeholder='{"GITHUB_TOKEN": "ghp_xxx..."}'
+                                                rows={2}
+                                                onChange={e => {
+                                                    if (!e.target.value.trim()) {
+                                                        setNewConfig({ ...newConfig, env: undefined });
+                                                        return;
+                                                    }
+                                                    try {
+                                                        const env = JSON.parse(e.target.value);
+                                                        setNewConfig({ ...newConfig, env: typeof env === 'object' && !Array.isArray(env) ? env : undefined });
                                                     } catch { }
                                                 }}
                                             />
