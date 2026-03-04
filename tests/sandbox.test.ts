@@ -1,5 +1,9 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { CommandSandbox, type SandboxConfig } from '../src/skills/sandbox.js';
+import { OsSandboxExecutor } from '../src/skills/os-sandbox.js';
+import { platform } from 'os';
+
+// ─── Existing CommandSandbox tests (unchanged) ──────────────────────────────
 
 describe('CommandSandbox', () => {
     describe('blocklist mode', () => {
@@ -118,5 +122,54 @@ describe('CommandSandbox', () => {
             expect(sandbox.validate('rm -rf /').allowed).toBe(true); // default blocklist not applied
             expect(sandbox.validate('npm install').allowed).toBe(true);
         });
+    });
+});
+
+// ─── OsSandboxExecutor tests ────────────────────────────────────────────────
+
+describe('OsSandboxExecutor', () => {
+    it('executes a simple echo command', async () => {
+        const executor = new OsSandboxExecutor();
+        const result = await executor.execute('echo hello-sandbox');
+        expect(result.stdout.trim()).toBe('hello-sandbox');
+        expect(result.exitCode).toBe(0);
+    });
+
+    it('reports the sandbox mode used', async () => {
+        const executor = new OsSandboxExecutor();
+        const result = await executor.execute('echo mode-test');
+        // On macOS → 'sandbox-exec', Linux with bwrap → 'bwrap', else 'none'
+        expect(['sandbox-exec', 'bwrap', 'none']).toContain(result.sandboxMode);
+    });
+
+    it('returns exitCode 1 on invalid command', async () => {
+        const executor = new OsSandboxExecutor();
+        const result = await executor.execute('__nonexistent_cmd_12345__');
+        expect(result.exitCode).not.toBe(0);
+    });
+
+    it('times out long-running commands', async () => {
+        const executor = new OsSandboxExecutor();
+        const result = await executor.execute('sleep 60', { timeout: 500 });
+        expect(result.exitCode).toBe(124); // timeout exit code
+    });
+
+    it('isolates filesystem writes on macOS (sandbox-exec)', async () => {
+        if (platform() !== 'darwin') return; // skip on non-macOS
+        const executor = new OsSandboxExecutor();
+        // Attempt to write outside /tmp — should fail in sandbox
+        const result = await executor.execute('touch /usr/local/test-sandboxed.txt');
+        expect(result.exitCode).not.toBe(0);
+    });
+
+    it('isolates network on Linux (bwrap --unshare-net)', async () => {
+        if (platform() !== 'linux') return; // skip on non-Linux
+        const executor = new OsSandboxExecutor();
+        // Curl should fail with no network
+        const result = await executor.execute('curl -sS --max-time 2 http://example.com', {
+            allowNetwork: false,
+            timeout: 5000,
+        });
+        expect(result.exitCode).not.toBe(0);
     });
 });
