@@ -368,11 +368,26 @@ export class Agent {
         );
         const messages = trimResult.messages;
 
-        // 如果发生压缩，通知前端
+        // 如果发生压缩，通知前端，并执行 Pre-Compaction Flush（持久化摘要）
         if (trimResult.droppedCount > 0) {
+            const summaryStr = trimResult.summaryText ?? `已压缩 ${trimResult.droppedCount} 条历史消息`;
+
+            if (this.longTermMemory && trimResult.summaryText) {
+                try {
+                    await this.longTermMemory.remember(
+                        `[AutoFlush] ${trimResult.summaryText}`,
+                        { tags: ['auto-flush', context.sessionId] },
+                        context.sessionId
+                    );
+                    this.logger.info(`[PreCompactionFlush] Saved summary to long-term memory for session ${context.sessionId}`);
+                } catch (err) {
+                    this.logger.warn(`[PreCompactionFlush] Failed to save summary: ${(err as Error).message}`);
+                }
+            }
+
             yield {
                 type: 'context_compressed',
-                content: trimResult.summaryText ?? `已压缩 ${trimResult.droppedCount} 条历史消息`,
+                content: summaryStr,
                 droppedCount: trimResult.droppedCount,
                 timestamp: new Date(),
             } satisfies ExecutionStep;
