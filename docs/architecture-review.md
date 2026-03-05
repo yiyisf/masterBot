@@ -14,7 +14,7 @@
 | Agent 模式 | ReAct + Think-Plan-Act + DAG | 业界主流，plan_task + dag_* 结构化推理 |
 | 技能系统 | SKILL.md + MCP + 动态导入 | 声明式协议清晰，多源注册(Local/MCP) |
 | 记忆系统 | 短期 LRU + 长期向量检索 | 双层记忆，跨会话知识持久化 |
-| 安全 | Auth 中间件 + Shell 沙箱 | API Key/JWT + 命令黑白名单 |
+| 安全 | Auth 中间件 + Shell 沙箱 | API Key/JWT + 命令 macOS/Linux/Windows 隔离 |
 
 ### 架构优势
 
@@ -25,7 +25,7 @@
 5. **Think-Plan-Act + DAG** — plan_task 结构化推理 + dag_* 任务并行编排
 6. **双层记忆** — 短期 LRU 会话隔离 + 长期 SQLite 向量余弦检索
 7. **前端 ReAct 可视化** — thought/plan/action/observation/task 全阶段透明展示
-8. **安全防护** — 认证中间件 + Shell 命令沙箱
+28. **安全防护** — 认证中间件 + Shell 命令沙箱 (macOS/Linux/Windows)
 
 ### 已解决的问题 (Phase 5)
 
@@ -51,7 +51,7 @@
 | 问题 | 解决方案 |
 |------|----------|
 | 无认证/鉴权 (原 P0) | `createAuthHook` 中间件，支持 API Key + JWT 两种模式，默认禁用 |
-| Shell 技能无沙箱 (原 P1) | `CommandSandbox` 黑名单/白名单模式，拦截 rm -rf、mkfs、fork bomb 等 |
+| Shell 技能无沙箱 (原 P1) | `CommandSandbox` 模式，针对 macOS/Linux/Windows 提供了不同的沙箱实现 |
 | 无任务编排能力 | Task DAG：`tasks` 表 + `TaskRepository` + `DAGExecutor` 并行执行引擎 |
 | Agent 无任务分解工具 | 内置 `dag_create_task` / `dag_get_status` / `dag_execute` 工具 |
 | 前端不支持任务事件 | `assistant-runtime.ts` 处理 task_created/completed/failed 事件 |
@@ -88,7 +88,7 @@
 
 ### Phase 7: 安全 + 任务编排 ✅
 
-- **7.1 Shell 命令沙箱** ✅ — CommandSandbox 黑名单/白名单模式
+- **7.1 Shell 命令沙箱** ✅ — macOS/Linux/Windows 不同级别的沙箱支持
 - **7.2 认证中间件** ✅ — API Key + JWT，默认禁用
 - **7.3 Task DAG** ✅ — tasks 表 + TaskRepository + DAGExecutor 并行执行
 - **7.4 Agent DAG 工具** ✅ — dag_create_task / dag_get_status / dag_execute
