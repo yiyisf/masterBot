@@ -1050,6 +1050,92 @@ export class GatewayServer {
             }
         });
 
+        // ===== CONDUCTOR WORKFLOWS =====
+        this.app.get('/api/conductor-workflows', async () => {
+            const rows = (db as any).prepare('SELECT id, name, description, version, definition, created_at, updated_at FROM conductor_workflows ORDER BY updated_at DESC').all() as any[];
+            return rows.map((r: any) => {
+                const def = (() => { try { return JSON.parse(r.definition); } catch { return {}; } })();
+                return {
+                    id: r.id,
+                    name: r.name,
+                    description: r.description,
+                    version: r.version,
+                    definition: def,
+                    createdAt: r.created_at,
+                    updatedAt: r.updated_at,
+                };
+            });
+        });
+
+        this.app.get<{ Params: { id: string } }>('/api/conductor-workflows/:id', async (request, reply) => {
+            try {
+                const row = (db as any).prepare('SELECT id, name, description, version, definition, created_at, updated_at FROM conductor_workflows WHERE id = ?').get(request.params.id) as any;
+                if (!row) { reply.status(404); return { error: 'Conductor workflow not found' }; }
+                const def = (() => { try { return JSON.parse(row.definition); } catch { return {}; } })();
+                return {
+                    id: row.id,
+                    name: row.name,
+                    description: row.description,
+                    version: row.version,
+                    definition: def,
+                    createdAt: row.created_at,
+                    updatedAt: row.updated_at,
+                };
+            } catch (err: any) {
+                reply.status(500); return { error: err.message };
+            }
+        });
+
+        this.app.post<{ Body: { name: string; description?: string; version?: number; definition: any } }>('/api/conductor-workflows', async (request, reply) => {
+            try {
+                const { nanoid } = await import('nanoid');
+                const id = nanoid();
+                const now = new Date().toISOString();
+                const { name, description, version, definition } = request.body;
+
+                if (!definition) {
+                    reply.status(400); return { error: 'Missing definition' };
+                }
+
+                (db as any).prepare(`INSERT INTO conductor_workflows (id, name, description, version, definition, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)`)
+                    .run(id, name, description || null, version || 1, typeof definition === 'string' ? definition : JSON.stringify(definition), now, now);
+                return { success: true, id };
+            } catch (err: any) {
+                reply.status(500); return { error: err.message };
+            }
+        });
+
+        this.app.put<{ Params: { id: string }; Body: { name: string; description?: string; version?: number; definition: any } }>('/api/conductor-workflows/:id', async (request, reply) => {
+            try {
+                const { id } = request.params;
+                const existing = (db as any).prepare('SELECT id FROM conductor_workflows WHERE id = ?').get(id);
+                if (!existing) { reply.status(404); return { error: 'Conductor workflow not found' }; }
+
+                const now = new Date().toISOString();
+                const { name, description, version, definition } = request.body;
+
+                if (!definition) {
+                    reply.status(400); return { error: 'Missing definition' };
+                }
+
+                (db as any).prepare(
+                    'UPDATE conductor_workflows SET name = ?, description = ?, version = ?, definition = ?, updated_at = ? WHERE id = ?'
+                ).run(name, description || null, version || 1, typeof definition === 'string' ? definition : JSON.stringify(definition), now, id);
+                return { success: true };
+            } catch (err: any) {
+                reply.status(500); return { error: err.message };
+            }
+        });
+
+        this.app.delete<{ Params: { id: string } }>('/api/conductor-workflows/:id', async (request, reply) => {
+            try {
+                (db as any).prepare('DELETE FROM conductor_workflows WHERE id = ?').run(request.params.id);
+                return { success: true };
+            } catch (err: any) {
+                reply.status(500); return { error: err.message };
+            }
+        });
+
         // ===== WEBHOOKS =====
         this.app.get('/api/webhooks', async () => {
             return webhookRepository.list();

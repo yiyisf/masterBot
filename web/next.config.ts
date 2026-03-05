@@ -6,6 +6,7 @@ const nextConfig: NextConfig = {
   images: {
     unoptimized: true,
   },
+  transpilePackages: ['reactflow-ui'],
 };
 
 export default nextConfig;

@@ -9,6 +9,7 @@ import { makeLightAsyncSyntaxHighlighter } from "@assistant-ui/react-syntax-high
 import { MyRuntimeAdapter } from "@/lib/assistant-runtime";
 import { ChatThinking } from "@/components/chat-thinking";
 import { DagView } from "@/components/dag-view";
+import { ConductorWorkflowCard } from "@/components/conductor-workflow-dialog";
 import { allToolUIs, FallbackToolUI } from "@/components/tool-ui";
 import { useMemo, memo, useRef, useEffect, useState, Suspense, useCallback } from "react";
 import "@assistant-ui/react-ui/styles/index.css";
@@ -136,11 +137,10 @@ const FeedbackButton = ({ rating, messageId, sessionId }: { rating: 'positive' |
     return (
         <button
             onClick={handleClick}
-            className={`inline-flex items-center justify-center h-7 w-7 rounded-md transition-colors ${
-                submitted
+            className={`inline-flex items-center justify-center h-7 w-7 rounded-md transition-colors ${submitted
                     ? (rating === 'positive' ? 'text-green-500 bg-green-500/10' : 'text-red-500 bg-red-500/10')
                     : 'text-muted-foreground hover:text-foreground hover:bg-muted/80'
-            }`}
+                }`}
             title={rating === 'positive' ? '有帮助' : '没帮助'}
             disabled={submitted}
         >
@@ -361,6 +361,18 @@ const CustomAssistantMessage = memo(() => {
                                 key={s.interrupt.id ?? i}
                                 interrupt={s.interrupt}
                                 sessionId={sessionId}
+                            />
+                        ))
+                    }
+
+                    {/* Conductor Workflow Generated cards */}
+                    {steps
+                        .filter((s: any) => s.workflow_generated)
+                        .map((s: any, i: number) => (
+                            <ConductorWorkflowCard
+                                key={`workflow-${i}`}
+                                workflowDef={s.workflow_generated.workflow}
+                                explanation={s.workflow_generated.explanation}
                             />
                         ))
                     }

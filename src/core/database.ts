@@ -123,6 +123,16 @@ export function initDatabase(): DatabaseSync {
             updated_at TEXT NOT NULL
         );
 
+        CREATE TABLE IF NOT EXISTS conductor_workflows (
+            id TEXT PRIMARY KEY,
+            name TEXT NOT NULL,
+            description TEXT,
+            version INTEGER DEFAULT 1,
+            definition TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        );
+
         CREATE TABLE IF NOT EXISTS webhooks (
             id TEXT PRIMARY KEY,
             name TEXT NOT NULL,
