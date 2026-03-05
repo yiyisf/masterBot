@@ -168,3 +168,19 @@ Supervisor Agent 通过内置工具调用 Worker：
 3. **任务描述精确**：`delegate_to_agent` 的 `task` 参数越具体，Worker 效果越好
 4. **避免循环委托**：Worker 不应再次调用 `delegate_to_agent`，防止无限递归
 5. **流式透传**：Worker 的 `ExecutionStep` 会实时透传到前端，用户可看到完整思考链
+---
+
+## MCP 协议支持
+
+系统原生支持 [Model Context Protocol (MCP)](https://modelcontextprotocol.io/)，通过 stdio 或 SSE 接入第三方工具库。
+
+### 配置方式
+
+在 **Skills** 页面中点击 "Add MCP Server"：
+
+- **Stdio (本地)**:
+  - `command`: 可执行文件名 (如 `npx`, `python`)
+  - `args`: 参数数组 (如 `["-y", "@modelcontextprotocol/server-github"]`)
+  - `env`: 环境变量 (如 `{"GITHUB_TOKEN": "..."}`) — **New!**
+- **SSE/HTTP (远程)**:
+  - `url`: 服务端端点 (如 `http://localhost:8000/sse`)

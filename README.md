@@ -204,9 +204,11 @@ GET/PATCH  /api/config/agent
 
 ```bash
 GET    /api/mcp/config          # 列出 MCP 服务
-POST   /api/mcp/config          # 添加 MCP 服务
+POST   /api/mcp/config          # 添加 MCP 服务（支持 command, args, env, url）
 DELETE /api/mcp/config/:id      # 删除 MCP 服务
 ```
+
+> **提示**：`stdio` 模式现已支持在 Web 页面直接配置环境变量（JSON 格式），方便接入需要 API Key 的 MCP 服务。
 
 ---
 
