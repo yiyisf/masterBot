@@ -168,3 +168,15 @@ Supervisor Agent 通过内置工具调用 Worker：
 3. **任务描述精确**：`delegate_to_agent` 的 `task` 参数越具体，Worker 效果越好
 4. **避免循环委托**：Worker 不应再次调用 `delegate_to_agent`，防止无限递归
 5. **流式透传**：Worker 的 `ExecutionStep` 会实时透传到前端，用户可看到完整思考链
+---
+
+## MCP 协议支持
+
+系统原生支持 [Model Context Protocol (MCP)](https://modelcontextprotocol.io/)，通过 stdio 或 SSE 接入第三方工具库。
+
+### 安全策略
+
+所有通过 MCP 调用的本地 Shell 命令均受 **OS-Sandbox** 保护：
+- **macOS**: `sandbox-exec` (Seatbelt)
+- **Linux**: `bwrap` (Bubblewrap)
+- **Windows**: `powershell.exe -ExecutionPolicy Restricted` — **New!**
