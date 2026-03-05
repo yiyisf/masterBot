@@ -174,9 +174,13 @@ Supervisor Agent 通过内置工具调用 Worker：
 
 系统原生支持 [Model Context Protocol (MCP)](https://modelcontextprotocol.io/)，通过 stdio 或 SSE 接入第三方工具库。
 
-### 安全策略
+### 配置方式
 
-所有通过 MCP 调用的本地 Shell 命令均受 **OS-Sandbox** 保护：
-- **macOS**: `sandbox-exec` (Seatbelt)
-- **Linux**: `bwrap` (Bubblewrap)
-- **Windows**: `powershell.exe -ExecutionPolicy Restricted` — **New!**
+在 **Skills** 页面中点击 "Add MCP Server"：
+
+- **Stdio (本地)**:
+  - `command`: 可执行文件名 (如 `npx`, `python`)
+  - `args`: 参数数组 (如 `["-y", "@modelcontextprotocol/server-github"]`)
+  - `env`: 环境变量 (如 `{"GITHUB_TOKEN": "..."}`) — **New!**
+- **SSE/HTTP (远程)**:
+  - `url`: 服务端端点 (如 `http://localhost:8000/sse`)

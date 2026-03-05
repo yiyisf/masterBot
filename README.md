@@ -14,7 +14,7 @@
 - 🧠 **双层记忆系统** — 短期会话记忆（LRU 淘汰）+ 长期记忆（SQLite 向量余弦检索）
 - 📋 **Task DAG 任务编排** — 复杂任务分解为有向无环图，支持依赖声明和并行执行
 - 🪟 **上下文窗口管理** — 滑动窗口 + LLM 摘要压缩，防止超出模型上下文限制
-- 🔒 **安全加固** — Shell 命令沙箱（macOS/Linux/Windows）+ 认证中间件（API Key / JWT）
+- 🔒 **安全加固** — Shell 命令沙箱（黑名单/白名单）+ 认证中间件（API Key / JWT）
 
 ### Phase 20-21 新增能力
 - 📋 **合规审计** — 全量执行记录 + 审批日志 + CSV 导出，满足企业安全合规要求
@@ -204,9 +204,11 @@ GET/PATCH  /api/config/agent
 
 ```bash
 GET    /api/mcp/config          # 列出 MCP 服务
-POST   /api/mcp/config          # 添加 MCP 服务
+POST   /api/mcp/config          # 添加 MCP 服务（支持 command, args, env, url）
 DELETE /api/mcp/config/:id      # 删除 MCP 服务
 ```
+
+> **提示**：`stdio` 模式现已支持在 Web 页面直接配置环境变量（JSON 格式），方便接入需要 API Key 的 MCP 服务。
 
 ---
 
