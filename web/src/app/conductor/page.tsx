@@ -2,9 +2,9 @@
 
 import React, { useState, useEffect, useCallback, useRef } from "react";
 import "reactflow/dist/style.css";
-import "reactflow-ui/style.css";
+import "@yiyi_zhang/reactflow-ui/style.css";
 import { fetchApi } from "@/lib/api";
-import { WorkflowIDE, WorkflowDef, WorkflowIDERef } from "reactflow-ui";
+import { WorkflowIDE, WorkflowDef, WorkflowIDERef } from "@yiyi_zhang/reactflow-ui";
 import { useTheme } from "next-themes";
 import { Button } from "@/components/ui/button";
 import { Plus, Trash2, Edit3, ArrowLeft, Download, RotateCcw, Save } from "lucide-react";

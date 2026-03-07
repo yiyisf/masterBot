@@ -1,7 +1,7 @@
 import React, { useState, useRef } from "react";
 import "reactflow/dist/style.css";
-import "reactflow-ui/style.css";
-import { WorkflowIDE, WorkflowDef, WorkflowIDERef } from "reactflow-ui";
+import "@yiyi_zhang/reactflow-ui/style.css";
+import { WorkflowIDE, WorkflowDef, WorkflowIDERef } from "@yiyi_zhang/reactflow-ui";
 import { useTheme } from "next-themes";
 import { Dialog, DialogContent, DialogTitle, DialogDescription } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";

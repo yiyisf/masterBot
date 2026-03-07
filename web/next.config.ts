@@ -7,7 +7,7 @@ const nextConfig: NextConfig = {
   images: {
     unoptimized: true,
   },
-  transpilePackages: ['reactflow-ui'],
+  transpilePackages: ['@yiyi_zhang/reactflow-ui'],
   turbopack: {
     // Set root to common parent so Turbopack can follow symlinks to linked packages
     root: path.resolve(__dirname, "../../.."),
