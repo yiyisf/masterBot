@@ -39,7 +39,8 @@
     "react": "19.2.3",
     "react-dom": "19.2.3",
     "react-markdown": "^10.1.0",
-    "reactflow-ui": "file:../../../../../../tmp/reactflow-ui-0.1.0.tgz",
+    "reactflow": "^11.11.4",
+    "reactflow-ui": "file:/Users/zhang/Yiyi/ai/orch-flow-ui/reactflow-ui",
     "remark-gfm": "^4.0.1",
     "sonner": "^2.0.7",
     "tailwind-merge": "^3.4.0"

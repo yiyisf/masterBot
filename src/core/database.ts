@@ -301,6 +301,14 @@ export function initDatabase(): DatabaseSync {
         }
     }
 
+    // Auto-migration: messages 表新增 metadata 列（存储 workflow_generated 等步骤数据）
+    {
+        const msgColumns = db.prepare('PRAGMA table_info(messages)').all() as Array<{ name: string }>;
+        if (!msgColumns.some(c => c.name === 'metadata')) {
+            db.prepare("ALTER TABLE messages ADD COLUMN metadata TEXT DEFAULT '{}'").run();
+        }
+    }
+
     // Auto-migration: Phase 21 — tasks 表新增 5 列
     {
         const taskColumns = db.prepare('PRAGMA table_info(tasks)').all() as Array<{ name: string }>;

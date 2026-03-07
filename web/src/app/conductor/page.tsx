@@ -1,10 +1,11 @@
 "use client";
 
-import React, { useState, useEffect, useCallback } from "react";
+import React, { useState, useEffect, useCallback, useRef } from "react";
 import "reactflow/dist/style.css";
 import "reactflow-ui/style.css";
 import { fetchApi } from "@/lib/api";
-import { WorkflowIDE, WorkflowDef } from "reactflow-ui";
+import { WorkflowIDE, WorkflowDef, WorkflowIDERef } from "reactflow-ui";
+import { useTheme } from "next-themes";
 import { Button } from "@/components/ui/button";
 import { Plus, Trash2, Edit3, ArrowLeft, Download, RotateCcw, Save } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription, CardFooter } from "@/components/ui/card";
@@ -28,6 +29,9 @@ export default function ConductorPage() {
     const [view, setView] = useState<'list' | 'edit'>('list');
     const [editingWorkflow, setEditingWorkflow] = useState<SavedWorkflow | null>(null);
     const [isSaving, setIsSaving] = useState(false);
+    const ideRef = useRef<WorkflowIDERef>(null);
+    const { resolvedTheme } = useTheme();
+    const ideTheme = resolvedTheme === 'dark' ? 'dark' : 'light';
 
     const loadWorkflows = useCallback(async () => {
         setLoading(true);
@@ -155,7 +159,10 @@ export default function ConductorPage() {
                         <Button
                             size="sm"
                             disabled={isSaving}
-                            onClick={() => handleSave(editingWorkflow.definition)}
+                            onClick={async () => {
+                                const def = ideRef.current?.getWorkflowDef();
+                                if (def) await handleSave(def);
+                            }}
                         >
                             <Save className="w-4 h-4 mr-2" /> {isSaving ? "保存中..." : "保存"}
                         </Button>
@@ -165,9 +172,11 @@ export default function ConductorPage() {
                 {/* Workflow IDE Area */}
                 <div className="flex-1 min-h-0 relative">
                     <WorkflowIDE
+                        ref={ideRef}
                         workflowDef={editingWorkflow.definition}
-                        // Connect AI copilot if backend supports it natively, otherwise it uses default settings
+                        theme={ideTheme}
                         onSave={handleSave}
+                        aiConfig={{ baseUrl: '/api/conductor', model: 'assistant', apiKey: 'local' }}
                     />
                 </div>
             </div>

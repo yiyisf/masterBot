@@ -1,7 +1,8 @@
-import React, { useState } from "react";
+import React, { useState, useRef } from "react";
 import "reactflow/dist/style.css";
 import "reactflow-ui/style.css";
-import { WorkflowIDE, WorkflowDef } from "reactflow-ui";
+import { WorkflowIDE, WorkflowDef, WorkflowIDERef } from "reactflow-ui";
+import { useTheme } from "next-themes";
 import { Dialog, DialogContent, DialogTitle, DialogDescription } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { PlaySquare, Save } from "lucide-react";
@@ -16,6 +17,9 @@ interface ConductorWorkflowDialogProps {
 export function ConductorWorkflowCard({ workflowDef, explanation, onSaveSuccess }: ConductorWorkflowDialogProps) {
     const [open, setOpen] = useState(false);
     const [saving, setSaving] = useState(false);
+    const ideRef = useRef<WorkflowIDERef>(null);
+    const { resolvedTheme } = useTheme();
+    const ideTheme = resolvedTheme === 'dark' ? 'dark' : 'light';
 
     const handleSave = async (def: WorkflowDef) => {
         setSaving(true);
@@ -69,32 +73,37 @@ export function ConductorWorkflowCard({ workflowDef, explanation, onSaveSuccess 
             )}
 
             <Dialog open={open} onOpenChange={setOpen}>
-                <DialogContent className="max-w-[95vw] w-[95vw] h-[95vh] p-0 flex flex-col gap-0 overflow-hidden border-zinc-200 dark:border-zinc-800">
+                <DialogContent
+                    className="p-0 flex flex-col gap-0 overflow-hidden border-zinc-200 dark:border-zinc-800"
+                    style={{ width: '95vw', maxWidth: '95vw', height: '92vh' }}
+                >
                     <div className="sr-only">
                         <DialogTitle>Conductor Workflow IDE</DialogTitle>
                         <DialogDescription>可视化编辑您的 Conductor 工作流</DialogDescription>
                     </div>
                     {/* Toolbar header */}
-                    <div className="h-14 shrink-0 flex items-center justify-between px-4 border-b bg-background">
-                        <div className="flex items-center gap-3">
-                            <h2 className="text-sm font-medium">✨ 工作流预览与编辑</h2>
-                        </div>
-                        <div className="flex items-center gap-2">
-                            <Button
-                                size="sm"
-                                onClick={() => handleSave(workflowDef)}
-                                disabled={saving}
-                                className="h-8"
-                            >
-                                <Save className="w-4 h-4 mr-1.5" />
-                                {saving ? "保存中..." : "保存到系统"}
-                            </Button>
-                        </div>
+                    <div className="h-12 shrink-0 flex items-center justify-between px-4 border-b bg-background">
+                        <h2 className="text-sm font-medium">✨ 工作流预览与编辑</h2>
+                        <Button
+                            size="sm"
+                            onClick={() => {
+                                const def = ideRef.current?.getWorkflowDef();
+                                if (def) handleSave(def);
+                            }}
+                            disabled={saving}
+                            className="h-8"
+                        >
+                            <Save className="w-4 h-4 mr-1.5" />
+                            {saving ? "保存中..." : "保存到系统"}
+                        </Button>
                     </div>
                     {/* IDE viewport */}
-                    <div className="flex-1 min-h-0 bg-zinc-50 dark:bg-zinc-950 relative">
+                    <div className="flex-1 min-h-0 relative">
                         <WorkflowIDE
+                            ref={ideRef}
                             workflowDef={workflowDef}
+                            theme={ideTheme}
+                            aiConfig={{ baseUrl: '/api/conductor', model: 'assistant', apiKey: 'local' }}
                         />
                     </div>
                 </DialogContent>

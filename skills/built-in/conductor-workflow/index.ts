@@ -1,4 +1,4 @@
-import type { SkillAction, SkillContext } from '../../../src/types.js';
+import type { SkillContext } from '../../../src/types.js';
 import { readFileSync } from 'fs';
 import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
@@ -140,16 +140,7 @@ async function callLLM(ctx: SkillContext, userPrompt: string): Promise<string> {
         : (response.content as any[]).map((p: any) => p.text || '').join('');
 }
 
-export const actions: Record<string, SkillAction> = {
-
-    generate_workflow: {
-        name: 'generate_workflow',
-        description: '根据自然语言描述生成 Conductor OSS v3.21.20 标准的 WorkflowDef JSON',
-        parameters: {
-            description: { type: 'string', description: '业务流程的自然语言描述', required: true },
-            name: { type: 'string', description: '工作流名称（可选，默认自动生成）' },
-        },
-        handler: async (ctx: SkillContext, params: Record<string, unknown>) => {
+export async function generate_workflow(ctx: SkillContext, params: Record<string, unknown>) {
             const { description, name } = params as { description: string; name?: string };
             ctx.logger.info(`[conductor-workflow] Generating workflow from description: ${description.slice(0, 100)}...`);
 
@@ -196,16 +187,9 @@ export const actions: Record<string, SkillAction> = {
                 explanation: llmResponse.split('```')[0].trim(),
                 type: 'workflow_generated',
             };
-        },
-    },
+}
 
-    analyze_workflow: {
-        name: 'analyze_workflow',
-        description: '分析已有的 Conductor 工作流 JSON，输出结构解读和优化建议',
-        parameters: {
-            workflow_json: { type: 'string', description: '要分析的 WorkflowDef JSON 字符串', required: true },
-        },
-        handler: async (ctx: SkillContext, params: Record<string, unknown>) => {
+export async function analyze_workflow(ctx: SkillContext, params: Record<string, unknown>) {
             const { workflow_json } = params as { workflow_json: string };
             ctx.logger.info(`[conductor-workflow] Analyzing workflow...`);
 
@@ -238,17 +222,9 @@ ${workflow_json}
                 workflowName: parsed.name,
                 taskCount: parsed.tasks?.length ?? 0,
             };
-        },
-    },
+}
 
-    update_workflow: {
-        name: 'update_workflow',
-        description: '根据自然语言指令修改已有的 Conductor 工作流定义',
-        parameters: {
-            workflow_json: { type: 'string', description: '现有的 WorkflowDef JSON 字符串', required: true },
-            instruction: { type: 'string', description: '修改指令的自然语言描述', required: true },
-        },
-        handler: async (ctx: SkillContext, params: Record<string, unknown>) => {
+export async function update_workflow(ctx: SkillContext, params: Record<string, unknown>) {
             const { workflow_json, instruction } = params as { workflow_json: string; instruction: string };
             ctx.logger.info(`[conductor-workflow] Updating workflow: ${instruction.slice(0, 100)}...`);
 
@@ -304,6 +280,6 @@ ${workflow_json}
                     rawResponse: llmResponse,
                 };
             }
-        },
-    },
-};
+}
+
+export default { generate_workflow, analyze_workflow, update_workflow };

@@ -226,6 +226,7 @@ export class GatewayServer {
             });
 
             let assistantAnswer = '';
+            const workflowSteps: any[] = [];
 
             // Use multimodal content if provided, otherwise fall back to plain string
             const userInput = (messageContent && messageContent.length > 0 ? messageContent : message) as string;
@@ -242,6 +243,19 @@ export class GatewayServer {
                     if (step.type === 'answer') {
                         assistantAnswer = step.content;
                     }
+                    // Collect workflow_generated steps for persistence
+                    if ((step as any).type === 'workflow_generated') {
+                        const wf = step as any;
+                        workflowSteps.push({
+                            workflow_generated: {
+                                workflow: wf.workflow,
+                                subWorkflows: wf.subWorkflows,
+                                validation: wf.validation,
+                                allValid: wf.allValid,
+                                explanation: wf.explanation,
+                            },
+                        });
+                    }
                     if (reply.raw.writable) {
                         reply.raw.write(`data: ${JSON.stringify(step)}\n\n`);
                     } else {
@@ -252,10 +266,13 @@ export class GatewayServer {
 
                 // Persist history after success — 用事务原子保存，并跳过空答案（客户端中途断连场景）
                 if (!abortController.signal.aborted && assistantAnswer) {
+                    const assistantMsgMetadata = workflowSteps.length > 0
+                        ? { custom: { steps: workflowSteps } }
+                        : undefined;
                     const { assistantMsgId } = historyRepository.saveConversationTurn(
                         sessionId,
                         { role: 'user', content: messageContent && messageContent.length > 0 ? messageContent : message, attachments },
-                        { role: 'assistant', content: assistantAnswer }
+                        { role: 'assistant', content: assistantAnswer, metadata: assistantMsgMetadata } as any
                     );
 
                     // Send meta chunk with assistant message ID for feedback correlation
@@ -1135,6 +1152,39 @@ export class GatewayServer {
                 reply.status(500); return { error: err.message };
             }
         });
+
+        // ===== CONDUCTOR AI COPILOT PROXY =====
+        // OpenAI-compatible streaming endpoint for WorkflowIDE AI Copilot
+        this.app.post<{ Body: { messages: Array<{ role: string; content: string }> } }>(
+            '/api/conductor/chat/completions',
+            async (request, reply) => {
+                const { messages } = request.body;
+                reply.raw.writeHead(200, {
+                    'Content-Type': 'text/event-stream',
+                    'Cache-Control': 'no-cache',
+                    'Connection': 'keep-alive',
+                });
+                const llmAdapter = this.agent.getLLMAdapter();
+                const llmMessages = messages.map((m) => ({
+                    role: m.role as 'system' | 'user' | 'assistant',
+                    content: m.content,
+                }));
+                try {
+                    for await (const chunk of llmAdapter.chatStream(llmMessages, {})) {
+                        if (chunk.type === 'content' && chunk.content) {
+                            const payload = {
+                                choices: [{ delta: { content: chunk.content }, finish_reason: null }],
+                            };
+                            reply.raw.write(`data: ${JSON.stringify(payload)}\n\n`);
+                        }
+                    }
+                } catch (err: any) {
+                    this.logger.error(`[conductor/copilot] Stream error: ${err.message}`);
+                }
+                reply.raw.write('data: [DONE]\n\n');
+                reply.raw.end();
+            }
+        );
 
         // ===== WEBHOOKS =====
         this.app.get('/api/webhooks', async () => {

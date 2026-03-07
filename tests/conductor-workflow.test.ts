@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { actions } from '../skills/built-in/conductor-workflow/index.js';
+import { generate_workflow, analyze_workflow, update_workflow } from '../skills/built-in/conductor-workflow/index.js';
+const actions = { generate_workflow: { handler: generate_workflow }, analyze_workflow: { handler: analyze_workflow }, update_workflow: { handler: update_workflow } };
 import type { SkillContext } from '../src/types.js';
 
 const mockLogger = {
