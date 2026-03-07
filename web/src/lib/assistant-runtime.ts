@@ -150,6 +150,18 @@ export class MyRuntimeAdapter implements ChatModelAdapter {
                     });
                     yield buildYield();
 
+                } else if (chunk.type === "workflow_generated") {
+                    currentSteps.push({
+                        workflow_generated: {
+                            workflow: chunk.workflow,
+                            subWorkflows: chunk.subWorkflows,
+                            validation: chunk.validation,
+                            allValid: chunk.allValid,
+                            explanation: chunk.explanation,
+                        }
+                    });
+                    yield buildYield();
+
                 } else if (chunk.type === "answer") {
                     // Final answer replaces any partial content chunks
                     currentContent = chunk.content;

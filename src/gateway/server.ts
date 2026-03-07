@@ -226,6 +226,7 @@ export class GatewayServer {
             });
 
             let assistantAnswer = '';
+            const workflowSteps: any[] = [];
 
             // Use multimodal content if provided, otherwise fall back to plain string
             const userInput = (messageContent && messageContent.length > 0 ? messageContent : message) as string;
@@ -242,6 +243,19 @@ export class GatewayServer {
                     if (step.type === 'answer') {
                         assistantAnswer = step.content;
                     }
+                    // Collect workflow_generated steps for persistence
+                    if ((step as any).type === 'workflow_generated') {
+                        const wf = step as any;
+                        workflowSteps.push({
+                            workflow_generated: {
+                                workflow: wf.workflow,
+                                subWorkflows: wf.subWorkflows,
+                                validation: wf.validation,
+                                allValid: wf.allValid,
+                                explanation: wf.explanation,
+                            },
+                        });
+                    }
                     if (reply.raw.writable) {
                         reply.raw.write(`data: ${JSON.stringify(step)}\n\n`);
                     } else {
@@ -252,10 +266,13 @@ export class GatewayServer {
 
                 // Persist history after success — 用事务原子保存，并跳过空答案（客户端中途断连场景）
                 if (!abortController.signal.aborted && assistantAnswer) {
+                    const assistantMsgMetadata = workflowSteps.length > 0
+                        ? { custom: { steps: workflowSteps } }
+                        : undefined;
                     const { assistantMsgId } = historyRepository.saveConversationTurn(
                         sessionId,
                         { role: 'user', content: messageContent && messageContent.length > 0 ? messageContent : message, attachments },
-                        { role: 'assistant', content: assistantAnswer }
+                        { role: 'assistant', content: assistantAnswer, metadata: assistantMsgMetadata } as any
                     );
 
                     // Send meta chunk with assistant message ID for feedback correlation
@@ -1049,6 +1066,125 @@ export class GatewayServer {
                 reply.status(500); return { error: err.message };
             }
         });
+
+        // ===== CONDUCTOR WORKFLOWS =====
+        this.app.get('/api/conductor-workflows', async () => {
+            const rows = (db as any).prepare('SELECT id, name, description, version, definition, created_at, updated_at FROM conductor_workflows ORDER BY updated_at DESC').all() as any[];
+            return rows.map((r: any) => {
+                const def = (() => { try { return JSON.parse(r.definition); } catch { return {}; } })();
+                return {
+                    id: r.id,
+                    name: r.name,
+                    description: r.description,
+                    version: r.version,
+                    definition: def,
+                    createdAt: r.created_at,
+                    updatedAt: r.updated_at,
+                };
+            });
+        });
+
+        this.app.get<{ Params: { id: string } }>('/api/conductor-workflows/:id', async (request, reply) => {
+            try {
+                const row = (db as any).prepare('SELECT id, name, description, version, definition, created_at, updated_at FROM conductor_workflows WHERE id = ?').get(request.params.id) as any;
+                if (!row) { reply.status(404); return { error: 'Conductor workflow not found' }; }
+                const def = (() => { try { return JSON.parse(row.definition); } catch { return {}; } })();
+                return {
+                    id: row.id,
+                    name: row.name,
+                    description: row.description,
+                    version: row.version,
+                    definition: def,
+                    createdAt: row.created_at,
+                    updatedAt: row.updated_at,
+                };
+            } catch (err: any) {
+                reply.status(500); return { error: err.message };
+            }
+        });
+
+        this.app.post<{ Body: { name: string; description?: string; version?: number; definition: any } }>('/api/conductor-workflows', async (request, reply) => {
+            try {
+                const { nanoid } = await import('nanoid');
+                const id = nanoid();
+                const now = new Date().toISOString();
+                const { name, description, version, definition } = request.body;
+
+                if (!definition) {
+                    reply.status(400); return { error: 'Missing definition' };
+                }
+
+                (db as any).prepare(`INSERT INTO conductor_workflows (id, name, description, version, definition, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)`)
+                    .run(id, name, description || null, version || 1, typeof definition === 'string' ? definition : JSON.stringify(definition), now, now);
+                return { success: true, id };
+            } catch (err: any) {
+                reply.status(500); return { error: err.message };
+            }
+        });
+
+        this.app.put<{ Params: { id: string }; Body: { name: string; description?: string; version?: number; definition: any } }>('/api/conductor-workflows/:id', async (request, reply) => {
+            try {
+                const { id } = request.params;
+                const existing = (db as any).prepare('SELECT id FROM conductor_workflows WHERE id = ?').get(id);
+                if (!existing) { reply.status(404); return { error: 'Conductor workflow not found' }; }
+
+                const now = new Date().toISOString();
+                const { name, description, version, definition } = request.body;
+
+                if (!definition) {
+                    reply.status(400); return { error: 'Missing definition' };
+                }
+
+                (db as any).prepare(
+                    'UPDATE conductor_workflows SET name = ?, description = ?, version = ?, definition = ?, updated_at = ? WHERE id = ?'
+                ).run(name, description || null, version || 1, typeof definition === 'string' ? definition : JSON.stringify(definition), now, id);
+                return { success: true };
+            } catch (err: any) {
+                reply.status(500); return { error: err.message };
+            }
+        });
+
+        this.app.delete<{ Params: { id: string } }>('/api/conductor-workflows/:id', async (request, reply) => {
+            try {
+                (db as any).prepare('DELETE FROM conductor_workflows WHERE id = ?').run(request.params.id);
+                return { success: true };
+            } catch (err: any) {
+                reply.status(500); return { error: err.message };
+            }
+        });
+
+        // ===== CONDUCTOR AI COPILOT PROXY =====
+        // OpenAI-compatible streaming endpoint for WorkflowIDE AI Copilot
+        this.app.post<{ Body: { messages: Array<{ role: string; content: string }> } }>(
+            '/api/conductor/chat/completions',
+            async (request, reply) => {
+                const { messages } = request.body;
+                reply.raw.writeHead(200, {
+                    'Content-Type': 'text/event-stream',
+                    'Cache-Control': 'no-cache',
+                    'Connection': 'keep-alive',
+                });
+                const llmAdapter = this.agent.getLLMAdapter();
+                const llmMessages = messages.map((m) => ({
+                    role: m.role as 'system' | 'user' | 'assistant',
+                    content: m.content,
+                }));
+                try {
+                    for await (const chunk of llmAdapter.chatStream(llmMessages, {})) {
+                        if (chunk.type === 'content' && chunk.content) {
+                            const payload = {
+                                choices: [{ delta: { content: chunk.content }, finish_reason: null }],
+                            };
+                            reply.raw.write(`data: ${JSON.stringify(payload)}\n\n`);
+                        }
+                    }
+                } catch (err: any) {
+                    this.logger.error(`[conductor/copilot] Stream error: ${err.message}`);
+                }
+                reply.raw.write('data: [DONE]\n\n');
+                reply.raw.end();
+            }
+        );
 
         // ===== WEBHOOKS =====
         this.app.get('/api/webhooks', async () => {

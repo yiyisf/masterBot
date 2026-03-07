@@ -135,6 +135,7 @@ const data: SidebarData = {
       items: [
         { title: "仪表盘", url: "/" },
         { title: "工作流编排", url: "/workflow" },
+        { title: "Conductor 编排", url: "/conductor", badge: "NEW" },
       ],
     },
     {

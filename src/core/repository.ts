@@ -76,6 +76,15 @@ export class HistoryRepository {
             msg.attachments = attachments;
         }
 
+        // 解析 metadata（含 workflow_generated 等 steps 数据）
+        if (row.metadata && row.metadata !== '{}') {
+            try {
+                (msg as any).metadata = JSON.parse(row.metadata);
+            } catch {
+                // ignore
+            }
+        }
+
         return msg;
     }
 
@@ -88,17 +97,21 @@ export class HistoryRepository {
         const content = typeof message.content === 'string'
             ? message.content
             : JSON.stringify(message.content);
+        const metadata = (message as any).metadata
+            ? JSON.stringify((message as any).metadata)
+            : '{}';
 
         db.prepare(`
-            INSERT INTO messages (id, session_id, role, content, tool_call_id, tool_calls)
-            VALUES (?, ?, ?, ?, ?, ?)
+            INSERT INTO messages (id, session_id, role, content, tool_call_id, tool_calls, metadata)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
         `).run(
             id,
             sessionId,
             message.role,
             content,
             message.toolCallId || null,
-            message.toolCalls ? JSON.stringify(message.toolCalls) : null
+            message.toolCalls ? JSON.stringify(message.toolCalls) : null,
+            metadata
         );
 
         if (message.attachments) {

@@ -123,6 +123,16 @@ export function initDatabase(): DatabaseSync {
             updated_at TEXT NOT NULL
         );
 
+        CREATE TABLE IF NOT EXISTS conductor_workflows (
+            id TEXT PRIMARY KEY,
+            name TEXT NOT NULL,
+            description TEXT,
+            version INTEGER DEFAULT 1,
+            definition TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        );
+
         CREATE TABLE IF NOT EXISTS webhooks (
             id TEXT PRIMARY KEY,
             name TEXT NOT NULL,
@@ -288,6 +298,14 @@ export function initDatabase(): DatabaseSync {
         // Ignore error if column already exists
         if (!error.message.includes('duplicate column name')) {
             // Log but don't crash if it's another error, though for this simple setup it's fine
+        }
+    }
+
+    // Auto-migration: messages 表新增 metadata 列（存储 workflow_generated 等步骤数据）
+    {
+        const msgColumns = db.prepare('PRAGMA table_info(messages)').all() as Array<{ name: string }>;
+        if (!msgColumns.some(c => c.name === 'metadata')) {
+            db.prepare("ALTER TABLE messages ADD COLUMN metadata TEXT DEFAULT '{}'").run();
         }
     }
 

@@ -736,6 +736,7 @@ export class Agent {
                     memory: context.memory,
                     logger: this.logger,
                     config: this.skillConfig,
+                    llm: this.llm,
                 };
 
                 // Phase 21: 为每个外部工具调用开 span
@@ -780,6 +781,21 @@ export class Agent {
                             duration,
                             timestamp: new Date(),
                         };
+                        // Emit dedicated workflow_generated step so frontend can render the workflow card
+                        if (result.value && typeof result.value === 'object' && (result.value as any).type === 'workflow_generated') {
+                            const wf = result.value as any;
+                            yield {
+                                type: 'workflow_generated',
+                                content: resultStr,
+                                toolName,
+                                workflow: wf.workflow,
+                                subWorkflows: wf.subWorkflows,
+                                validation: wf.validation,
+                                allValid: wf.allValid,
+                                explanation: wf.explanation,
+                                timestamp: new Date(),
+                            } as any;
+                        }
                         messages.push({ role: 'tool', content: resultStr, toolCallId: toolCall.id });
                     } else {
                         const errorMsg = `Error: ${result.reason?.message || 'Unknown error'}`;
