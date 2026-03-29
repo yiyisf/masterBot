@@ -56,9 +56,9 @@ export async function execute(
         }
     }
 
-    // Windows: python/python3 命令自动补 .exe 避免 AppX 虚拟化 EPERM
-    if (platform() === 'win32' && /^python3?\s/.test(command)) {
-        command = command.replace(/^python3?\s/, 'python.exe ');
+    // Windows: 自动补 .exe 后缀，避免 AppX 虚拟化 EPERM（python/python3/pip/pip3）
+    if (platform() === 'win32') {
+        command = command.replace(/^(python3?|pip3?)\s/, '$1.exe ');
     }
 
     ctx.logger.info(`Executing command: ${command}`);
@@ -152,11 +152,14 @@ export async function execute_background(
 
     ctx.logger.info(`Spawning background command: ${command}`);
 
+    const isWin = platform() === 'win32';
     const child = spawn(command, [], {
         cwd,
-        shell: true,
+        // On Windows use PowerShell (consistent with execute()); on Unix shell:true uses /bin/sh
+        shell: isWin ? 'powershell.exe' : true,
         detached: true,
         stdio: 'ignore',
+        ...(isWin ? { windowsHide: true } : {}),
     });
 
     child.unref();

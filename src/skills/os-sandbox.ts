@@ -141,6 +141,10 @@ export class OsSandboxExecutor {
     }
 
     private async execDirect(command: string, cwd: string, timeout: number): Promise<OsSandboxResult> {
+        // Use platform-appropriate shell to avoid ENOENT on Windows
+        if (this.os === 'win32') {
+            return this.spawnWrapped('cmd.exe', ['/c', command], cwd, timeout, 'none');
+        }
         return this.spawnWrapped('/bin/sh', ['-c', command], cwd, timeout, 'none');
     }
 
@@ -186,10 +190,15 @@ export class OsSandboxExecutor {
 
             child.on('error', (err: NodeJS.ErrnoException) => {
                 clearTimeout(timer);
-                // If sandbox binary not found, fall back to direct
+                // If sandbox binary not found, fall back to direct execution
                 if (err.code === 'ENOENT' && sandboxMode !== 'none') {
-                    this.logger?.warn(`[OsSandbox] ${sandboxMode} not found, falling back to direct`);
-                    this.execDirect(args[args.length - 1] ?? '', cwd, timeout).then(resolve);
+                    this.logger?.warn(`[OsSandbox] ${bin} not found (${sandboxMode}), falling back to direct`);
+                    // Extract the actual user command from the sandbox args:
+                    // - sandbox-exec: [..., '/bin/sh', '-c', <command>] → last arg
+                    // - bwrap:        [..., '--', '/bin/sh', '-c', <command>] → last arg
+                    // - powershell:   [..., '-Command', <command>] → last arg
+                    const userCommand = args[args.length - 1] ?? '';
+                    this.execDirect(userCommand, cwd, timeout).then(resolve);
                 } else {
                     resolve({
                         stdout: '',
