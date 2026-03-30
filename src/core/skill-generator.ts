@@ -66,7 +66,7 @@ export class SkillGenerator {
     private logger: Logger;
     private skillsDir: string;
 
-    constructor(llm: LLMAdapter, logger: Logger, skillsDir = 'skills/local') {
+    constructor(llm: LLMAdapter, logger: Logger, skillsDir = join('skills', 'local')) {
         this.llm = llm;
         this.logger = logger;
         this.skillsDir = skillsDir;
