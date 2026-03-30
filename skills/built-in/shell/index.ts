@@ -63,86 +63,17 @@ export async function execute(
 
     ctx.logger.info(`Executing command: ${command}`);
 
-    // Layer 2: OS-level sandbox execution (macOS sandbox-exec / Linux bwrap / Windows Git Bash or PowerShell)
-    if (platform() !== 'win32') {
-        const osSandbox = new OsSandboxExecutor(ctx.logger);
-        const result = await osSandbox.execute(command, { cwd, timeout });
-        ctx.logger.info(`[OsSandbox] mode=${result.sandboxMode} exitCode=${result.exitCode}`);
-        return {
-            stdout: result.stdout,
-            stderr: result.stderr,
-            exitCode: result.exitCode,
-            platform: platform(),
-        };
-    }
-
-    // Windows: OS-level sandbox (Git Bash or PowerShell depending on preferGitBash)
+    // Layer 2: OS-level sandbox (macOS sandbox-exec / Linux bwrap / Windows Git Bash or PowerShell)
+    // OsSandboxExecutor handles all platforms including Windows; ENOENT fallback is done internally.
     const osSandbox = new OsSandboxExecutor(ctx.logger);
-    const sandboxResult = await osSandbox.execute(command, { cwd, timeout, preferGitBash });
-    ctx.logger.info(`[OsSandbox] mode=${sandboxResult.sandboxMode} exitCode=${sandboxResult.exitCode}`);
-
-    // If sandbox execution succeeded (no ENOENT of both bash and powershell), return directly
-    if (sandboxResult.exitCode !== 1 || !sandboxResult.stderr.includes('ENOENT')) {
-        return {
-            stdout: sandboxResult.stdout,
-            stderr: sandboxResult.stderr,
-            exitCode: sandboxResult.exitCode,
-            platform: platform(),
-        };
-    }
-
-    // Last-resort direct spawn fallback (should rarely be reached)
-    const { shell, hint } = getWindowsShell(preferGitBash);
-    ctx.logger.info(`Executing command [${hint}]: ${command}`);
-
-    return new Promise((resolve) => {
-        const stdoutChunks: Buffer[] = [];
-        const stderrChunks: Buffer[] = [];
-
-        const child = spawn(command, [], {
-            cwd,
-            shell: shell as string,
-            windowsHide: true,
-            stdio: ['ignore', 'pipe', 'pipe'],
-            env: { ...process.env },
-        });
-
-        child.stdout?.on('data', (d: Buffer) => stdoutChunks.push(d));
-        child.stderr?.on('data', (d: Buffer) => stderrChunks.push(d));
-
-        const timer = setTimeout(() => {
-            child.kill();
-            resolve({
-                stdout: Buffer.concat(stdoutChunks).toString('utf-8'),
-                stderr: `Command timed out after ${timeout / 1000}s`,
-                exitCode: 124,
-                platform: platform(),
-            });
-        }, timeout);
-
-        child.on('close', (code: number | null) => {
-            clearTimeout(timer);
-            resolve({
-                stdout: Buffer.concat(stdoutChunks).toString('utf-8'),
-                stderr: Buffer.concat(stderrChunks).toString('utf-8'),
-                exitCode: code ?? 1,
-                platform: platform(),
-            });
-        });
-
-        child.on('error', (err: NodeJS.ErrnoException) => {
-            clearTimeout(timer);
-            let errMsg: string;
-            if (err.code === 'ENOENT') {
-                errMsg = `命令未找到: ${command.split(' ')[0]}。请确认已安装并在 PATH 中。`;
-            } else if (err.code === 'EPERM' || err.code === 'EACCES') {
-                errMsg = `权限不足，无法执行: ${command}。\n请检查执行策略: Set-ExecutionPolicy RemoteSigned`;
-            } else {
-                errMsg = err.message;
-            }
-            resolve({ stdout: '', stderr: errMsg, exitCode: 1, platform: platform() });
-        });
-    });
+    const result = await osSandbox.execute(command, { cwd, timeout, preferGitBash });
+    ctx.logger.info(`[OsSandbox] mode=${result.sandboxMode} exitCode=${result.exitCode}`);
+    return {
+        stdout: result.stdout,
+        stderr: result.stderr,
+        exitCode: result.exitCode,
+        platform: platform(),
+    };
 }
 
 /**

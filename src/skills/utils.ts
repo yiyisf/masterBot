@@ -42,12 +42,8 @@ export function findGitBash(): string | null {
 
     // 1. 用户显式环境变量覆盖
     const envPath = process.env['CMASTER_GIT_BASH_PATH'];
-    if (envPath) {
-        if (existsSync(envPath)) {
-            _gitBashCache = envPath;
-            return _gitBashCache;
-        }
-        // 明确指定但不存在，警告并继续探测
+    if (envPath && existsSync(envPath)) {
+        return (_gitBashCache = envPath);
     }
 
     // 2. 从 git 命令位置推断 bash.exe
@@ -63,8 +59,7 @@ export function findGitBash(): string | null {
         if (gitPath) {
             const bashPath = resolve(join(dirname(gitPath), '..', 'bin', 'bash.exe'));
             if (existsSync(bashPath)) {
-                _gitBashCache = bashPath;
-                return _gitBashCache;
+                return (_gitBashCache = bashPath);
             }
         }
     } catch {
@@ -79,14 +74,11 @@ export function findGitBash(): string | null {
     ];
     for (const candidate of candidates) {
         if (existsSync(candidate)) {
-            _gitBashCache = candidate;
-            return _gitBashCache;
+            return (_gitBashCache = candidate);
         }
     }
 
-    // 4. 未找到
-    _gitBashCache = null;
-    return null;
+    return (_gitBashCache = null);
 }
 
 /**
