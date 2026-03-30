@@ -3,7 +3,7 @@ import { platform } from 'os';
 import type { SkillContext } from '../../../src/types.js';
 import { CommandSandbox, type SandboxConfig } from '../../../src/skills/sandbox.js';
 import { OsSandboxExecutor } from '../../../src/skills/os-sandbox.js';
-import { expandPath } from '../../../src/skills/utils.js';
+import { expandPath, findGitBash } from '../../../src/skills/utils.js';
 
 function getSandbox(ctx: SkillContext): CommandSandbox | null {
     const sandboxConfig = (ctx.config as any)?.sandbox as SandboxConfig | undefined;
@@ -18,19 +18,17 @@ function getSandbox(ctx: SkillContext): CommandSandbox | null {
 export const resolvePath = expandPath;
 
 /**
- * Get platform-appropriate shell config
+ * Get platform-appropriate shell for Windows direct-spawn fallback.
+ * Priority: Git Bash (if available and preferred) → PowerShell
  */
-function getShellConfig(): { shell: string | boolean; hint: string } {
-    if (platform() === 'win32') {
-        return {
-            shell: 'powershell.exe',
-            hint: 'PowerShell syntax (Windows)',
-        };
+function getWindowsShell(preferGitBash: boolean): { shell: string; hint: string } {
+    if (preferGitBash) {
+        const bashPath = findGitBash();
+        if (bashPath) {
+            return { shell: bashPath, hint: 'Git Bash syntax (Windows)' };
+        }
     }
-    return {
-        shell: '/bin/sh',
-        hint: 'bash syntax',
-    };
+    return { shell: 'powershell.exe', hint: 'PowerShell syntax (Windows)' };
 }
 
 /**
@@ -56,79 +54,26 @@ export async function execute(
         }
     }
 
-    // Windows: python/python3 命令自动补 .exe 避免 AppX 虚拟化 EPERM
-    if (platform() === 'win32' && /^python3?\s/.test(command)) {
-        command = command.replace(/^python3?\s/, 'python.exe ');
+    // Windows: 自动补 .exe 后缀，避免 AppX 虚拟化 EPERM（python/python3/pip/pip3）
+    if (platform() === 'win32') {
+        command = command.replace(/^(python3?|pip3?)\s/, '$1.exe ');
     }
+
+    const preferGitBash = (ctx.config as any)?.skills?.shell?.preferGitBash !== false;
 
     ctx.logger.info(`Executing command: ${command}`);
 
-    // Layer 2: OS-level sandbox execution (macOS sandbox-exec / Linux bwrap)
-    // Windows falls back to direct execution (Layer 1 is the only protection there)
-    if (platform() !== 'win32') {
-        const osSandbox = new OsSandboxExecutor(ctx.logger);
-        const result = await osSandbox.execute(command, { cwd, timeout });
-        ctx.logger.info(`[OsSandbox] mode=${result.sandboxMode} exitCode=${result.exitCode}`);
-        return {
-            stdout: result.stdout,
-            stderr: result.stderr,
-            exitCode: result.exitCode,
-            platform: platform(),
-        };
-    }
-
-    // Windows: direct spawn fallback
-    const { shell, hint } = getShellConfig();
-    ctx.logger.info(`Executing command [${hint}]: ${command}`);
-
-    return new Promise((resolve) => {
-        const stdoutChunks: Buffer[] = [];
-        const stderrChunks: Buffer[] = [];
-
-        const child = spawn(command, [], {
-            cwd,
-            shell: shell as string,
-            windowsHide: true,
-            stdio: ['ignore', 'pipe', 'pipe'],
-            env: { ...process.env },
-        });
-
-        child.stdout?.on('data', (d: Buffer) => stdoutChunks.push(d));
-        child.stderr?.on('data', (d: Buffer) => stderrChunks.push(d));
-
-        const timer = setTimeout(() => {
-            child.kill();
-            resolve({
-                stdout: Buffer.concat(stdoutChunks).toString('utf-8'),
-                stderr: `Command timed out after ${timeout / 1000}s`,
-                exitCode: 124,
-                platform: platform(),
-            });
-        }, timeout);
-
-        child.on('close', (code: number | null) => {
-            clearTimeout(timer);
-            resolve({
-                stdout: Buffer.concat(stdoutChunks).toString('utf-8'),
-                stderr: Buffer.concat(stderrChunks).toString('utf-8'),
-                exitCode: code ?? 1,
-                platform: platform(),
-            });
-        });
-
-        child.on('error', (err: NodeJS.ErrnoException) => {
-            clearTimeout(timer);
-            let errMsg: string;
-            if (err.code === 'ENOENT') {
-                errMsg = `命令未找到: ${command.split(' ')[0]}。请确认已安装并在 PATH 中。`;
-            } else if (err.code === 'EPERM' || err.code === 'EACCES') {
-                errMsg = `权限不足，无法执行: ${command}。\n请检查执行策略: Set-ExecutionPolicy RemoteSigned`;
-            } else {
-                errMsg = err.message;
-            }
-            resolve({ stdout: '', stderr: errMsg, exitCode: 1, platform: platform() });
-        });
-    });
+    // Layer 2: OS-level sandbox (macOS sandbox-exec / Linux bwrap / Windows Git Bash or PowerShell)
+    // OsSandboxExecutor handles all platforms including Windows; ENOENT fallback is done internally.
+    const osSandbox = new OsSandboxExecutor(ctx.logger);
+    const result = await osSandbox.execute(command, { cwd, timeout, preferGitBash });
+    ctx.logger.info(`[OsSandbox] mode=${result.sandboxMode} exitCode=${result.exitCode}`);
+    return {
+        stdout: result.stdout,
+        stderr: result.stderr,
+        exitCode: result.exitCode,
+        platform: platform(),
+    };
 }
 
 /**
@@ -152,11 +97,20 @@ export async function execute_background(
 
     ctx.logger.info(`Spawning background command: ${command}`);
 
+    const isWin = platform() === 'win32';
+    let windowsShell = 'powershell.exe';
+    if (isWin) {
+        const preferGitBash = (ctx.config as any)?.skills?.shell?.preferGitBash !== false;
+        windowsShell = getWindowsShell(preferGitBash).shell;
+    }
+
     const child = spawn(command, [], {
         cwd,
-        shell: true,
+        // On Windows use Git Bash (or PowerShell fallback); on Unix shell:true uses /bin/sh
+        shell: isWin ? windowsShell : true,
         detached: true,
         stdio: 'ignore',
+        ...(isWin ? { windowsHide: true } : {}),
     });
 
     child.unref();

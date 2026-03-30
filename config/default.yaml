@@ -55,6 +55,7 @@ skills:
     - ./skills/installed
     - ./skills/local
   shell:
+    preferGitBash: true
     sandbox:
       enabled: true
       mode: blocklist

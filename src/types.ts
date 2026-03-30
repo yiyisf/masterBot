@@ -257,6 +257,7 @@ export interface Config {
         autoLoad: boolean;
         directories: string[];
         shell?: {
+            preferGitBash?: boolean;
             sandbox?: {
                 enabled: boolean;
                 mode: 'blocklist' | 'allowlist';
