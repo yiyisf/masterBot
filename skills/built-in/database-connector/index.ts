@@ -1,4 +1,5 @@
 import { readFileSync, existsSync } from 'fs';
+import { join } from 'path';
 import type { SkillContext } from '../../../src/types.js';
 import { expandPath } from '../../../src/skills/utils.js';
 
