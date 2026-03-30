@@ -1,6 +1,7 @@
 import { platform, homedir } from 'os';
-import { resolve, join } from 'path';
-import { spawn } from 'child_process';
+import { resolve, join, dirname } from 'path';
+import { spawn, execFileSync } from 'child_process';
+import { existsSync } from 'fs';
 
 /**
  * 统一路径展开：处理 ~ 和 undefined 防御
@@ -18,6 +19,74 @@ export function expandPath(p: unknown): string {
  */
 export function resolveCliCommand(name: string): string {
     return platform() === 'win32' ? `${name}.cmd` : name;
+}
+
+// 模块级缓存，整个进程生命周期内只探测一次
+let _gitBashCache: string | null | undefined = undefined;
+
+/**
+ * Windows 专用：查找 Git Bash (bash.exe) 可执行文件路径
+ * 参照 Claude Code 官方的 CLAUDE_CODE_GIT_BASH_PATH 机制。
+ *
+ * 优先级：
+ *   1. 环境变量 CMASTER_GIT_BASH_PATH（用户显式指定）
+ *   2. 从 `git` 命令路径推断（git.exe → ../../bin/bash.exe）
+ *   3. 常见安装路径 fallback
+ *   4. 返回 null（由调用方决定降级策略）
+ *
+ * 非 Windows 平台直接返回 null。结果被模块级缓存，只探测一次。
+ */
+export function findGitBash(): string | null {
+    if (platform() !== 'win32') return null;
+    if (_gitBashCache !== undefined) return _gitBashCache;
+
+    // 1. 用户显式环境变量覆盖
+    const envPath = process.env['CMASTER_GIT_BASH_PATH'];
+    if (envPath) {
+        if (existsSync(envPath)) {
+            _gitBashCache = envPath;
+            return _gitBashCache;
+        }
+        // 明确指定但不存在，警告并继续探测
+    }
+
+    // 2. 从 git 命令位置推断 bash.exe
+    //    git 路径通常是: C:\Program Files\Git\cmd\git.exe
+    //    bash.exe 路径:  C:\Program Files\Git\bin\bash.exe
+    try {
+        const gitRaw = execFileSync('where', ['git'], {
+            encoding: 'utf-8',
+            timeout: 3000,
+            windowsHide: true,
+        });
+        const gitPath = gitRaw.split('\n')[0]?.trim();
+        if (gitPath) {
+            const bashPath = resolve(join(dirname(gitPath), '..', 'bin', 'bash.exe'));
+            if (existsSync(bashPath)) {
+                _gitBashCache = bashPath;
+                return _gitBashCache;
+            }
+        }
+    } catch {
+        // where 命令失败：git 未安装或不在 PATH，继续 fallback
+    }
+
+    // 3. 常见安装路径 fallback
+    const candidates = [
+        'C:\\Program Files\\Git\\bin\\bash.exe',
+        'C:\\Program Files (x86)\\Git\\bin\\bash.exe',
+        'C:\\Git\\bin\\bash.exe',
+    ];
+    for (const candidate of candidates) {
+        if (existsSync(candidate)) {
+            _gitBashCache = candidate;
+            return _gitBashCache;
+        }
+    }
+
+    // 4. 未找到
+    _gitBashCache = null;
+    return null;
 }
 
 /**

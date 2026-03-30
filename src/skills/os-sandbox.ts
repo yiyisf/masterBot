@@ -1,6 +1,7 @@
 import { spawn } from 'child_process';
 import { platform } from 'os';
 import type { Logger } from '../types.js';
+import { findGitBash } from './utils.js';
 
 export interface OsSandboxOptions {
     cwd?: string;
@@ -8,6 +9,8 @@ export interface OsSandboxOptions {
     /** Allow outbound network access (default: false on Linux bwrap) */
     allowNetwork?: boolean;
     logger?: Logger;
+    /** Windows: prefer Git Bash over PowerShell (default: true) */
+    preferGitBash?: boolean;
 }
 
 export interface OsSandboxResult {
@@ -89,14 +92,14 @@ export class OsSandboxExecutor {
     }
 
     async execute(command: string, opts: OsSandboxOptions = {}): Promise<OsSandboxResult> {
-        const { cwd = process.cwd(), timeout = 30000, allowNetwork = false } = opts;
+        const { cwd = process.cwd(), timeout = 30000, allowNetwork = false, preferGitBash = true } = opts;
 
         if (this.os === 'darwin') {
             return this.execMacOS(command, cwd, timeout);
         }
 
         if (this.os === 'win32') {
-            return this.execWindows(command, cwd, timeout);
+            return this.execWindows(command, cwd, timeout, preferGitBash);
         }
 
         if (this.os === 'linux') {
@@ -129,7 +132,18 @@ export class OsSandboxExecutor {
         return this.spawnWrapped('bwrap', buildBwrapArgs(command, cwd, allowNetwork), cwd, timeout, 'bwrap');
     }
 
-    private async execWindows(command: string, cwd: string, timeout: number): Promise<OsSandboxResult> {
+    private async execWindows(command: string, cwd: string, timeout: number, preferGitBash = true): Promise<OsSandboxResult> {
+        // Prefer Git Bash for bash-syntax compatibility (mirrors Claude Code's approach)
+        if (preferGitBash) {
+            const bashPath = findGitBash();
+            if (bashPath) {
+                this.logger?.info(`[OsSandbox] Windows Git Bash: ${command}`);
+                return this.spawnWrapped(bashPath, ['-c', command], cwd, timeout, 'windows-restricted');
+            }
+            this.logger?.warn('[OsSandbox] Git Bash not found, falling back to PowerShell');
+        }
+
+        // Fallback: restricted PowerShell
         this.logger?.info(`[OsSandbox] Windows restricted PowerShell: ${command}`);
         const args = [
             '-NoProfile',

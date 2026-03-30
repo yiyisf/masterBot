@@ -3,7 +3,7 @@ import { platform } from 'os';
 import type { SkillContext } from '../../../src/types.js';
 import { CommandSandbox, type SandboxConfig } from '../../../src/skills/sandbox.js';
 import { OsSandboxExecutor } from '../../../src/skills/os-sandbox.js';
-import { expandPath } from '../../../src/skills/utils.js';
+import { expandPath, findGitBash } from '../../../src/skills/utils.js';
 
 function getSandbox(ctx: SkillContext): CommandSandbox | null {
     const sandboxConfig = (ctx.config as any)?.sandbox as SandboxConfig | undefined;
@@ -18,19 +18,17 @@ function getSandbox(ctx: SkillContext): CommandSandbox | null {
 export const resolvePath = expandPath;
 
 /**
- * Get platform-appropriate shell config
+ * Get platform-appropriate shell for Windows direct-spawn fallback.
+ * Priority: Git Bash (if available and preferred) → PowerShell
  */
-function getShellConfig(): { shell: string | boolean; hint: string } {
-    if (platform() === 'win32') {
-        return {
-            shell: 'powershell.exe',
-            hint: 'PowerShell syntax (Windows)',
-        };
+function getWindowsShell(preferGitBash: boolean): { shell: string; hint: string } {
+    if (preferGitBash) {
+        const bashPath = findGitBash();
+        if (bashPath) {
+            return { shell: bashPath, hint: 'Git Bash syntax (Windows)' };
+        }
     }
-    return {
-        shell: '/bin/sh',
-        hint: 'bash syntax',
-    };
+    return { shell: 'powershell.exe', hint: 'PowerShell syntax (Windows)' };
 }
 
 /**
@@ -61,10 +59,11 @@ export async function execute(
         command = command.replace(/^(python3?|pip3?)\s/, '$1.exe ');
     }
 
+    const preferGitBash = (ctx.config as any)?.skills?.shell?.preferGitBash !== false;
+
     ctx.logger.info(`Executing command: ${command}`);
 
-    // Layer 2: OS-level sandbox execution (macOS sandbox-exec / Linux bwrap)
-    // Windows falls back to direct execution (Layer 1 is the only protection there)
+    // Layer 2: OS-level sandbox execution (macOS sandbox-exec / Linux bwrap / Windows Git Bash or PowerShell)
     if (platform() !== 'win32') {
         const osSandbox = new OsSandboxExecutor(ctx.logger);
         const result = await osSandbox.execute(command, { cwd, timeout });
@@ -77,8 +76,23 @@ export async function execute(
         };
     }
 
-    // Windows: direct spawn fallback
-    const { shell, hint } = getShellConfig();
+    // Windows: OS-level sandbox (Git Bash or PowerShell depending on preferGitBash)
+    const osSandbox = new OsSandboxExecutor(ctx.logger);
+    const sandboxResult = await osSandbox.execute(command, { cwd, timeout, preferGitBash });
+    ctx.logger.info(`[OsSandbox] mode=${sandboxResult.sandboxMode} exitCode=${sandboxResult.exitCode}`);
+
+    // If sandbox execution succeeded (no ENOENT of both bash and powershell), return directly
+    if (sandboxResult.exitCode !== 1 || !sandboxResult.stderr.includes('ENOENT')) {
+        return {
+            stdout: sandboxResult.stdout,
+            stderr: sandboxResult.stderr,
+            exitCode: sandboxResult.exitCode,
+            platform: platform(),
+        };
+    }
+
+    // Last-resort direct spawn fallback (should rarely be reached)
+    const { shell, hint } = getWindowsShell(preferGitBash);
     ctx.logger.info(`Executing command [${hint}]: ${command}`);
 
     return new Promise((resolve) => {
@@ -153,10 +167,16 @@ export async function execute_background(
     ctx.logger.info(`Spawning background command: ${command}`);
 
     const isWin = platform() === 'win32';
+    let windowsShell = 'powershell.exe';
+    if (isWin) {
+        const preferGitBash = (ctx.config as any)?.skills?.shell?.preferGitBash !== false;
+        windowsShell = getWindowsShell(preferGitBash).shell;
+    }
+
     const child = spawn(command, [], {
         cwd,
-        // On Windows use PowerShell (consistent with execute()); on Unix shell:true uses /bin/sh
-        shell: isWin ? 'powershell.exe' : true,
+        // On Windows use Git Bash (or PowerShell fallback); on Unix shell:true uses /bin/sh
+        shell: isWin ? windowsShell : true,
         detached: true,
         stdio: 'ignore',
         ...(isWin ? { windowsHide: true } : {}),
