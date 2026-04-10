@@ -37,11 +37,12 @@ const MACOS_PROFILE = `
 `.trim();
 
 /**
- * Check if a binary exists on PATH.
+ * Check if a binary exists on PATH (cross-platform: where on Windows, which on Unix).
  */
 async function binExists(name: string): Promise<boolean> {
     return new Promise(resolve => {
-        const p = spawn('which', [name], { stdio: 'ignore' });
+        const cmd = platform() === 'win32' ? 'where' : 'which';
+        const p = spawn(cmd, [name], { stdio: 'ignore' });
         p.on('close', code => resolve(code === 0));
         p.on('error', () => resolve(false));
     });
@@ -183,7 +184,7 @@ export class OsSandboxExecutor {
             child.stderr?.on('data', (d: Buffer) => stderrChunks.push(d));
 
             const timer = setTimeout(() => {
-                child.kill('SIGKILL');
+                child.kill();
                 resolve({
                     stdout: Buffer.concat(stdoutChunks).toString('utf-8'),
                     stderr: `Command timed out after ${timeout / 1000}s`,
