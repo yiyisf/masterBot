@@ -517,8 +517,13 @@ function ThreadHydrator({ sessionId, onLoaded }: { sessionId: string, onLoaded: 
                 if (isHydrated.current) return;
 
                 if (data.messages && data.messages.length > 0) {
+                    // Truncate large message content to prevent UI freeze during hydration
+                    const HYDRATION_MAX_CHARS = 8000;
                     const threadMessages = data.messages.map((m) => {
-                        const text = typeof m.content === "string" ? m.content : JSON.stringify(m.content);
+                        let text = typeof m.content === "string" ? m.content : JSON.stringify(m.content);
+                        if (text.length > HYDRATION_MAX_CHARS) {
+                            text = text.slice(0, HYDRATION_MAX_CHARS) + `\n\n… [历史内容已折叠，共 ${text.length} 字符]`;
+                        }
                         const id = m.id ? String(m.id) : nanoid();
                         const createdAt = m.createdAt ? new Date(m.createdAt) : new Date();
                         const content = [{ type: "text" as const, text }];

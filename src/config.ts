@@ -27,9 +27,9 @@ function resolveEnvVariables(obj: unknown, parentKey?: string): unknown {
             return process.env[name] ?? defaultValue ?? '';
         });
 
-        // 自动将名称中包含 key/token/password/secret 的字段注册为脱敏引用
+        // 自动将名称中包含 key/token/password/secret 的字段注册为脱敏引用（仅用于日志脱敏，不替换实际值）
         if (parentKey && /key|token|password|secret/i.test(parentKey)) {
-            return registerSecret(resolved);
+            registerSecret(resolved);
         }
         return resolved;
     }
