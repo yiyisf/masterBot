@@ -47,35 +47,36 @@ export async function read_pdf(
         throw e;
     }
 
+    // Determine page range before parsing (use conservative defaults; total will be validated after)
+    const first = Math.max(1, start_page);
+    const lastByMaxPages = first + max_pages - 1;
+    const requestedLast = params.end_page !== undefined
+        ? Math.min(params.end_page, lastByMaxPages)
+        : lastByMaxPages;
+
     const buffer = readFileSync(filePath);
     const parser = new PDFParseClass({ data: buffer });
 
-    // First pass: get total page count with minimal parsing
-    const info = await parser.getText({ first: 1, last: 1 });
-    const totalPages = info.total;
+    // Single getText call — total page count is available in the result
+    const data = await parser.getText({ first, last: requestedLast });
+    await parser.destroy?.();
 
-    // Determine effective page range
-    const first = Math.max(1, start_page);
-    const lastByMaxPages = first + max_pages - 1;
-    const last = Math.min(
-        totalPages,
-        params.end_page !== undefined ? Math.min(params.end_page, lastByMaxPages) : lastByMaxPages
-    );
+    const totalPages = data.total;
+    // Clamp last to actual total (pdf-parse already clamps, but we need it for display)
+    const last = Math.min(requestedLast, totalPages);
 
     ctx.logger.info(`[document-processor] read_pdf: pages ${first}-${last} of ${totalPages}`);
-
-    const data = await parser.getText({ first, last });
-    await parser.destroy?.();
 
     const rangeNote = (first > 1 || last < totalPages)
         ? `（第 ${first}-${last} 页，共 ${totalPages} 页`
         : `（共 ${totalPages} 页`;
 
+    const originalLength = data.text.length;
     let text = data.text;
     let truncNote = '';
-    if (text.length > PDF_MAX_CHARS) {
+    if (originalLength > PDF_MAX_CHARS) {
         text = text.slice(0, PDF_MAX_CHARS);
-        truncNote = `\n\n[内容已截断：显示前 ${PDF_MAX_CHARS} 字符，实际共 ${data.text.length} 字符。请缩小页码范围或减少 max_pages]`;
+        truncNote = `\n\n[内容已截断：显示前 ${PDF_MAX_CHARS} 字符，实际共 ${originalLength} 字符。请缩小页码范围或减少 max_pages]`;
     }
 
     const remainNote = last < totalPages

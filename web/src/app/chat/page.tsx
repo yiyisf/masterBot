@@ -1,5 +1,8 @@
 "use client";
 
+/** 历史消息水合时每条消息的最大显示字符数，超出部分折叠提示，防止大量长文本阻塞主线程 */
+const HYDRATION_MAX_CHARS = 20_000;
+
 import { AssistantRuntimeProvider, useLocalRuntime, useMessage, MessagePrimitive, useThreadRuntime, ActionBarPrimitive, BranchPickerPrimitive, ComposerPrimitive, CompositeAttachmentAdapter, SimpleImageAttachmentAdapter, SimpleTextAttachmentAdapter } from "@assistant-ui/react";
 import {
     Thread,
@@ -517,8 +520,6 @@ function ThreadHydrator({ sessionId, onLoaded }: { sessionId: string, onLoaded: 
                 if (isHydrated.current) return;
 
                 if (data.messages && data.messages.length > 0) {
-                    // Truncate large message content to prevent UI freeze during hydration
-                    const HYDRATION_MAX_CHARS = 8000;
                     const threadMessages = data.messages.map((m) => {
                         let text = typeof m.content === "string" ? m.content : JSON.stringify(m.content);
                         if (text.length > HYDRATION_MAX_CHARS) {
