@@ -9,7 +9,7 @@ import type {
     MemoryAccess,
     Attachment
 } from '../types.js';
-import { SkillRegistry } from '../skills/registry.js';
+import { SkillRegistry, type ISkillRegistry } from '../skills/registry.js';
 import { ContextManager } from './context-manager.js';
 import type { LongTermMemory } from '../memory/long-term.js';
 import { taskRepository } from './task-repository.js';
@@ -261,7 +261,7 @@ const KNOWLEDGE_SEARCH_TOOL: ToolDefinition = {
  */
 export class Agent {
     private llmGetter: () => LLMAdapter;
-    private skillRegistry: SkillRegistry;
+    private skillRegistry: ISkillRegistry;
     private logger: Logger;
     private maxIterations: number;
     private contextManager: ContextManager;
@@ -275,7 +275,7 @@ export class Agent {
 
     constructor(options: {
         llm: LLMAdapter | (() => LLMAdapter);
-        skillRegistry: SkillRegistry;
+        skillRegistry: ISkillRegistry;
         logger: Logger;
         maxIterations?: number;
         maxContextTokens?: number;
@@ -862,7 +862,7 @@ export class Agent {
     /**
  * 获取技能注册中心
  */
-    public getSkillRegistry(): SkillRegistry {
+    public getSkillRegistry(): ISkillRegistry {
         return this.skillRegistry;
     }
 

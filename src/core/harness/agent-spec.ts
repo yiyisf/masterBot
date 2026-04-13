@@ -53,6 +53,8 @@ export interface AgentSpec {
         timeoutMs: number;      // 默认 60000
         /** 该 Spec 同时运行的最大实例数 */
         concurrency: number;    // 默认 3
+        /** 指定 LLM 提供商（未设置则使用系统默认）*/
+        preferredProvider?: string;
     };
 
     memory: {

@@ -5,8 +5,8 @@
  * 管理 AgentSpec 注册和 AgentHarness 实例的完整生命周期：
  * - 并发控制（per-spec concurrency limit）
  * - 排队（超过并发上限时入队）
- * - 实例 CRUD
- * - 自动失败重试（最多 1 次）
+ * - 实例 CRUD 及步骤缓存
+ * - 自动 cleanup（超过阈值时回收已完成实例）
  */
 
 import { AgentHarness, type HarnessExecutionContext } from './agent-harness.js';
@@ -157,6 +157,8 @@ export class AgentPool {
         } finally {
             this.runningCount.set(harness.spec.id, Math.max(0, (this.runningCount.get(harness.spec.id) ?? 1) - 1));
             this.drainQueue(harness.spec.id);
+            // 超过 200 个实例时自动回收旧实例，保留最近 100 个
+            if (this.instances.size > 200) this.cleanup(100);
         }
     }
 
@@ -186,10 +188,21 @@ export class AgentPool {
             else buffer.push(step);
         }, 'pool-stream');
 
-        const cleanup = () => { done = true; unsubStep(); };
+        const cleanup = () => {
+            if (done) return;
+            done = true;
+            unsubStep();
+            unsubComplete();
+            unsubError();
+            // 通知等待中的 consumer 结束
+            if (resolve) { resolve({ value: undefined as any, done: true }); resolve = null; }
+        };
 
-        agentBus.subscribe(`agent.complete.${instanceId}`, cleanup, 'pool-stream');
-        agentBus.subscribe(`agent.error.${instanceId}`, cleanup, 'pool-stream');
+        // 必须先声明再赋值，避免 cleanup 引用未初始化的变量
+        let unsubComplete: () => void;
+        let unsubError: () => void;
+        unsubComplete = agentBus.subscribe(`agent.complete.${instanceId}`, cleanup, 'pool-stream');
+        unsubError = agentBus.subscribe(`agent.error.${instanceId}`, cleanup, 'pool-stream');
 
         return {
             [Symbol.asyncIterator]() { return this; },

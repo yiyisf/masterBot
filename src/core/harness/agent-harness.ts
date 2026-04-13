@@ -23,7 +23,7 @@ import type {
     MemoryAccess,
     Message,
 } from '../../types.js';
-import type { SkillRegistry } from '../../skills/registry.js';
+import { type SkillRegistry } from '../../skills/registry.js';
 import type { LongTermMemory } from '../../memory/long-term.js';
 import type { MemoryRouter } from '../../memory/memory-router.js';
 
@@ -69,9 +69,10 @@ export class AgentHarness {
         );
 
         // Agent 使用过滤后的 registry，maxIterations 遵守 spec 约束
+        // llm 使用函数形式，保持热更新能力（config 切换提供商后生效）
         this.agent = new Agent({
-            llm: getLLM(),
-            skillRegistry: filteredRegistry as any,  // 满足接口
+            llm: () => getLLM(spec.resources?.preferredProvider),
+            skillRegistry: filteredRegistry,
             logger: this.createScopedLogger(),
             maxIterations: spec.resources.maxIterations,
             longTermMemory,
@@ -210,7 +211,7 @@ export class AgentHarness {
                 if (!this.spec.outcome) break;
 
                 // ── Grader 评分 ──
-                yield this.makeStep('grading' as any, `⚖️ 正在评估第 ${revision} 次输出...`);
+                yield this.makeStep('grading', `⚖️ 正在评估第 ${revision} 次输出...`);
                 const graderResult: GraderResult = await this.grader.evaluate(
                     task,
                     lastOutput,
@@ -220,7 +221,7 @@ export class AgentHarness {
                 this.lastScore = graderResult.overallScore;
 
                 yield {
-                    type: 'grade_result' as any,
+                    type: 'grade_result',
                     content: JSON.stringify(graderResult),
                     timestamp: new Date(),
                 } as ExecutionStep;

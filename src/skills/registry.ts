@@ -120,7 +120,20 @@ interface PermissionsConfig {
     rules: PermissionRule[];
 }
 
-export class SkillRegistry {
+/**
+ * ISkillRegistry — SkillRegistry 和 FilteredSkillRegistry 共同实现的接口
+ * Agent / DAGExecutor 依赖此接口，使 FilteredSkillRegistry 可无缝替换 SkillRegistry
+ */
+export interface ISkillRegistry {
+    getToolDefinitions(): Promise<ToolDefinition[]>;
+    executeAction(toolName: string, params: Record<string, unknown>, context: SkillContext): Promise<unknown>;
+    getAllSources(): SkillSource[];
+    registerSource(source: SkillSource): Promise<void>;
+    unregisterSource(name: string): Promise<void>;
+    getSkill(name: string): Skill | undefined;
+}
+
+export class SkillRegistry implements ISkillRegistry {
     private sources: Map<string, SkillSource> = new Map();
     private logger: Logger;
     private permissions?: PermissionsConfig;
@@ -309,7 +322,7 @@ export class SkillRegistry {
  * 工具权限过滤视图 — 实现与 SkillRegistry 相同的核心接口
  * 由 AgentHarness 使用，确保 Worker Agent 只能调用被授权的工具
  */
-export class FilteredSkillRegistry {
+export class FilteredSkillRegistry implements ISkillRegistry {
     constructor(
         private base: SkillRegistry,
         private allow: string[],
@@ -338,6 +351,14 @@ export class FilteredSkillRegistry {
 
     async registerSource(source: SkillSource): Promise<void> {
         return this.base.registerSource(source);
+    }
+
+    async unregisterSource(name: string): Promise<void> {
+        return this.base.unregisterSource(name);
+    }
+
+    getSkill(name: string): Skill | undefined {
+        return this.base.getSkill(name);
     }
 
     private isAllowed(toolName: string): boolean {
