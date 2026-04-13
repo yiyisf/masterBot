@@ -716,8 +716,17 @@ export class GatewayServer {
         // ===== CONFIG MANAGEMENT =====
 
         // Model configuration (Read/Update)
+        // apiKey values are masked in the response to prevent leaking credentials to the browser
         this.app.get('/api/config/models', async () => {
-            return this.config.models;
+            const providers: Record<string, any> = {};
+            for (const [name, cfg] of Object.entries(this.config.models.providers)) {
+                const p = cfg as any;
+                providers[name] = {
+                    ...p,
+                    apiKey: p.apiKey ? p.apiKey.slice(0, 4) + '****' : '',
+                };
+            }
+            return { ...this.config.models, providers };
         });
 
         this.app.patch<{ Body: any }>('/api/config/models', async (request, reply) => {

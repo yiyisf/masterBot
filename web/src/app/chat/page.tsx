@@ -1,5 +1,8 @@
 "use client";
 
+/** 历史消息水合时每条消息的最大显示字符数，超出部分折叠提示，防止大量长文本阻塞主线程 */
+const HYDRATION_MAX_CHARS = 20_000;
+
 import { AssistantRuntimeProvider, useLocalRuntime, useMessage, MessagePrimitive, useThreadRuntime, ActionBarPrimitive, BranchPickerPrimitive, ComposerPrimitive, CompositeAttachmentAdapter, SimpleImageAttachmentAdapter, SimpleTextAttachmentAdapter } from "@assistant-ui/react";
 import {
     Thread,
@@ -530,7 +533,10 @@ function ThreadHydrator({ sessionId, onLoaded }: { sessionId: string, onLoaded: 
 
                 if (data.messages && data.messages.length > 0) {
                     const threadMessages = data.messages.map((m) => {
-                        const text = typeof m.content === "string" ? m.content : JSON.stringify(m.content);
+                        let text = typeof m.content === "string" ? m.content : JSON.stringify(m.content);
+                        if (text.length > HYDRATION_MAX_CHARS) {
+                            text = text.slice(0, HYDRATION_MAX_CHARS) + `\n\n… [历史内容已折叠，共 ${text.length} 字符]`;
+                        }
                         const id = m.id ? String(m.id) : nanoid();
                         const createdAt = m.createdAt ? new Date(m.createdAt) : new Date();
                         const content = [{ type: "text" as const, text }];

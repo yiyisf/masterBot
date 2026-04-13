@@ -7,25 +7,39 @@ import { expandPath } from '../../../src/skills/utils.js';
 // Use createRequire for CJS packages to avoid ESM double-wrapping issues
 const _require = createRequire(import.meta.url);
 
+/** 单次读取最多允许的字符数，超出时截断并提示 */
+const PDF_MAX_CHARS = 40_000;
+
 /**
  * 读取 PDF 文件
  */
 export async function read_pdf(
     ctx: SkillContext,
-    params: { path: string }
+    params: {
+        path: string;
+        /** 起始页码（从 1 开始），默认 1 */
+        start_page?: number;
+        /** 结束页码（含），默认读取到 start_page + max_pages - 1 */
+        end_page?: number;
+        /** 最多读取页数，默认 50。与 end_page 同时指定时取较小范围 */
+        max_pages?: number;
+    }
 ): Promise<string> {
-    const filePath = expandPath(params.path);
+    const { path: rawPath, start_page = 1, max_pages = 50 } = params;
+    const filePath = expandPath(rawPath);
     ctx.logger.info(`[document-processor] read_pdf: ${filePath}`);
 
     if (!existsSync(filePath)) {
         throw new Error(`文件不存在: ${filePath}`);
     }
 
-    let PDFParseClass: new (opts: { data: Buffer }) => { getText(): Promise<{ text: string; total: number }> };
+    let PDFParseClass: new (opts: { data: Buffer }) => {
+        getText(opts?: { first?: number; last?: number }): Promise<{ text: string; total: number }>;
+        destroy(): Promise<void>;
+    };
     try {
         const mod = _require('pdf-parse');
         // v2: module.exports = { PDFParse (class), ... }
-        // v1: module.exports = function(buffer) (plain function, no longer published)
         PDFParseClass = mod.PDFParse ?? mod.default ?? mod;
         if (typeof PDFParseClass !== 'function') throw new Error('no callable export');
     } catch (e: any) {
@@ -33,10 +47,43 @@ export async function read_pdf(
         throw e;
     }
 
+    // Determine page range before parsing (use conservative defaults; total will be validated after)
+    const first = Math.max(1, start_page);
+    const lastByMaxPages = first + max_pages - 1;
+    const requestedLast = params.end_page !== undefined
+        ? Math.min(params.end_page, lastByMaxPages)
+        : lastByMaxPages;
+
     const buffer = readFileSync(filePath);
     const parser = new PDFParseClass({ data: buffer });
-    const data = await parser.getText();
-    return `PDF 文本内容（共 ${data.total} 页）:\n\n${data.text}`;
+
+    // Single getText call — total page count is available in the result
+    const data = await parser.getText({ first, last: requestedLast });
+    await parser.destroy?.();
+
+    const totalPages = data.total;
+    // Clamp last to actual total (pdf-parse already clamps, but we need it for display)
+    const last = Math.min(requestedLast, totalPages);
+
+    ctx.logger.info(`[document-processor] read_pdf: pages ${first}-${last} of ${totalPages}`);
+
+    const rangeNote = (first > 1 || last < totalPages)
+        ? `（第 ${first}-${last} 页，共 ${totalPages} 页`
+        : `（共 ${totalPages} 页`;
+
+    const originalLength = data.text.length;
+    let text = data.text;
+    let truncNote = '';
+    if (originalLength > PDF_MAX_CHARS) {
+        text = text.slice(0, PDF_MAX_CHARS);
+        truncNote = `\n\n[内容已截断：显示前 ${PDF_MAX_CHARS} 字符，实际共 ${originalLength} 字符。请缩小页码范围或减少 max_pages]`;
+    }
+
+    const remainNote = last < totalPages
+        ? `，剩余 ${totalPages - last} 页未读取，可通过 start_page=${last + 1} 继续）`
+        : '）';
+
+    return `PDF 文本内容${rangeNote}${remainNote}:\n\n${text}${truncNote}`;
 }
 
 /**
@@ -148,7 +195,7 @@ export async function write_xlsx(
  */
 export async function convert_to_markdown(
     ctx: SkillContext,
-    params: { path: string; output_path?: string }
+    params: { path: string; output_path?: string; start_page?: number; end_page?: number; max_pages?: number }
 ): Promise<string> {
     const { path: rawPath, output_path: rawOutputPath } = params;
     const filePath = expandPath(rawPath);
@@ -162,7 +209,7 @@ export async function convert_to_markdown(
     let content: string;
 
     if (ext === '.pdf') {
-        content = await read_pdf(ctx, { path: filePath });
+        content = await read_pdf(ctx, { path: filePath, start_page: params.start_page, end_page: params.end_page, max_pages: params.max_pages });
     } else if (ext === '.docx') {
         content = await read_docx(ctx, { path: filePath, format: 'markdown' });
     } else {

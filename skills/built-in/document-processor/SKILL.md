@@ -11,10 +11,13 @@ dependencies:
 
 ### read_pdf
 
-读取 PDF 文件内容并提取文本。
+读取 PDF 文件内容并提取文本，支持按页码范围分批读取，避免超大 PDF 导致上下文溢出。
 
 **Parameters:**
 - `path` (string, required): PDF 文件的本地路径
+- `start_page` (number): 起始页码（从 1 开始），默认 1
+- `end_page` (number): 结束页码（含），默认由 max_pages 决定
+- `max_pages` (number): 本次最多读取页数，默认 50。适用于超大 PDF 分批处理
 
 ### read_docx
 
@@ -49,3 +52,6 @@ dependencies:
 **Parameters:**
 - `path` (string, required): 源文件路径（支持 .pdf、.docx）
 - `output_path` (string): 输出 Markdown 文件路径，不指定则返回内容字符串
+- `start_page` (number): PDF 起始页码，默认 1
+- `end_page` (number): PDF 结束页码
+- `max_pages` (number): PDF 最多读取页数，默认 50
