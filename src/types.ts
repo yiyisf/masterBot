@@ -173,7 +173,7 @@ export interface AgentTask {
 }
 
 export interface ExecutionStep {
-    type: 'thought' | 'plan' | 'action' | 'observation' | 'answer' | 'content' | 'task_created' | 'task_completed' | 'task_failed' | 'meta' | 'suggestions' | 'interrupt' | 'context_compressed' | 'workflow_generated';
+    type: 'thought' | 'plan' | 'action' | 'observation' | 'answer' | 'content' | 'task_created' | 'task_completed' | 'task_failed' | 'meta' | 'suggestions' | 'interrupt' | 'context_compressed' | 'workflow_generated' | 'grading' | 'grade_result' | 'agent_spawned';
     content: string;
     toolName?: string;
     toolInput?: Record<string, unknown>;

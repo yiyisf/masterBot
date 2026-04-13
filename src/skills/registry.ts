@@ -294,4 +294,66 @@ export class SkillRegistry {
     getAllSources(): SkillSource[] {
         return Array.from(this.sources.values());
     }
+
+    /**
+     * 创建工具权限过滤视图（Phase 23: Harness）
+     * allow/deny 支持 glob 模式，如 "file-manager.*", "shell.execute"
+     * deny 优先于 allow；allow 为空则允许全部
+     */
+    createFilteredView(allow: string[], deny: string[]): FilteredSkillRegistry {
+        return new FilteredSkillRegistry(this, allow, deny);
+    }
+}
+
+/**
+ * 工具权限过滤视图 — 实现与 SkillRegistry 相同的核心接口
+ * 由 AgentHarness 使用，确保 Worker Agent 只能调用被授权的工具
+ */
+export class FilteredSkillRegistry {
+    constructor(
+        private base: SkillRegistry,
+        private allow: string[],
+        private deny: string[]
+    ) {}
+
+    async getToolDefinitions(): Promise<ToolDefinition[]> {
+        const all = await this.base.getToolDefinitions();
+        return all.filter(t => this.isAllowed(t.function.name));
+    }
+
+    async executeAction(
+        toolName: string,
+        params: Record<string, unknown>,
+        context: SkillContext
+    ): Promise<unknown> {
+        if (!this.isAllowed(toolName)) {
+            throw new Error(`[FilteredRegistry] Tool "${toolName}" is not permitted for this agent`);
+        }
+        return this.base.executeAction(toolName, params, context);
+    }
+
+    getAllSources(): SkillSource[] {
+        return this.base.getAllSources();
+    }
+
+    async registerSource(source: SkillSource): Promise<void> {
+        return this.base.registerSource(source);
+    }
+
+    private isAllowed(toolName: string): boolean {
+        // deny 优先
+        for (const pattern of this.deny) {
+            if (matchGlob(toolName, pattern)) return false;
+        }
+        // allow 为空 → 允许全部
+        if (this.allow.length === 0) return true;
+        return this.allow.some(p => matchGlob(toolName, p));
+    }
+}
+
+function matchGlob(name: string, pattern: string): boolean {
+    const regex = new RegExp(
+        '^' + pattern.replace(/[.+^${}()|[\]\\]/g, '\\$&').replace(/\*/g, '.*') + '$'
+    );
+    return regex.test(name);
 }

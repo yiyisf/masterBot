@@ -1,36 +1,24 @@
+/**
+ * SoulLoader — SOUL.md Agent 规格加载器
+ * Phase 23 升级：解析完整 AgentSpec（含 tools/resources/memory/hooks/outcome）
+ * 兼容旧格式（仅含 name/description/skills 的简单 frontmatter）
+ */
+
 import { readdir, readFile } from 'fs/promises';
 import { existsSync } from 'fs';
 import { join } from 'path';
 import matter from 'gray-matter';
 import type { Logger } from '../types.js';
-import type { MultiAgentOrchestrator, WorkerAgentConfig } from './multi-agent.js';
-import { Agent } from './agent.js';
-import type { SkillRegistry } from '../skills/registry.js';
-import type { LLMAdapter } from '../types.js';
+import type { AgentPool } from './harness/agent-pool.js';
+import { defaultAgentSpec, type AgentSpec } from './harness/agent-spec.js';
+import type { OutcomeSpec } from './harness/outcome-spec.js';
 
-export interface SoulMetadata {
-    name: string;
-    version: string;
-    description: string;
-    skills?: string[];
-    systemPrompt?: string;
-}
-
-/**
- * SOUL.md 加载器 — Phase 21
- * 扫描 agents/ 目录中的 SOUL.md，动态注册 Worker Agent
- */
 export class SoulLoader {
     constructor(
-        private orchestrator: MultiAgentOrchestrator,
-        private skillRegistry: SkillRegistry,
-        private llmGetter: () => LLMAdapter,
+        private pool: AgentPool,
         private logger: Logger
     ) {}
 
-    /**
-     * 扫描目录下所有 SOUL.md，解析并注册 Worker
-     */
     async loadAgents(dir: string): Promise<number> {
         if (!existsSync(dir)) {
             this.logger.debug(`[soul-loader] agents directory not found: ${dir}`);
@@ -38,7 +26,6 @@ export class SoulLoader {
         }
 
         let loaded = 0;
-
         let entries: import('fs').Dirent[];
         try {
             entries = await readdir(dir, { withFileTypes: true });
@@ -49,63 +36,91 @@ export class SoulLoader {
 
         for (const entry of entries) {
             if (!entry.isDirectory()) continue;
-
-            const agentDir = join(dir, entry.name);
-            const soulMdPath = join(agentDir, 'SOUL.md');
-
-            if (!existsSync(soulMdPath)) {
-                this.logger.debug(`[soul-loader] No SOUL.md in ${agentDir}, skipping`);
-                continue;
-            }
+            const soulMdPath = join(dir, entry.name, 'SOUL.md');
+            if (!existsSync(soulMdPath)) continue;
 
             try {
-                const soul = await this.parseSoulMd(soulMdPath);
-                await this.registerWorker(soul);
+                const spec = await this.parseSoulMd(soulMdPath, entry.name);
+                this.pool.registerSpec(spec);
                 loaded++;
-                this.logger.info(`[soul-loader] Loaded worker agent: ${soul.name} (${soul.description})`);
+                this.logger.info(`[soul-loader] Loaded agent: ${spec.name} v${spec.version}`);
             } catch (err) {
                 this.logger.warn(`[soul-loader] Failed to load ${soulMdPath}: ${(err as Error).message}`);
             }
         }
 
-        this.logger.info(`[soul-loader] Loaded ${loaded} worker agent(s) from ${dir}`);
+        this.logger.info(`[soul-loader] Loaded ${loaded} agent spec(s) from ${dir}`);
         return loaded;
     }
 
-    private async parseSoulMd(filePath: string): Promise<SoulMetadata> {
+    async parseSoulMd(filePath: string, fallbackId?: string): Promise<AgentSpec> {
         const content = await readFile(filePath, 'utf-8');
-        const { data } = matter(content);
+        const { data: fm } = matter(content);
 
-        if (!data.name) {
-            throw new Error(`SOUL.md at ${filePath} missing required field: name`);
+        const id: string = fm.id ?? fm.name ?? fallbackId ?? 'unknown';
+
+        // 兼容旧格式
+        if (!fm.tools && !fm.resources && !fm.memory && !fm.hooks && !fm.outcome) {
+            const legacySkills: string[] = Array.isArray(fm.skills) ? fm.skills : [];
+            return defaultAgentSpec({
+                id,
+                name: fm.name ?? id,
+                version: fm.version ?? '1.0.0',
+                description: fm.description ?? '',
+                systemPrompt: fm.systemPrompt ?? `你是 ${fm.name ?? id}，${fm.description ?? '专业 AI 助手'}。`,
+                tools: legacySkills.length > 0
+                    ? { allow: legacySkills.map((s: string) => `${s}.*`), deny: [] }
+                    : { allow: [], deny: [] },
+            });
         }
 
-        return {
-            name: data.name,
-            version: data.version ?? '1.0.0',
-            description: data.description ?? '',
-            skills: Array.isArray(data.skills) ? data.skills : [],
-            systemPrompt: typeof data.systemPrompt === 'string' ? data.systemPrompt : '',
-        };
-    }
+        const tools = fm.tools ?? { allow: [], deny: [] };
+        const resources = fm.resources ?? {};
+        const memory = fm.memory ?? {};
+        const hooks = fm.hooks ?? {};
+        const outcomeRaw = fm.outcome;
 
-    private async registerWorker(soul: SoulMetadata): Promise<void> {
-        const config: WorkerAgentConfig = {
-            id: soul.name,
-            name: soul.name,
-            description: soul.description,
-            systemPrompt: soul.systemPrompt ?? `你是 ${soul.name}，${soul.description}`,
-            skills: soul.skills,
-        };
+        const outcome: OutcomeSpec | undefined = outcomeRaw ? {
+            criteria: (outcomeRaw.criteria ?? []).map((c: any) => ({
+                id: c.id,
+                description: c.description,
+                weight: c.weight ?? 5,
+                required: c.required ?? false,
+            })),
+            grader: {
+                provider: outcomeRaw.grader?.provider,
+                maxRevisions: outcomeRaw.grader?.maxRevisions ?? 2,
+                minScore: outcomeRaw.grader?.minScore ?? 75,
+            },
+        } : undefined;
 
-        // 创建共享 LLM 但独立 Agent 实例
-        const workerAgent = new Agent({
-            llm: this.llmGetter,
-            skillRegistry: this.skillRegistry,
-            logger: this.logger,
-            maxIterations: 8,
+        return defaultAgentSpec({
+            id,
+            name: fm.name ?? id,
+            version: fm.version ?? '1.0.0',
+            description: fm.description ?? '',
+            systemPrompt: fm.systemPrompt ?? `你是 ${fm.name ?? id}，${fm.description ?? '专业 AI 助手'}。`,
+            tools: {
+                allow: Array.isArray(tools.allow) ? tools.allow : [],
+                deny: Array.isArray(tools.deny) ? tools.deny : [],
+            },
+            resources: {
+                maxIterations: resources.maxIterations ?? 10,
+                timeoutMs: resources.timeoutMs ?? 60_000,
+                concurrency: resources.concurrency ?? 3,
+            },
+            memory: {
+                namespace: memory.namespace ?? id,
+                scope: memory.scope ?? 'isolated',
+            },
+            hooks: {
+                onStart: hooks.onStart,
+                onToolCall: hooks.onToolCall,
+                onToolResult: hooks.onToolResult,
+                onComplete: hooks.onComplete,
+                onError: hooks.onError,
+            },
+            outcome,
         });
-
-        this.orchestrator.registerWorker(config, workerAgent);
     }
 }
