@@ -13,13 +13,6 @@ import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
-import {
-    Select,
-    SelectContent,
-    SelectItem,
-    SelectTrigger,
-    SelectValue,
-} from "@/components/ui/select";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import {
@@ -430,6 +423,7 @@ export default function AgentsPage() {
     const [spawnSessionId, setSpawnSessionId] = useState("");
     const [spawning, setSpawning] = useState(false);
     const [spawnResult, setSpawnResult] = useState<{ instanceId: string; specId: string } | null>(null);
+    const [spawnError, setSpawnError] = useState<string | null>(null);
     const [activeTab, setActiveTab] = useState("specs");
 
     const loadSpecs = useCallback(async () => {
@@ -473,6 +467,7 @@ export default function AgentsPage() {
         if (!spawnSpec || !spawnTask.trim()) return;
         setSpawning(true);
         setSpawnResult(null);
+        setSpawnError(null);
         try {
             const res = await fetch(`${API_BASE}/api/agents/spawn`, {
                 method: "POST",
@@ -483,10 +478,15 @@ export default function AgentsPage() {
                     sessionId: spawnSessionId.trim() || undefined,
                 }),
             });
-            const data = await res.json() as { instanceId: string; specId: string };
+            const data = await res.json() as { instanceId: string; specId: string; error?: string };
+            if (!res.ok) {
+                setSpawnError(data.error ?? `启动失败 (${res.status})`);
+                return;
+            }
             setSpawnResult(data);
             await loadInstances();
         } catch (e) {
+            setSpawnError("网络错误，请检查后端连接");
             console.error(e);
         } finally {
             setSpawning(false);
@@ -498,6 +498,7 @@ export default function AgentsPage() {
         setSpawnTask("");
         setSpawnSessionId("");
         setSpawnResult(null);
+        setSpawnError(null);
     };
 
     const closeSpawnDialog = () => {
@@ -690,6 +691,13 @@ export default function AgentsPage() {
                                     <span>Grader: <strong className="text-foreground">{spawnSpec.hasOutcome ? "已配置" : "未配置"}</strong></span>
                                 </div>
                             )}
+                        </div>
+                    )}
+
+                    {spawnError && (
+                        <div className="flex items-center gap-2 rounded-md border border-destructive/40 bg-destructive/5 px-3 py-2 text-xs text-destructive">
+                            <AlertTriangle className="h-3.5 w-3.5 shrink-0" />
+                            {spawnError}
                         </div>
                     )}
 
