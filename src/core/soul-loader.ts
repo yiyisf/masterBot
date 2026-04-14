@@ -78,6 +78,18 @@ export class SoulLoader {
         const resources = fm.resources ?? {};
         const memory = fm.memory ?? {};
         const hooks = fm.hooks ?? {};
+
+        // 歸一化 YAML hook 格式：SOUL.md 可直接寫 `message:` / `command:` 等頂層屬性，
+        // 解析時統一包裝進 config: {} 以符合 HookDef 類型
+        const normalizeHooks = (list: any[] | undefined): any[] | undefined => {
+            if (!Array.isArray(list)) return list;
+            return list.map((h: any) => {
+                if (!h || h.config !== undefined) return h; // 已是標準格式
+                const { type, ...rest } = h;
+                return { type, config: rest };
+            });
+        };
+
         const outcomeRaw = fm.outcome;
 
         const outcome: OutcomeSpec | undefined = outcomeRaw ? {
@@ -114,11 +126,11 @@ export class SoulLoader {
                 scope: memory.scope ?? 'isolated',
             },
             hooks: {
-                onStart: hooks.onStart,
-                onToolCall: hooks.onToolCall,
-                onToolResult: hooks.onToolResult,
-                onComplete: hooks.onComplete,
-                onError: hooks.onError,
+                onStart: normalizeHooks(hooks.onStart),
+                onToolCall: normalizeHooks(hooks.onToolCall),
+                onToolResult: normalizeHooks(hooks.onToolResult),
+                onComplete: normalizeHooks(hooks.onComplete),
+                onError: normalizeHooks(hooks.onError),
             },
             outcome,
         });
