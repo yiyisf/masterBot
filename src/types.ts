@@ -194,6 +194,40 @@ export interface ExecutionStep {
     timestamp: Date;
 }
 
+// ============ Meta-Harness Types ============
+
+/**
+ * ToolResult — 统一工具执行结果（不抛异常，错误作为值返回）
+ * Brain/Hands 边界的标准信封：任何 skill 执行失败一律转换为 ToolResult.error
+ */
+export type ToolResult =
+    | { kind: 'ok'; value: string }
+    | { kind: 'error'; message: string; retryable: boolean };
+
+/**
+ * SessionEvent — append-only 会话事件日志条目
+ * Session 层独立于 Harness 进程存活，支持 wake 恢复
+ */
+export type SessionEventType =
+    | 'session_start'
+    | 'session_end'
+    | 'llm_request'
+    | 'llm_response'
+    | 'tool_call'
+    | 'tool_result'
+    | 'tool_error'
+    | 'harness_wake'
+    | 'harness_transform';
+
+export interface SessionEvent {
+    id: string;
+    sessionId: string;
+    timestamp: number;
+    type: SessionEventType;
+    payload: Record<string, unknown>;
+    causedBy?: string;  // parent event id
+}
+
 // ============ Gateway Types ============
 
 export interface ChatRequest {

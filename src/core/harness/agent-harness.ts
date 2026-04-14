@@ -50,6 +50,8 @@ export class AgentHarness {
     private agent: Agent;
     private grader: Grader;
     private hookRunner: HookRunner;
+    /** 可选的事件发射回调（由 AgentPool 注入，写入 SessionEventStore） */
+    private _emitEvent?: (type: string, payload: Record<string, unknown>, causedBy?: string) => string;
 
     constructor(
         readonly spec: AgentSpec,
@@ -58,8 +60,10 @@ export class AgentHarness {
         private logger: Logger,
         longTermMemory?: LongTermMemory,
         memoryRouter?: MemoryRouter,
-        private pauseSignal?: { paused: boolean }
+        private pauseSignal?: { paused: boolean },
+        emitEvent?: (type: string, payload: Record<string, unknown>, causedBy?: string) => string
     ) {
+        this._emitEvent = emitEvent;
         this.instanceId = nanoid(12);
 
         // 构建权限过滤视图
@@ -130,6 +134,16 @@ export class AgentHarness {
         this.state = 'running';
         this.startedAt = new Date();
 
+        // 发射 session_start 事件（best-effort，不阻断执行）
+        this.emit('session_start', {
+            specId: this.spec.id,
+            specName: this.spec.name,
+            instanceId: this.instanceId,
+            task,
+            userId: context.userId,
+            parentInstanceId: context.parentInstanceId,
+        });
+
         const hookCtx: HookContext = {
             instanceId: this.instanceId,
             specId: this.spec.id,
@@ -180,6 +194,10 @@ export class AgentHarness {
 
                     // onToolCall hooks
                     if (step.type === 'action') {
+                        this.emit('tool_call', {
+                            toolName: step.toolName,
+                            toolInput: step.toolInput,
+                        });
                         const stepCtx = { ...hookCtx, step };
                         try {
                             await this.hookRunner.run(this.spec.hooks.onToolCall ?? [], stepCtx);
@@ -197,6 +215,10 @@ export class AgentHarness {
 
                     // onToolResult hooks
                     if (step.type === 'observation') {
+                        this.emit('tool_result', {
+                            toolName: step.toolName,
+                            content: (step.content ?? '').slice(0, 500),
+                        });
                         await this.hookRunner.run(this.spec.hooks.onToolResult ?? [], { ...hookCtx, step });
                     }
 
@@ -258,12 +280,14 @@ ${failedCriteria ? `各维度具体问题：\n${failedCriteria}` : ''}`;
 
             this.state = 'completed';
             this.completedAt = new Date();
+            this.emit('session_end', { status: 'completed', instanceId: this.instanceId });
             await this.hookRunner.run(this.spec.hooks.onComplete ?? [], hookCtx);
 
         } catch (err) {
             this.state = 'failed';
             this.completedAt = new Date();
             this.error = (err as Error).message;
+            this.emit('session_end', { status: 'failed', error: this.error, instanceId: this.instanceId });
             await this.hookRunner.run(this.spec.hooks.onError ?? [], { ...hookCtx, error: err as Error });
             throw err;
         }
@@ -272,6 +296,18 @@ ${failedCriteria ? `各维度具体问题：\n${failedCriteria}` : ''}`;
     // ─────────────────────────────────────────────────
     // 工具方法
     // ─────────────────────────────────────────────────
+
+    /**
+     * 向 SessionEventStore 发射事件（best-effort，DB 失败不影响执行）
+     */
+    private emit(type: string, payload: Record<string, unknown>, causedBy?: string): string {
+        if (!this._emitEvent) return '';
+        try {
+            return this._emitEvent(type, payload, causedBy);
+        } catch {
+            return '';
+        }
+    }
 
     private makeStep(type: ExecutionStep['type'], content: string): ExecutionStep {
         return { type, content, timestamp: new Date() };

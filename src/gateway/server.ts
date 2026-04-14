@@ -1859,6 +1859,12 @@ export class GatewayServer {
             return { steps };
         });
 
+        // GET /api/agents/sessions/:id/events — 获取 Session 持久化事件日志（Phase 24）
+        this.app.get<{ Params: { id: string } }>('/api/agents/sessions/:id/events', async (request, reply) => {
+            const events = pool.getSessionEvents(request.params.id);
+            return { sessionId: request.params.id, events };
+        });
+
         this.logger.info('[harness] Managed Agents API routes registered (/api/agents/*)');
     }
 
