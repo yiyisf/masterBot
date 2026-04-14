@@ -19,6 +19,7 @@ import { ConnectorManager } from './skills/connector-source.js';
 import { SelfImprovementEngine } from './core/self-improvement.js';
 import { initMemoryRouter } from './memory/memory-router.js';
 import { SoulLoader } from './core/soul-loader.js';
+import { AgentPool } from './core/harness/agent-pool.js';
 
 async function main() {
     console.log(`
@@ -121,9 +122,23 @@ async function main() {
         knowledgeGraph,
     });
 
-    // Phase 21: 加载 SOUL.md Worker Agents
-    const soulLoader = new SoulLoader(orchestrator, skillRegistry, getLlm, logger);
+    // Phase 23: 初始化 AgentPool（Managed Agents Harness）
+    const agentPool = new AgentPool(
+        (provider?: string) => {
+            const p = provider ?? config.models.default;
+            const llmConfig = config.models.providers[p] ?? config.models.providers[config.models.default];
+            return llmFactory.getAdapter(p, llmConfig);
+        },
+        skillRegistry,
+        logger,
+        longTermMemory,
+        memoryRouter
+    );
+
+    // Phase 23: 加载 SOUL.md Agent 规格（新格式 + 兼容旧格式）
+    const soulLoader = new SoulLoader(agentPool, logger);
     await soulLoader.loadAgents(path.join(process.cwd(), 'agents'));
+    await soulLoader.loadAgents(path.join(process.cwd(), 'agents/builtin'));
 
     const scheduler = new SchedulerService(logger);
 
@@ -165,6 +180,7 @@ async function main() {
         connectorManager,
         scheduler,
         selfImprovementEngine,
+        agentPool,
     });
 
     await server.start(config.server.port, config.server.host);

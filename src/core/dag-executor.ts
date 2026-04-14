@@ -1,5 +1,5 @@
 import type { SkillContext, Logger } from '../types.js';
-import { SkillRegistry } from '../skills/registry.js';
+import { type ISkillRegistry } from '../skills/registry.js';
 import { TaskRepository } from './task-repository.js';
 
 export interface DAGStepResult {
@@ -19,14 +19,14 @@ const MAX_ROUNDS = 50;
  */
 export class DAGExecutor {
     private sessionId: string;
-    private skillRegistry: SkillRegistry;
+    private skillRegistry: ISkillRegistry;
     private skillContext: SkillContext;
     private logger: Logger;
     private taskRepo: TaskRepository;
 
     constructor(
         sessionId: string,
-        skillRegistry: SkillRegistry,
+        skillRegistry: ISkillRegistry,
         skillContext: SkillContext,
         logger: Logger,
         taskRepo?: TaskRepository,

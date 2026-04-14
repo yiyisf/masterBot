@@ -2,7 +2,7 @@ import { readFileSync, existsSync, readdirSync } from 'fs';
 import { join } from 'path';
 import { nanoid } from 'nanoid';
 import type { Logger, SkillContext } from '../types.js';
-import { SkillRegistry } from '../skills/registry.js';
+import { type ISkillRegistry } from '../skills/registry.js';
 import { auditRepository, type TriggerSource } from './audit-repository.js';
 
 export interface RunbookStep {
@@ -50,10 +50,10 @@ export interface RunbookExecutionResult {
  */
 export class RunbookEngine {
     private logger: Logger;
-    private skillRegistry: SkillRegistry;
+    private skillRegistry: ISkillRegistry;
     private runbooksDir: string;
 
-    constructor(skillRegistry: SkillRegistry, logger: Logger, runbooksDir?: string) {
+    constructor(skillRegistry: ISkillRegistry, logger: Logger, runbooksDir?: string) {
         this.skillRegistry = skillRegistry;
         this.logger = logger;
         this.runbooksDir = runbooksDir || join(process.cwd(), 'runbooks');

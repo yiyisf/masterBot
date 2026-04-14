@@ -12,6 +12,7 @@
 | 数据库 | node:sqlite (DatabaseSync) | 轻量适合本地，但同步 API 有阻塞风险 |
 | LLM 集成 | OpenAI + Anthropic SDK | 双提供商 + 工厂模式，扩展性好 |
 | Agent 模式 | ReAct + Think-Plan-Act + DAG | 业界主流，plan_task + dag_* 结构化推理 |
+| Managed Agents | AgentSpec + AgentHarness + AgentPool | Phase 23: 声明式 Agent 管理，Outcome Grader 修订循环 |
 | 技能系统 | SKILL.md + MCP + 动态导入 | 声明式协议清晰，多源注册(Local/MCP) |
 | 记忆系统 | 短期 LRU + 长期向量检索 | 双层记忆，跨会话知识持久化 |
 | 安全 | Auth 中间件 + Shell 沙箱 | API Key/JWT + 命令 macOS/Linux/Windows 隔离 |
@@ -25,7 +26,8 @@
 5. **Think-Plan-Act + DAG** — plan_task 结构化推理 + dag_* 任务并行编排
 6. **双层记忆** — 短期 LRU 会话隔离 + 长期 SQLite 向量余弦检索
 7. **前端 ReAct 可视化** — thought/plan/action/observation/task 全阶段透明展示
-28. **安全防护** — 认证中间件 + Shell 命令沙箱 (macOS/Linux/Windows)
+8. **安全防护** — 认证中间件 + Shell 命令沙箱 (macOS/Linux/Windows)
+9. **Managed Agents Harness** — 声明式 AgentSpec + 权限过滤 + Outcome Grader 质量闭环（Phase 23）
 
 ### 已解决的问题 (Phase 5)
 
@@ -56,6 +58,17 @@
 | Agent 无任务分解工具 | 内置 `dag_create_task` / `dag_get_status` / `dag_execute` 工具 |
 | 前端不支持任务事件 | `assistant-runtime.ts` 处理 task_created/completed/failed 事件 |
 
+### 已解决的问题 (Phase 23)
+
+| 问题 | 解决方案 |
+|------|----------|
+| Worker Agent 工具权限无法精确管控 | `FilteredSkillRegistry`（allow/deny glob）+ `ISkillRegistry` 接口 |
+| Agent 质量无保障机制 | `Grader` LLM 多维评分 + Outcome 修订循环 |
+| Agent 生命周期不可控 | `AgentHarness` pause/resume/cancel + 超时熔断 + Hook |
+| 并发 Agent 无调度机制 | `AgentPool` per-spec concurrency + 排队 + 自动 cleanup |
+| Agent 间通信依赖共享状态 | `AgentBus` EventEmitter pub/sub + request-reply 解耦 |
+| SOUL.md 规格能力有限 | 全量 AgentSpec 格式（tools/resources/memory/hooks/outcome） |
+
 ### 待解决问题
 
 #### P0
@@ -64,10 +77,12 @@
 #### P1
 - 错误处理不够一致
 - DAG 可视化组件（前端）
+- AgentPool REST API 前端管理页面（Agent 实例监控）
 
 #### P2
 - 前端无全局状态管理
 - 无可观测性 (metrics/tracing)
+- AgentBus 单例在多进程部署时需改为 Redis pub/sub
 
 ---
 

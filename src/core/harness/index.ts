@@ -1,0 +1,10 @@
+export { AgentHarness } from './agent-harness.js';
+export { AgentPool } from './agent-pool.js';
+export { AgentBus, agentBus } from './agent-bus.js';
+export { HookRunner } from './hook-runner.js';
+export { Grader } from './grader.js';
+export type { AgentSpec, AgentLifecycleState, AgentInstanceInfo, HookDef, HookSet } from './agent-spec.js';
+export { defaultAgentSpec } from './agent-spec.js';
+export type { OutcomeSpec, OutcomeCriterion, OutcomeStatus, GraderResult, CriterionResult } from './outcome-spec.js';
+export type { HarnessExecutionContext } from './agent-harness.js';
+export type { HookContext } from './hook-runner.js';

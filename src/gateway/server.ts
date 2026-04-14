@@ -23,6 +23,7 @@ import { webhookRepository } from '../core/webhook-repository.js';
 import { RunbookEngine } from '../core/runbook-engine.js';
 import { SelfImprovementEngine } from '../core/self-improvement.js';
 import { AgentGateway } from '../core/agent-gateway.js';
+import type { AgentPool } from '../core/harness/agent-pool.js';
 import { auditRepository } from '../core/audit-repository.js';
 import { ImGateway, FeishuAdapter, imUserRegistry, imSessionMapper } from './im-gateway.js';
 
@@ -45,6 +46,7 @@ export class GatewayServer {
     private selfImprovementEngine?: SelfImprovementEngine;
     private agentGateway: AgentGateway;
     private imGateway?: ImGateway;
+    private agentPool?: AgentPool;
 
     constructor(options: {
         agent: Agent;
@@ -58,6 +60,7 @@ export class GatewayServer {
         connectorManager?: any;
         scheduler?: any;
         selfImprovementEngine?: SelfImprovementEngine;
+        agentPool?: AgentPool;
     }) {
         this.agent = options.agent;
         this.sessionManager = options.sessionManager;
@@ -71,6 +74,7 @@ export class GatewayServer {
         this.scheduler = options.scheduler;
         this.selfImprovementEngine = options.selfImprovementEngine;
         this.agentGateway = new AgentGateway(options.logger);
+        this.agentPool = options.agentPool;
 
         // Initialize IM Gateway if enabled
         if (options.config.im?.enabled && options.config.im.platform === 'feishu') {
@@ -1764,6 +1768,98 @@ export class GatewayServer {
 
         // ===== AGENT GATEWAY =====
         this.agentGateway.registerRoutes(this.app);
+
+        // ===== MANAGED AGENTS HARNESS API (Phase 23) =====
+        this.setupAgentPoolRoutes();
+    }
+
+    private setupAgentPoolRoutes(): void {
+        const pool = this.agentPool;
+        if (!pool) return;
+
+        // GET /api/agents/specs — 列出所有已注册 AgentSpec
+        this.app.get('/api/agents/specs', async () => {
+            return pool.listSpecs().map(s => ({
+                id: s.id,
+                name: s.name,
+                version: s.version,
+                description: s.description,
+                tools: s.tools,
+                resources: s.resources,
+                hasOutcome: !!s.outcome,
+            }));
+        });
+
+        // POST /api/agents/specs — 动态注册 AgentSpec（JSON body）
+        this.app.post<{ Body: any }>('/api/agents/specs', async (request, reply) => {
+            try {
+                const spec = request.body as Record<string, any>;
+                if (!spec['id'] || !spec['name']) {
+                    reply.status(400); return { error: 'id and name are required' };
+                }
+                pool.registerSpec(spec as any);
+                return { success: true, id: spec['id'] };
+            } catch (err: any) {
+                reply.status(400); return { error: err.message };
+            }
+        });
+
+        // DELETE /api/agents/specs/:id — 移除 AgentSpec
+        this.app.delete<{ Params: { id: string } }>('/api/agents/specs/:id', async (request, reply) => {
+            pool.unregisterSpec(request.params.id);
+            return { success: true };
+        });
+
+        // GET /api/agents/instances — 列出所有运行实例
+        this.app.get('/api/agents/instances', async () => {
+            return pool.listInstances();
+        });
+
+        // POST /api/agents/spawn — 手动创建实例
+        this.app.post<{ Body: { specId: string; task: string; sessionId?: string } }>('/api/agents/spawn', async (request, reply) => {
+            const { specId, task, sessionId } = request.body;
+            if (!specId || !task) {
+                reply.status(400); return { error: 'specId and task are required' };
+            }
+            try {
+                const sid = sessionId ?? `harness-${Date.now()}`;
+                const memory = this.sessionManager.getSession(sid);
+                const instanceId = await pool.spawn(specId, task, { sessionId: sid, memory });
+                return { instanceId, specId };
+            } catch (err: any) {
+                reply.status(404); return { error: err.message };
+            }
+        });
+
+        // GET /api/agents/instances/:id — 实例详情 + steps
+        this.app.get<{ Params: { id: string } }>('/api/agents/instances/:id', async (request, reply) => {
+            const info = pool.listInstances().find(i => i.instanceId === request.params.id);
+            if (!info) { reply.status(404); return { error: 'Instance not found' }; }
+            const steps = pool.getInstanceSteps(request.params.id);
+            return { ...info, steps };
+        });
+
+        // PATCH /api/agents/instances/:id — pause / resume / cancel
+        this.app.patch<{ Params: { id: string }; Body: { action: string } }>('/api/agents/instances/:id', async (request, reply) => {
+            const { id } = request.params;
+            const { action } = request.body;
+            switch (action) {
+                case 'pause':   pool.pause(id); break;
+                case 'resume':  pool.resume(id); break;
+                case 'cancel':  pool.cancel(id); break;
+                default: reply.status(400); return { error: `Unknown action: ${action}` };
+            }
+            return { success: true, action, instanceId: id };
+        });
+
+        // GET /api/agents/instances/:id/steps — 获取实例步骤历史
+        this.app.get<{ Params: { id: string } }>('/api/agents/instances/:id/steps', async (request, reply) => {
+            const steps = pool.getInstanceSteps(request.params.id);
+            if (!steps) { reply.status(404); return { error: 'Instance not found' }; }
+            return { steps };
+        });
+
+        this.logger.info('[harness] Managed Agents API routes registered (/api/agents/*)');
     }
 
     async start(port: number, host: string): Promise<void> {

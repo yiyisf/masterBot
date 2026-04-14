@@ -230,6 +230,26 @@ CMaster Bot is an enterprise-grade, self-evolving AI agent platform built on a R
 
 ---
 
+### Phase 23 — Managed Agents Harness ✅
+*Goal: Declarative agent specs, execution containers with lifecycle management, outcome-driven grader loop — inspired by Claude Managed Agents architecture*
+
+| Item | Details |
+|------|---------|
+| `AgentSpec` | Declarative YAML/JSON agent definition: tool allow/deny globs, resource limits (maxIterations, timeoutMs, concurrency, preferredProvider), memory scope, lifecycle hooks, outcome criteria |
+| `AgentHarness` | Execution container wrapping `Agent.run()`: `FilteredSkillRegistry` permission enforcement, pause/resume/cancel lifecycle, timeout enforcement, Grader revision loop |
+| `AgentPool` | Instance pool with per-spec concurrency control, queue scheduling when limit reached, step caching, auto-cleanup (>200 instances), `AgentBus` event broadcasting |
+| `AgentBus` | `EventEmitter`-based pub/sub + request-reply for inter-agent async communication; singleton `agentBus` exported for system-wide use |
+| `HookRunner` | Configurable lifecycle hooks: `log` (structured logging), `approve` (human-in-the-loop blocking), `notify` (IM/DingTalk/Feishu), `shell` (external sidecar command) |
+| `Grader` | Independent LLM call evaluating agent output against multi-criteria `OutcomeSpec`; weighted scoring, required-criteria enforcement; status: `satisfied` / `needs_revision` / `failed` |
+| Outcome revision loop | Grader feedback injected as next task prompt; max `maxRevisions` retries until `satisfied` or hard fail |
+| `ISkillRegistry` interface | Extracted from `SkillRegistry`; both `SkillRegistry` and `FilteredSkillRegistry` implement it; `Agent` / `DAGExecutor` / `RunbookEngine` unified to accept `ISkillRegistry` |
+| `SoulLoader` v2 | Rewired to `AgentPool`; parses new full AgentSpec format in SOUL.md frontmatter (tools/resources/memory/hooks/outcome); backward-compatible with old `skills:` format |
+| Built-in agents | `agents/builtin/code-reviewer` (security/quality/performance/actionable criteria), `coder` (correctness/runnable, maxRevisions=3), `researcher` (coverage/accuracy) |
+| REST API | 8 new endpoints under `/api/agents/`: `GET/POST /specs`, `DELETE /specs/:id`, `GET /instances`, `POST /spawn`, `GET/PATCH /instances/:id`, `GET /instances/:id/steps` |
+| Tests | `tests/harness.test.ts`: 17 tests covering AgentSpec, AgentBus, FilteredSkillRegistry, AgentPool, SoulLoader; total suite: 125 tests |
+
+---
+
 ## Version Milestones
 
 | Version | Phases | Status |
@@ -238,6 +258,7 @@ CMaster Bot is an enterprise-grade, self-evolving AI agent platform built on a R
 | v0.2.0 | 10–13 (Enterprise foundation + Innovation) | ✅ Released |
 | v0.3.0 | 14–18 (AIOps + RPA + NL2Insight + Cross-platform) | ✅ Released |
 | v0.4.0 | 19–22 (Self-improvement, Audit, Multi-Agent, Docs) | ✅ Released |
+| v0.5.0 | 23 (Managed Agents Harness) | ✅ Released |
 | v1.0.0 | Production hardening, multi-tenant RBAC, SSO | 🔜 Planned |
 
 ---
