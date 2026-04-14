@@ -177,6 +177,14 @@ const data: SidebarData = {
       ],
     },
     {
+      title: "托管 Agent",
+      url: "/agents",
+      icon: Bot,
+      items: [
+        { title: "Agent 管理台", url: "/agents", badge: "NEW" },
+      ],
+    },
+    {
       title: "合规审计",
       url: "/audit",
       icon: ShieldCheck,
