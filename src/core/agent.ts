@@ -12,6 +12,7 @@ import type {
 import { SkillRegistry, type ISkillRegistry } from '../skills/registry.js';
 import { ContextManager } from './context-manager.js';
 import type { LongTermMemory } from '../memory/long-term.js';
+import type { SessionEventStore, EventSelector } from './harness/session-store.js';
 import { taskRepository } from './task-repository.js';
 import { DAGExecutor } from './dag-executor.js';
 import { waitForApproval } from './interrupt-coordinator.js';
@@ -255,6 +256,29 @@ const KNOWLEDGE_SEARCH_TOOL: ToolDefinition = {
     },
 };
 
+const SESSION_RECALL_TOOL: ToolDefinition = {
+    type: 'function',
+    function: {
+        name: 'session_recall',
+        description: 'Query historical events from the current session event log. Useful for reviewing past tool calls, errors, or results without re-executing them. Supports filtering by event type, tool name, or time range.',
+        parameters: {
+            type: 'object',
+            properties: {
+                types: {
+                    type: 'array',
+                    items: { type: 'string' },
+                    description: 'Filter by event types (e.g. ["tool_call","tool_result","tool_error"])',
+                },
+                toolName: { type: 'string', description: 'Filter events for a specific tool name' },
+                last: { type: 'number', description: 'Return only the last N events (default: 20)' },
+                fromTimestamp: { type: 'number', description: 'Unix ms start timestamp (inclusive)' },
+                toTimestamp: { type: 'number', description: 'Unix ms end timestamp (inclusive)' },
+            },
+            required: [],
+        },
+    },
+};
+
 /**
  * Agent 编排引擎
  * 负责协调 LLM 和技能的交互
@@ -272,6 +296,7 @@ export class Agent {
     private orchestrator?: any;
     private knowledgeGraph?: any;
     private deepThinkingProvider?: () => LLMAdapter;
+    private sessionStore?: SessionEventStore;
 
     constructor(options: {
         llm: LLMAdapter | (() => LLMAdapter);
@@ -286,6 +311,7 @@ export class Agent {
         orchestrator?: any;
         knowledgeGraph?: any;
         deepThinkingProvider?: () => LLMAdapter;
+        sessionStore?: SessionEventStore;
     }) {
         this.llmGetter = typeof options.llm === 'function' ? options.llm : () => options.llm as LLMAdapter;
         this.skillRegistry = options.skillRegistry;
@@ -298,6 +324,7 @@ export class Agent {
         this.orchestrator = options.orchestrator;
         this.knowledgeGraph = options.knowledgeGraph;
         this.deepThinkingProvider = options.deepThinkingProvider;
+        this.sessionStore = options.sessionStore;
         this.contextManager = new ContextManager({
             maxTokens: options.maxContextTokens,
             logger: options.logger,
@@ -398,6 +425,10 @@ export class Agent {
         const builtinTools = [PLAN_TOOL_DEF, DAG_CREATE_TASK_TOOL, DAG_GET_STATUS_TOOL, DAG_EXECUTE_TOOL, SKILL_GENERATE_TOOL, DELEGATE_AGENT_TOOL, KNOWLEDGE_SEARCH_TOOL];
         if (this.longTermMemory) {
             builtinTools.push(MEMORY_REMEMBER_TOOL, MEMORY_RECALL_TOOL);
+        }
+        // Gap 5: session_recall 仅当 sessionStore 已注入时暴露
+        if (this.sessionStore) {
+            builtinTools.push(SESSION_RECALL_TOOL);
         }
         let tools = [...builtinTools, ...externalTools];
 
@@ -526,7 +557,7 @@ export class Agent {
             // 处理工具调用 — 分离内置工具（顺序执行）和外部技能（并行执行）
             const builtinCalls: typeof response.toolCalls = [];
             const externalCalls: typeof response.toolCalls = [];
-            const BUILTIN_NAMES = new Set(['plan_task', 'memory_remember', 'memory_recall', 'dag_create_task', 'dag_get_status', 'dag_execute', 'skill_generate', 'delegate_to_agent', 'knowledge_search']);
+            const BUILTIN_NAMES = new Set(['plan_task', 'memory_remember', 'memory_recall', 'dag_create_task', 'dag_get_status', 'dag_execute', 'skill_generate', 'delegate_to_agent', 'knowledge_search', 'session_recall']);
 
             for (const tc of response.toolCalls) {
                 if (BUILTIN_NAMES.has(tc.function.name)) {
@@ -662,6 +693,30 @@ export class Agent {
                         yield { type: 'observation', content: errorMsg, toolName, timestamp: new Date() };
                         messages.push({ role: 'tool', content: errorMsg, toolCallId: toolCall.id });
                     }
+                } else if (toolName === 'session_recall' && this.sessionStore) {
+                    // Gap 5: Context 外置访问 — Agent 主动查询历史事件
+                    const { types, toolName: filterToolName, last, fromTimestamp, toTimestamp } = params as {
+                        types?: string[];
+                        toolName?: string;
+                        last?: number;
+                        fromTimestamp?: number;
+                        toTimestamp?: number;
+                    };
+                    const selector: EventSelector = {
+                        types: types as any,
+                        toolName: filterToolName,
+                        last: last ?? 20,
+                        fromTimestamp,
+                        toTimestamp,
+                    };
+                    const events = this.sessionStore.getEvents(context.sessionId, selector);
+                    const summary = events.length === 0
+                        ? '当前 session 中未找到匹配的历史事件。'
+                        : `找到 ${events.length} 条历史事件：\n\n` + events.map(e =>
+                            `[${new Date(e.timestamp).toISOString()}] ${e.type}: ${JSON.stringify(e.payload).slice(0, 200)}`
+                          ).join('\n');
+                    yield { type: 'observation', content: summary, toolName, timestamp: new Date() };
+                    messages.push({ role: 'tool', content: summary, toolCallId: toolCall.id });
                 }
             }
 
@@ -737,6 +792,7 @@ export class Agent {
                     logger: this.logger,
                     config: this.skillConfig,
                     llm: this.llm,
+                    sessionToken: (context as any).sessionToken,
                 };
 
                 // Phase 21: 为每个外部工具调用开 span

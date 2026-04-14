@@ -129,6 +129,8 @@ export interface SkillContext {
     logger: Logger;
     config: Record<string, unknown>;
     llm?: unknown;
+    /** Opaque session token（用于 CredentialProxy 换取真实凭证，skill 不可用此访问其他 session） */
+    sessionToken?: string;
 }
 
 export interface SkillResult {
@@ -217,7 +219,9 @@ export type SessionEventType =
     | 'tool_result'
     | 'tool_error'
     | 'harness_wake'
-    | 'harness_transform';
+    | 'harness_transform'
+    | 'credential_access'   // Gap 4: 凭证访问审计
+    | 'permission_check';   // Gap 4: 权限检查审计
 
 export interface SessionEvent {
     id: string;
