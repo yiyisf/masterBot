@@ -19,7 +19,7 @@ import { ConnectorManager } from './skills/connector-source.js';
 import { SelfImprovementEngine } from './core/self-improvement.js';
 import { initMemoryRouter } from './memory/memory-router.js';
 import { SoulLoader } from './core/soul-loader.js';
-import { AgentPool, SessionEventStore } from './core/harness/agent-pool.js';
+import { AgentPool, SessionEventStore, CredentialVault } from './core/harness/agent-pool.js';
 
 async function main() {
     console.log(`
@@ -125,6 +125,14 @@ async function main() {
     // Phase 24: SessionEventStore — Session 持久层（Meta-Harness Brain/Hands/Session 解耦）
     const sessionStore = new SessionEventStore(db);
 
+    // Phase 25: CredentialVault — 凭证隔离层（Gap 4）
+    // VAULT_MASTER_KEY 未设置时退化为 DEV 模式（用固定 key），生产环境必须设置
+    const vaultMasterKey = process.env.VAULT_MASTER_KEY ?? 'masterbot-dev-key-change-in-production';
+    if (!process.env.VAULT_MASTER_KEY) {
+        logger.warn('[credential-vault] VAULT_MASTER_KEY not set — using default dev key (unsafe for production)');
+    }
+    const credentialVault = new CredentialVault(db, vaultMasterKey, sessionStore);
+
     // Phase 23: 初始化 AgentPool（Managed Agents Harness）
     const agentPool = new AgentPool(
         (provider?: string) => {
@@ -136,7 +144,8 @@ async function main() {
         logger,
         longTermMemory,
         memoryRouter,
-        sessionStore
+        sessionStore,
+        credentialVault
     );
 
     // Phase 23: 加载 SOUL.md Agent 规格（新格式 + 兼容旧格式）

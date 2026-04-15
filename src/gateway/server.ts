@@ -1859,11 +1859,29 @@ export class GatewayServer {
             return { steps };
         });
 
-        // GET /api/agents/sessions/:id/events — 获取 Session 持久化事件日志（Phase 24）
-        this.app.get<{ Params: { id: string } }>('/api/agents/sessions/:id/events', async (request, reply) => {
-            const events = pool.getSessionEvents(request.params.id);
-            return { sessionId: request.params.id, events };
-        });
+        // GET /api/agents/sessions/:id/events — 获取 Session 事件日志，支持 EventSelector 过滤（Gap 5）
+        // 查询参数：types（逗号分隔）、toolName、last（数字）、from（Unix ms）、to（Unix ms）
+        this.app.get<{ Params: { id: string }; Querystring: Record<string, string> }>(
+            '/api/agents/sessions/:id/events',
+            async (request) => {
+                const { id } = request.params;
+                const q = request.query;
+
+                const selector = Object.keys(q).length > 0 ? {
+                    types: q.types ? (q.types.split(',') as any) : undefined,
+                    toolName: q.toolName ?? undefined,
+                    last: q.last ? parseInt(q.last, 10) : undefined,
+                    fromTimestamp: q.from ? parseInt(q.from, 10) : undefined,
+                    toTimestamp: q.to ? parseInt(q.to, 10) : undefined,
+                } : undefined;
+
+                const events = selector
+                    ? pool.getSessionEvents(id, selector)
+                    : pool.getSessionEvents(id);
+
+                return { sessionId: id, count: events.length, events };
+            }
+        );
 
         this.logger.info('[harness] Managed Agents API routes registered (/api/agents/*)');
     }

@@ -15,12 +15,13 @@ import { AgentHarness, type HarnessExecutionContext } from './agent-harness.js';
 import { defaultAgentSpec, type AgentSpec, type AgentInstanceInfo, type AgentLifecycleState } from './agent-spec.js';
 import { agentBus } from './agent-bus.js';
 import { SessionEventStore } from './session-store.js';
+import { CredentialVault } from './credential-vault.js';
 import type { LLMAdapter, Logger, ExecutionStep } from '../../types.js';
 import type { SkillRegistry } from '../../skills/registry.js';
 import type { LongTermMemory } from '../../memory/long-term.js';
 import type { MemoryRouter } from '../../memory/memory-router.js';
 
-export { SessionEventStore };
+export { SessionEventStore, CredentialVault };
 
 interface QueueItem {
     specId: string;
@@ -43,7 +44,8 @@ export class AgentPool {
         private logger: Logger,
         private longTermMemory?: LongTermMemory,
         private memoryRouter?: MemoryRouter,
-        private sessionStore?: SessionEventStore
+        private sessionStore?: SessionEventStore,
+        private credentialVault?: CredentialVault
     ) {}
 
     // ─────────────────────────────────────────────────
@@ -115,8 +117,18 @@ export class AgentPool {
     }
 
     private createInstance(spec: AgentSpec, task: string, context: HarnessExecutionContext): string {
-        // 构建 emitEvent 回调，绑定到当前 session
         const sessionId = context.sessionId;
+
+        // 为本 session 生成 opaque sessionToken（供 CredentialProxy 换凭证）
+        const sessionToken = this.credentialVault?.generateSessionToken(sessionId) ?? sessionId;
+
+        // 将 sessionToken 注入 HarnessExecutionContext（传给 AgentHarness → SkillContext）
+        const enrichedContext: HarnessExecutionContext = {
+            ...context,
+            sessionToken,
+        };
+
+        // 构建 emitEvent 回调，绑定到当前 session
         const emitEvent = this.sessionStore
             ? (type: string, payload: Record<string, unknown>, causedBy?: string) => {
                 return this.sessionStore!.append({
@@ -146,8 +158,8 @@ export class AgentPool {
 
         this.logger.info(`[agent-pool] Spawned ${spec.name} instance ${harness.instanceId}`);
 
-        // 异步驱动，步骤缓存到 steps map
-        this.driveInstance(harness, task, context).catch(err => {
+        // 异步驱动，步骤缓存到 steps map（使用含 sessionToken 的 enrichedContext）
+        this.driveInstance(harness, task, enrichedContext).catch(err => {
             this.logger.error(`[agent-pool] Instance ${harness.instanceId} failed: ${err.message}`);
         });
 
@@ -160,18 +172,51 @@ export class AgentPool {
         context: HarnessExecutionContext
     ): Promise<void> {
         const steps = this.steps.get(harness.instanceId)!;
+
+        // LLM 流式 token 聚合缓冲：将连续的 type='content' chunk 合并为单条步骤，
+        // 避免前端展示数百条碎片步骤（每个词一条）。
+        let contentBuffer = '';
+        let contentTimestamp: Date | null = null;
+
+        const flushContent = () => {
+            if (!contentBuffer) return;
+            const merged: ExecutionStep = {
+                type: 'content',
+                content: contentBuffer,
+                timestamp: contentTimestamp!,
+            };
+            steps.push(merged);
+            agentBus.publish(`agent.step.${harness.instanceId}`, merged, harness.instanceId);
+            contentBuffer = '';
+            contentTimestamp = null;
+        };
+
+        const pushStep = (step: ExecutionStep) => {
+            steps.push(step);
+            agentBus.publish(`agent.step.${harness.instanceId}`, step, harness.instanceId);
+        };
+
         try {
             for await (const step of harness.execute(task, context)) {
-                steps.push(step);
-                // 广播实时步骤
-                agentBus.publish(`agent.step.${harness.instanceId}`, step, harness.instanceId);
+                if (step.type === 'content') {
+                    // 累积流式 token，不逐 token 写入
+                    if (!contentTimestamp) contentTimestamp = step.timestamp;
+                    contentBuffer += step.content ?? '';
+                } else {
+                    // 非 content 步骤：先刷出已缓冲的内容，再推送当前步骤
+                    flushContent();
+                    pushStep(step);
+                }
             }
+            flushContent(); // 流结束时刷出剩余缓冲
+
             agentBus.publish(`agent.complete.${harness.instanceId}`, {
                 instanceId: harness.instanceId,
                 state: harness.getState(),
                 lastScore: harness.getLastScore(),
             }, harness.instanceId);
         } catch (err) {
+            flushContent();
             agentBus.publish(`agent.error.${harness.instanceId}`, {
                 instanceId: harness.instanceId,
                 error: (err as Error).message,
@@ -314,44 +359,47 @@ export class AgentPool {
     // ─────────────────────────────────────────────────
 
     /**
-     * 从 session_events 日志恢复一个未完成的 Agent 实例。
-     * 重建执行上下文，提取原始 task 和 specId，重新 spawn。
+     * 从 session_events 日志恢复一个未完成的 Agent 实例（Gap 3 增强）。
+     * - 使用 rebuildWakeContext() 检测悬挂 tool_call
+     * - 将重建的消息历史注入到恢复的 Agent 实例
      */
     async wake(sessionId: string): Promise<string | null> {
         if (!this.sessionStore) return null;
 
-        const events = this.sessionStore.getEvents(sessionId);
-        const startEvent = events.find(e => e.type === 'session_start');
-        if (!startEvent) {
-            this.logger.warn(`[agent-pool] wake(${sessionId}): no session_start event found`);
+        const ctx = this.sessionStore.rebuildWakeContext(sessionId);
+        if (!ctx) {
+            this.logger.warn(`[agent-pool] wake(${sessionId}): cannot rebuild context`);
             return null;
         }
 
-        const { specId, task, userId } = startEvent.payload as {
-            specId: string;
-            task: string;
-            userId?: string;
-        };
-
-        const spec = this.specs.get(specId);
+        const spec = this.specs.get(ctx.specId);
         if (!spec) {
-            this.logger.warn(`[agent-pool] wake(${sessionId}): spec "${specId}" not found, skipping`);
+            this.logger.warn(`[agent-pool] wake(${sessionId}): spec "${ctx.specId}" not found, skipping`);
             return null;
         }
 
-        this.logger.info(`[agent-pool] Waking session ${sessionId} (spec=${specId})`);
+        this.logger.info(
+            `[agent-pool] Waking session ${sessionId} (spec=${ctx.specId}, ` +
+            `completedSteps=${ctx.completedSteps}, pendingToolCalls=${ctx.pendingToolCalls.length})`
+        );
 
-        // 写入 harness_wake 事件
+        // 写入 harness_wake 审计事件
         this.sessionStore.append({
             sessionId,
             timestamp: Date.now(),
             type: 'harness_wake',
-            payload: { specId, reason: 'startup_scan' },
+            payload: {
+                specId: ctx.specId,
+                reason: 'startup_scan',
+                completedSteps: ctx.completedSteps,
+                pendingToolCalls: ctx.pendingToolCalls.map(p => p.toolName),
+            },
         });
 
-        return this.spawn(specId, task as string, {
+        return this.spawn(ctx.specId, ctx.originalTask, {
             sessionId,
-            userId: userId as string | undefined,
+            userId: ctx.userId,
+            history: ctx.resumeHistory,
             memory: {
                 get: async () => undefined,
                 set: async () => {},
@@ -379,9 +427,12 @@ export class AgentPool {
     }
 
     /**
-     * 获取 sessionId 对应的持久化事件（跨重启可查询）
+     * 获取 sessionId 对应的持久化事件（跨重启可查询，支持 EventSelector 过滤）
      */
-    getSessionEvents(sessionId: string) {
-        return this.sessionStore?.getEvents(sessionId) ?? [];
+    getSessionEvents(sessionId: string, selector?: import('./session-store.js').EventSelector) {
+        if (!this.sessionStore) return [];
+        return selector
+            ? this.sessionStore.getEvents(sessionId, selector)
+            : this.sessionStore.getEvents(sessionId);
     }
 }

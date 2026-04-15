@@ -36,6 +36,8 @@ export interface HarnessExecutionContext {
     traceId?: string;
     /** 父 Agent 实例 ID（用于追踪委派链）*/
     parentInstanceId?: string;
+    /** Opaque session token（由 CredentialVault 生成，注入到 SkillContext）*/
+    sessionToken?: string;
 }
 
 export class AgentHarness {

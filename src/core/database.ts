@@ -306,6 +306,21 @@ export function initDatabase(): DatabaseSync {
         CREATE INDEX IF NOT EXISTS idx_se_type    ON session_events(type);
     `);
 
+    // Phase 25: credential_vault — 凭证隔离存储（Gap 4）
+    // 凭证以 AES-256-GCM 加密存储；skill 只持有 sessionToken，proxy 换取真实凭证
+    db.exec(`
+        CREATE TABLE IF NOT EXISTS credential_vault (
+            id          TEXT PRIMARY KEY,
+            key         TEXT NOT NULL UNIQUE,
+            iv          TEXT NOT NULL,
+            auth_tag    TEXT NOT NULL,
+            ciphertext  TEXT NOT NULL,
+            created_at  INTEGER NOT NULL DEFAULT (unixepoch() * 1000),
+            updated_at  INTEGER NOT NULL DEFAULT (unixepoch() * 1000)
+        );
+        CREATE INDEX IF NOT EXISTS idx_vault_key ON credential_vault(key);
+    `);
+
     // Auto-migration for existing databases
     try {
         db.prepare('ALTER TABLE sessions ADD COLUMN is_pinned BOOLEAN DEFAULT 0').run();
