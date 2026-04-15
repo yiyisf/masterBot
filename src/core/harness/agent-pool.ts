@@ -1,21 +1,26 @@
 /**
  * AgentPool — Agent 实例池
  * Phase 23: Managed Agents Harness
+ * Phase 24: Session 持久化 + Wake 协议
  *
  * 管理 AgentSpec 注册和 AgentHarness 实例的完整生命周期：
  * - 并发控制（per-spec concurrency limit）
  * - 排队（超过并发上限时入队）
- * - 实例 CRUD 及步骤缓存
+ * - 实例 CRUD 及步骤缓存（内存 + SQLite 双写）
+ * - Wake 协议：任意实例崩溃后可从 session_events 恢复
  * - 自动 cleanup（超过阈值时回收已完成实例）
  */
 
 import { AgentHarness, type HarnessExecutionContext } from './agent-harness.js';
 import { defaultAgentSpec, type AgentSpec, type AgentInstanceInfo, type AgentLifecycleState } from './agent-spec.js';
 import { agentBus } from './agent-bus.js';
+import { SessionEventStore } from './session-store.js';
 import type { LLMAdapter, Logger, ExecutionStep } from '../../types.js';
 import type { SkillRegistry } from '../../skills/registry.js';
 import type { LongTermMemory } from '../../memory/long-term.js';
 import type { MemoryRouter } from '../../memory/memory-router.js';
+
+export { SessionEventStore };
 
 interface QueueItem {
     specId: string;
@@ -37,7 +42,8 @@ export class AgentPool {
         private baseRegistry: SkillRegistry,
         private logger: Logger,
         private longTermMemory?: LongTermMemory,
-        private memoryRouter?: MemoryRouter
+        private memoryRouter?: MemoryRouter,
+        private sessionStore?: SessionEventStore
     ) {}
 
     // ─────────────────────────────────────────────────
@@ -109,13 +115,29 @@ export class AgentPool {
     }
 
     private createInstance(spec: AgentSpec, task: string, context: HarnessExecutionContext): string {
+        // 构建 emitEvent 回调，绑定到当前 session
+        const sessionId = context.sessionId;
+        const emitEvent = this.sessionStore
+            ? (type: string, payload: Record<string, unknown>, causedBy?: string) => {
+                return this.sessionStore!.append({
+                    sessionId,
+                    timestamp: Date.now(),
+                    type: type as any,
+                    payload,
+                    causedBy,
+                });
+            }
+            : undefined;
+
         const harness = new AgentHarness(
             spec,
             this.getLLM,
             this.baseRegistry,
             this.logger,
             this.longTermMemory,
-            this.memoryRouter
+            this.memoryRouter,
+            undefined,
+            emitEvent
         );
 
         this.instances.set(harness.instanceId, harness);
@@ -285,5 +307,81 @@ export class AgentPool {
             this.instances.delete(id);
             this.steps.delete(id);
         }
+    }
+
+    // ─────────────────────────────────────────────────
+    // Wake 协议（Phase 24）
+    // ─────────────────────────────────────────────────
+
+    /**
+     * 从 session_events 日志恢复一个未完成的 Agent 实例。
+     * 重建执行上下文，提取原始 task 和 specId，重新 spawn。
+     */
+    async wake(sessionId: string): Promise<string | null> {
+        if (!this.sessionStore) return null;
+
+        const events = this.sessionStore.getEvents(sessionId);
+        const startEvent = events.find(e => e.type === 'session_start');
+        if (!startEvent) {
+            this.logger.warn(`[agent-pool] wake(${sessionId}): no session_start event found`);
+            return null;
+        }
+
+        const { specId, task, userId } = startEvent.payload as {
+            specId: string;
+            task: string;
+            userId?: string;
+        };
+
+        const spec = this.specs.get(specId);
+        if (!spec) {
+            this.logger.warn(`[agent-pool] wake(${sessionId}): spec "${specId}" not found, skipping`);
+            return null;
+        }
+
+        this.logger.info(`[agent-pool] Waking session ${sessionId} (spec=${specId})`);
+
+        // 写入 harness_wake 事件
+        this.sessionStore.append({
+            sessionId,
+            timestamp: Date.now(),
+            type: 'harness_wake',
+            payload: { specId, reason: 'startup_scan' },
+        });
+
+        return this.spawn(specId, task as string, {
+            sessionId,
+            userId: userId as string | undefined,
+            memory: {
+                get: async () => undefined,
+                set: async () => {},
+                search: async () => [],
+            },
+        });
+    }
+
+    /**
+     * 启动时扫描所有未完成 session 并自动 wake。
+     * 由 index.ts 在服务启动后调用。
+     */
+    async scanAndWake(): Promise<void> {
+        if (!this.sessionStore) return;
+
+        const unfinished = this.sessionStore.getUnfinished();
+        if (unfinished.length === 0) return;
+
+        this.logger.info(`[agent-pool] Found ${unfinished.length} unfinished session(s), attempting wake...`);
+        for (const sessionId of unfinished) {
+            await this.wake(sessionId).catch(err => {
+                this.logger.warn(`[agent-pool] wake(${sessionId}) failed: ${(err as Error).message}`);
+            });
+        }
+    }
+
+    /**
+     * 获取 sessionId 对应的持久化事件（跨重启可查询）
+     */
+    getSessionEvents(sessionId: string) {
+        return this.sessionStore?.getEvents(sessionId) ?? [];
     }
 }

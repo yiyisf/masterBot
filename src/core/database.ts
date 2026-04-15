@@ -291,6 +291,21 @@ export function initDatabase(): DatabaseSync {
         CREATE INDEX IF NOT EXISTS idx_spans_session ON agent_spans(session_id);
     `);
 
+    // Phase 24: session_events — Meta-Harness append-only event log
+    // Session 层独立于 Harness 进程，支持 wake(sessionId) 恢复
+    db.exec(`
+        CREATE TABLE IF NOT EXISTS session_events (
+            id          TEXT PRIMARY KEY,
+            session_id  TEXT NOT NULL,
+            timestamp   INTEGER NOT NULL,
+            type        TEXT NOT NULL,
+            payload     TEXT NOT NULL DEFAULT '{}',
+            caused_by   TEXT REFERENCES session_events(id)
+        );
+        CREATE INDEX IF NOT EXISTS idx_se_session ON session_events(session_id, timestamp);
+        CREATE INDEX IF NOT EXISTS idx_se_type    ON session_events(type);
+    `);
+
     // Auto-migration for existing databases
     try {
         db.prepare('ALTER TABLE sessions ADD COLUMN is_pinned BOOLEAN DEFAULT 0').run();

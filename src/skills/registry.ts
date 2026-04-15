@@ -3,7 +3,7 @@ import { existsSync } from 'fs';
 import { join, dirname, basename } from 'path';
 import { glob } from 'glob';
 import matter from 'gray-matter';
-import type { Skill, SkillMetadata, SkillAction, SkillContext, SkillSource, ToolDefinition, Logger } from '../types.js';
+import type { Skill, SkillMetadata, SkillAction, SkillContext, SkillSource, ToolDefinition, Logger, ToolResult } from '../types.js';
 import { deepRedact } from '../utils/secret-ref.js';
 
 /**
@@ -126,7 +126,8 @@ interface PermissionsConfig {
  */
 export interface ISkillRegistry {
     getToolDefinitions(): Promise<ToolDefinition[]>;
-    executeAction(toolName: string, params: Record<string, unknown>, context: SkillContext): Promise<unknown>;
+    /** 执行工具调用。失败一律返回 ToolResult.error，不抛异常（Brain/Hands 边界）*/
+    executeAction(toolName: string, params: Record<string, unknown>, context: SkillContext): Promise<ToolResult>;
     getAllSources(): SkillSource[];
     registerSource(source: SkillSource): Promise<void>;
     unregisterSource(name: string): Promise<void>;
@@ -230,28 +231,38 @@ export class SkillRegistry implements ISkillRegistry {
         toolName: string,
         params: Record<string, unknown>,
         context: SkillContext
-    ): Promise<unknown> {
-        // Permission check
-        this.checkPermission(toolName, context);
+    ): Promise<ToolResult> {
+        try {
+            // Permission check（权限拒绝不可重试）
+            this.checkPermission(toolName, context);
 
-        for (const source of this.sources.values()) {
-            let tools: ToolDefinition[];
-            try {
-                tools = await source.getTools();
-            } catch (error) {
-                this.logger.warn(`Error getting tools from source ${source.name}: ${error}`);
-                continue;
+            for (const source of this.sources.values()) {
+                let tools: ToolDefinition[];
+                try {
+                    tools = await source.getTools();
+                } catch (error) {
+                    this.logger.warn(`Error getting tools from source ${source.name}: ${error}`);
+                    continue;
+                }
+
+                const found = tools.find(t => t.function.name === toolName);
+                if (found) {
+                    const rawResult = await source.execute(toolName, params, context);
+                    const redacted = deepRedact(rawResult);
+                    const value = typeof redacted === 'string'
+                        ? redacted
+                        : JSON.stringify(redacted, null, 2);
+                    return { kind: 'ok', value };
+                }
             }
 
-            const found = tools.find(t => t.function.name === toolName);
-            if (found) {
-                // 找到了就直接执行，对结果进行脱敏，执行错误自然传播（不 catch）
-                const rawResult = await source.execute(toolName, params, context);
-                return deepRedact(rawResult);
-            }
+            return { kind: 'error', message: `Tool "${toolName}" not found in any registered source`, retryable: false };
+        } catch (err) {
+            const message = err instanceof Error ? err.message : String(err);
+            // 权限错误/参数错误不可重试；网络/超时类错误可重试
+            const retryable = !(message.includes('Access denied') || message.includes('not found') || message.includes('validation'));
+            return { kind: 'error', message, retryable };
         }
-
-        throw new Error(`Tool "${toolName}" not found in any registered source`);
     }
 
     /**
@@ -338,9 +349,13 @@ export class FilteredSkillRegistry implements ISkillRegistry {
         toolName: string,
         params: Record<string, unknown>,
         context: SkillContext
-    ): Promise<unknown> {
+    ): Promise<ToolResult> {
         if (!this.isAllowed(toolName)) {
-            throw new Error(`[FilteredRegistry] Tool "${toolName}" is not permitted for this agent`);
+            return {
+                kind: 'error',
+                message: `[FilteredRegistry] Tool "${toolName}" is not permitted for this agent`,
+                retryable: false,
+            };
         }
         return this.base.executeAction(toolName, params, context);
     }

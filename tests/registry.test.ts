@@ -132,11 +132,11 @@ describe('SkillRegistry', () => {
             };
 
             const result = await registry.executeAction('shell.execute', { cmd: 'ls' }, ctx);
-            expect(result).toBe('output');
+            expect(result).toEqual({ kind: 'ok', value: 'output' });
             expect(source.execute).toHaveBeenCalledWith('shell.execute', { cmd: 'ls' }, ctx);
         });
 
-        it('should throw for unknown tool', async () => {
+        it('should return ToolResult.error for unknown tool', async () => {
             const ctx: SkillContext = {
                 sessionId: 's1',
                 memory: { get: vi.fn(), set: vi.fn(), search: vi.fn() },
@@ -144,8 +144,9 @@ describe('SkillRegistry', () => {
                 config: {},
             };
 
-            await expect(registry.executeAction('unknown.tool', {}, ctx))
-                .rejects.toThrow('not found');
+            const result = await registry.executeAction('unknown.tool', {}, ctx);
+            expect(result.kind).toBe('error');
+            expect((result as any).message).toContain('not found');
         });
     });
 

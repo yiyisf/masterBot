@@ -19,7 +19,7 @@ import { ConnectorManager } from './skills/connector-source.js';
 import { SelfImprovementEngine } from './core/self-improvement.js';
 import { initMemoryRouter } from './memory/memory-router.js';
 import { SoulLoader } from './core/soul-loader.js';
-import { AgentPool } from './core/harness/agent-pool.js';
+import { AgentPool, SessionEventStore } from './core/harness/agent-pool.js';
 
 async function main() {
     console.log(`
@@ -122,6 +122,9 @@ async function main() {
         knowledgeGraph,
     });
 
+    // Phase 24: SessionEventStore — Session 持久层（Meta-Harness Brain/Hands/Session 解耦）
+    const sessionStore = new SessionEventStore(db);
+
     // Phase 23: 初始化 AgentPool（Managed Agents Harness）
     const agentPool = new AgentPool(
         (provider?: string) => {
@@ -132,13 +135,17 @@ async function main() {
         skillRegistry,
         logger,
         longTermMemory,
-        memoryRouter
+        memoryRouter,
+        sessionStore
     );
 
     // Phase 23: 加载 SOUL.md Agent 规格（新格式 + 兼容旧格式）
     const soulLoader = new SoulLoader(agentPool, logger);
     await soulLoader.loadAgents(path.join(process.cwd(), 'agents'));
     await soulLoader.loadAgents(path.join(process.cwd(), 'agents/builtin'));
+
+    // Phase 24: 启动时扫描未完成 session，自动 wake（Harness as Cattle）
+    await agentPool.scanAndWake();
 
     const scheduler = new SchedulerService(logger);
 

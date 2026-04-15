@@ -766,38 +766,61 @@ export class Agent {
                     const duration = Date.now() - toolStartTimes[i];
 
                     if (result.status === 'fulfilled') {
-                        const resultStr = typeof result.value === 'string'
-                            ? result.value
-                            : JSON.stringify(result.value, null, 2);
+                        const toolResult = result.value; // ToolResult
 
-                        // Phase 21: 结束工具 span
-                        spanRecorder.endSpan(toolSpanIds[i], resultStr.slice(0, 300));
+                        if (toolResult.kind === 'ok') {
+                            const resultStr = toolResult.value;
 
-                        yield {
-                            type: 'observation',
-                            content: resultStr,
-                            toolName,
-                            toolOutput: result.value,
-                            duration,
-                            timestamp: new Date(),
-                        };
-                        // Emit dedicated workflow_generated step so frontend can render the workflow card
-                        if (result.value && typeof result.value === 'object' && (result.value as any).type === 'workflow_generated') {
-                            const wf = result.value as any;
+                            // Phase 21: 结束工具 span
+                            spanRecorder.endSpan(toolSpanIds[i], resultStr.slice(0, 300));
+
+                            // 尝试解析 JSON 以供 toolOutput
+                            let parsedOutput: unknown = resultStr;
+                            try { parsedOutput = JSON.parse(resultStr); } catch { /* keep string */ }
+
                             yield {
-                                type: 'workflow_generated',
+                                type: 'observation',
                                 content: resultStr,
                                 toolName,
-                                workflow: wf.workflow,
-                                subWorkflows: wf.subWorkflows,
-                                validation: wf.validation,
-                                allValid: wf.allValid,
-                                explanation: wf.explanation,
+                                toolOutput: parsedOutput,
+                                duration,
                                 timestamp: new Date(),
-                            } as any;
+                            };
+                            // Emit dedicated workflow_generated step so frontend can render the workflow card
+                            if (parsedOutput && typeof parsedOutput === 'object' && (parsedOutput as any).type === 'workflow_generated') {
+                                const wf = parsedOutput as any;
+                                yield {
+                                    type: 'workflow_generated',
+                                    content: resultStr,
+                                    toolName,
+                                    workflow: wf.workflow,
+                                    subWorkflows: wf.subWorkflows,
+                                    validation: wf.validation,
+                                    allValid: wf.allValid,
+                                    explanation: wf.explanation,
+                                    timestamp: new Date(),
+                                } as any;
+                            }
+                            messages.push({ role: 'tool', content: resultStr, toolCallId: toolCall.id });
+                        } else {
+                            // ToolResult.error — Hands 层统一错误，交还给 Brain 决策
+                            const errorMsg = `Error: ${toolResult.message}`;
+
+                            // Phase 21: 结束工具 span（失败）
+                            spanRecorder.endSpan(toolSpanIds[i], undefined, errorMsg);
+
+                            yield {
+                                type: 'observation',
+                                content: errorMsg,
+                                toolName,
+                                toolOutput: { error: toolResult.message, retryable: toolResult.retryable },
+                                duration,
+                                timestamp: new Date(),
+                            };
+                            messages.push({ role: 'tool', content: errorMsg, toolCallId: toolCall.id });
                         }
-                        messages.push({ role: 'tool', content: resultStr, toolCallId: toolCall.id });
                     } else {
+                        // executeWithTimeout 超时抛出
                         const errorMsg = `Error: ${result.reason?.message || 'Unknown error'}`;
 
                         // Phase 21: 结束工具 span（失败）
