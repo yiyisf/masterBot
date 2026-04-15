@@ -62,6 +62,12 @@ export interface AgentSpec {
         namespace: string;
         /** isolated: 独立上下文; shared: 继承父 Agent 的短期记忆 */
         scope: 'isolated' | 'shared';
+        /** 是否允许写入长期记忆（默认 true）*/
+        allowRemember: boolean;
+        /** 是否允许检索长期记忆（默认 true）*/
+        allowRecall: boolean;
+        /** 是否允许搜索知识图谱（默认 true）*/
+        allowKnowledgeSearch: boolean;
     };
 
     hooks: HookSet;
@@ -81,7 +87,13 @@ export function defaultAgentSpec(partial: Partial<AgentSpec> & { id: string; nam
         systemPrompt: `你是 ${partial.name}，${partial.description ?? '一个专业的 AI 助手'}。`,
         tools: { allow: [], deny: [] },
         resources: { maxIterations: 10, timeoutMs: 60_000, concurrency: 3 },
-        memory: { namespace: partial.id, scope: 'isolated' },
+        memory: {
+            namespace: partial.id,
+            scope: 'isolated',
+            allowRemember: true,
+            allowRecall: true,
+            allowKnowledgeSearch: true,
+        },
         hooks: {},
         ...partial,
     };

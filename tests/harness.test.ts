@@ -62,6 +62,32 @@ describe('defaultAgentSpec', () => {
         expect(spec.tools.allow).toEqual(['shell.*']);
         expect(spec.tools.deny).toEqual(['shell.execute']);
     });
+
+    // M2: 记忆权限控制
+    it('memory 权限字段默认全部开启', () => {
+        const spec = defaultAgentSpec({ id: 'mem-test', name: 'Memory Test' });
+        expect(spec.memory.allowRemember).toBe(true);
+        expect(spec.memory.allowRecall).toBe(true);
+        expect(spec.memory.allowKnowledgeSearch).toBe(true);
+        expect(spec.memory.namespace).toBe('mem-test');
+    });
+
+    it('允许覆盖 memory 权限字段', () => {
+        const spec = defaultAgentSpec({
+            id: 'readonly-agent',
+            name: 'ReadOnly Agent',
+            memory: {
+                namespace: 'readonly-agent',
+                scope: 'isolated',
+                allowRemember: false,
+                allowRecall: true,
+                allowKnowledgeSearch: false,
+            },
+        });
+        expect(spec.memory.allowRemember).toBe(false);
+        expect(spec.memory.allowRecall).toBe(true);
+        expect(spec.memory.allowKnowledgeSearch).toBe(false);
+    });
 });
 
 // ─── AgentBus ────────────────────────────────────────────────
@@ -327,5 +353,32 @@ description: 正常
         const count = await loader.loadAgents(tmpDir);
         expect(count).toBe(1);
         expect(pool.getSpec('good-agent')).toBeDefined();
+    });
+});
+
+// ─── SessionEventType M3: 记忆审计事件 ──────────────────────────
+
+import type { SessionEventType } from '../src/types.js';
+
+describe('SessionEventType', () => {
+    it('包含 memory_write 和 memory_read 类型', () => {
+        // 类型守卫：编译时验证 memory_write/memory_read 是合法的 SessionEventType
+        const writeType: SessionEventType = 'memory_write';
+        const readType: SessionEventType = 'memory_read';
+        expect(writeType).toBe('memory_write');
+        expect(readType).toBe('memory_read');
+    });
+
+    it('包含所有必要的核心事件类型', () => {
+        const coreTypes: SessionEventType[] = [
+            'session_start', 'session_end',
+            'tool_call', 'tool_result', 'tool_error',
+            'harness_wake', 'credential_access',
+            'memory_write', 'memory_read',
+        ];
+        // 验证所有类型字符串有效（TypeScript 编译已验证，运行时确认值不为 undefined）
+        for (const t of coreTypes) {
+            expect(typeof t).toBe('string');
+        }
     });
 });

@@ -221,7 +221,9 @@ export type SessionEventType =
     | 'harness_wake'
     | 'harness_transform'
     | 'credential_access'   // Gap 4: 凭证访问审计
-    | 'permission_check';   // Gap 4: 权限检查审计
+    | 'permission_check'    // Gap 4: 权限检查审计
+    | 'memory_write'        // M3: 记忆写入审计（memory_remember）
+    | 'memory_read';        // M3: 记忆读取审计（memory_recall）
 
 export interface SessionEvent {
     id: string;

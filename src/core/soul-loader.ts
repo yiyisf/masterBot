@@ -124,6 +124,9 @@ export class SoulLoader {
             memory: {
                 namespace: memory.namespace ?? id,
                 scope: memory.scope ?? 'isolated',
+                allowRemember: memory.allowRemember !== false,
+                allowRecall: memory.allowRecall !== false,
+                allowKnowledgeSearch: memory.allowKnowledgeSearch !== false,
             },
             hooks: {
                 onStart: normalizeHooks(hooks.onStart),
