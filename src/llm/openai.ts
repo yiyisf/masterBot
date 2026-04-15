@@ -9,6 +9,7 @@ import type {
     LLMConfig,
     ToolDefinition
 } from '../types.js';
+import { HttpsProxyAgent } from 'https-proxy-agent';
 
 function recordTokenUsage(model: string, usage: { prompt_tokens: number; completion_tokens: number; total_tokens: number } | null | undefined) {
     if (!usage) return;
@@ -32,9 +33,15 @@ export class OpenAIAdapter implements LLMAdapter {
 
     constructor(config: LLMConfig) {
         this.config = config;
+        // Node.js 18+ 内置 fetch 不读取 https_proxy 环境变量，
+        // 当系统配置了代理时（常见于需要科学上网的环境），需手动注入 httpAgent
+        const proxyUrl = process.env.https_proxy || process.env.HTTPS_PROXY
+            || process.env.http_proxy || process.env.HTTP_PROXY;
+        const httpAgent = proxyUrl ? new HttpsProxyAgent(proxyUrl) : undefined;
         this.client = new OpenAI({
             apiKey: config.apiKey,
             baseURL: config.baseUrl,
+            ...(httpAgent ? { httpAgent } : {}),
         });
     }
 
