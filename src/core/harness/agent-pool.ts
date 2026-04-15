@@ -172,18 +172,51 @@ export class AgentPool {
         context: HarnessExecutionContext
     ): Promise<void> {
         const steps = this.steps.get(harness.instanceId)!;
+
+        // LLM 流式 token 聚合缓冲：将连续的 type='content' chunk 合并为单条步骤，
+        // 避免前端展示数百条碎片步骤（每个词一条）。
+        let contentBuffer = '';
+        let contentTimestamp: Date | null = null;
+
+        const flushContent = () => {
+            if (!contentBuffer) return;
+            const merged: ExecutionStep = {
+                type: 'content',
+                content: contentBuffer,
+                timestamp: contentTimestamp!,
+            };
+            steps.push(merged);
+            agentBus.publish(`agent.step.${harness.instanceId}`, merged, harness.instanceId);
+            contentBuffer = '';
+            contentTimestamp = null;
+        };
+
+        const pushStep = (step: ExecutionStep) => {
+            steps.push(step);
+            agentBus.publish(`agent.step.${harness.instanceId}`, step, harness.instanceId);
+        };
+
         try {
             for await (const step of harness.execute(task, context)) {
-                steps.push(step);
-                // 广播实时步骤
-                agentBus.publish(`agent.step.${harness.instanceId}`, step, harness.instanceId);
+                if (step.type === 'content') {
+                    // 累积流式 token，不逐 token 写入
+                    if (!contentTimestamp) contentTimestamp = step.timestamp;
+                    contentBuffer += step.content ?? '';
+                } else {
+                    // 非 content 步骤：先刷出已缓冲的内容，再推送当前步骤
+                    flushContent();
+                    pushStep(step);
+                }
             }
+            flushContent(); // 流结束时刷出剩余缓冲
+
             agentBus.publish(`agent.complete.${harness.instanceId}`, {
                 instanceId: harness.instanceId,
                 state: harness.getState(),
                 lastScore: harness.getLastScore(),
             }, harness.instanceId);
         } catch (err) {
+            flushContent();
             agentBus.publish(`agent.error.${harness.instanceId}`, {
                 instanceId: harness.instanceId,
                 error: (err as Error).message,

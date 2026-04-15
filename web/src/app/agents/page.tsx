@@ -104,6 +104,7 @@ function stateBadge(state: AgentInstance["state"]) {
 
 function stepTypeIcon(type: string) {
     const icons: Record<string, React.ReactNode> = {
+        content:    <span className="text-slate-500">💬</span>,
         thought:    <span className="text-purple-500">💭</span>,
         plan:       <span className="text-blue-500">📋</span>,
         action:     <span className="text-orange-500">⚡</span>,
@@ -118,6 +119,7 @@ function stepTypeIcon(type: string) {
 
 function stepTypeBadge(type: string) {
     const colors: Record<string, string> = {
+        content:     "bg-slate-50 text-slate-600 border-slate-200",
         thought:     "bg-purple-50 text-purple-700 border-purple-200",
         plan:        "bg-blue-50 text-blue-700 border-blue-200",
         action:      "bg-orange-50 text-orange-700 border-orange-200",
