@@ -4,6 +4,7 @@ server:
 
 models:
   default: openai
+  # embeddingProvider: openai  # 可选：指定向量搜索使用的提供商（默认自动选择第一个支持 embedding 的提供商）
   providers:
     openai:
       type: openai

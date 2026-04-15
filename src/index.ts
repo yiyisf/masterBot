@@ -65,11 +65,19 @@ async function main() {
     // Initialize long-term memory
     let longTermMemory: LongTermMemory | undefined;
     if (config.memory.longTerm.enabled) {
-        // Create embedding function from default LLM provider
+        // M5: 选择支持 embedding 的提供商
+        // 优先级：config.models.embeddingProvider > 第一个 openai/ollama/gemini 类型的提供商 > 默认提供商
+        const embeddingProviderName = config.models.embeddingProvider
+            ?? Object.entries(config.models.providers).find(
+                ([, cfg]) => cfg.type === 'openai' || cfg.type === 'ollama' || cfg.type === 'gemini'
+            )?.[0]
+            ?? config.models.default;
+
+        const embeddingLlmConfig = config.models.providers[embeddingProviderName];
+        logger.info(`[memory] Using provider "${embeddingProviderName}" for embeddings (model: ${embeddingLlmConfig?.embeddingModel ?? 'default'})`);
+
         const embeddingFn = async (texts: string[]) => {
-            const provider = config.models.default;
-            const llmConfig = config.models.providers[provider];
-            const adapter = llmFactory.getAdapter(provider, llmConfig);
+            const adapter = llmFactory.getAdapter(embeddingProviderName, embeddingLlmConfig);
             return adapter.embeddings(texts);
         };
 
@@ -197,6 +205,7 @@ async function main() {
         scheduler,
         selfImprovementEngine,
         agentPool,
+        longTermMemory,
     });
 
     await server.start(config.server.port, config.server.host);
