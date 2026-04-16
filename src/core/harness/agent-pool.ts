@@ -20,6 +20,7 @@ import type { LLMAdapter, Logger, ExecutionStep } from '../../types.js';
 import type { SkillRegistry } from '../../skills/registry.js';
 import type { LongTermMemory } from '../../memory/long-term.js';
 import type { MemoryRouter } from '../../memory/memory-router.js';
+import type { SessionMemoryManager } from '../../memory/short-term.js';
 
 export { SessionEventStore, CredentialVault };
 
@@ -45,7 +46,8 @@ export class AgentPool {
         private longTermMemory?: LongTermMemory,
         private memoryRouter?: MemoryRouter,
         private sessionStore?: SessionEventStore,
-        private credentialVault?: CredentialVault
+        private credentialVault?: CredentialVault,
+        private sessionMemoryManager?: SessionMemoryManager
     ) {}
 
     // ─────────────────────────────────────────────────
@@ -252,6 +254,7 @@ export class AgentPool {
         let done = false;
 
         const unsubStep = agentBus.subscribe(`agent.step.${instanceId}`, (msg) => {
+            lastActivity = Date.now();
             const step = msg.payload as ExecutionStep;
             if (resolve) { resolve({ value: step, done: false }); resolve = null; }
             else buffer.push(step);
@@ -263,9 +266,20 @@ export class AgentPool {
             unsubStep();
             unsubComplete();
             unsubError();
+            clearInterval(autoCleanupTimer);
             // 通知等待中的 consumer 结束
             if (resolve) { resolve({ value: undefined as any, done: true }); resolve = null; }
         };
+
+        // D5: 10 分钟无新步骤自动 cleanup，防止订阅泄漏
+        const AUTO_CLEANUP_MS = 10 * 60 * 1000;
+        let lastActivity = Date.now();
+        const autoCleanupTimer = setInterval(() => {
+            if (Date.now() - lastActivity > AUTO_CLEANUP_MS) {
+                this.logger.warn(`[agent-pool] subscribeToInstance(${instanceId}) auto-cleanup after inactivity`);
+                cleanup();
+            }
+        }, 30_000);
 
         // 必须先声明再赋值，避免 cleanup 引用未初始化的变量
         let unsubComplete: () => void;
@@ -398,15 +412,17 @@ export class AgentPool {
             },
         });
 
+        // D3: 从 ShortTermMemory 重建 MemoryAccess（若无则创建空实现）
+        const memory = this.sessionMemoryManager
+            ? this.sessionMemoryManager.getSession(sessionId)
+            : { get: async () => undefined, set: async () => {}, search: async () => [] };
+
         return this.spawn(ctx.specId, ctx.originalTask, {
             sessionId,
             userId: ctx.userId,
             history: ctx.resumeHistory,
-            memory: {
-                get: async () => undefined,
-                set: async () => {},
-                search: async () => [],
-            },
+            memory,
+            trigger: 'wake_recovery',
         });
     }
 
@@ -436,5 +452,35 @@ export class AgentPool {
         return selector
             ? this.sessionStore.getEvents(sessionId, selector)
             : this.sessionStore.getEvents(sessionId);
+    }
+
+    // ─────────────────────────────────────────────────
+    // Phase 28: supervisorDelegate LLM 路由（从 MultiAgentOrchestrator 迁移）
+    // ─────────────────────────────────────────────────
+
+    /**
+     * 通过 LLM 为任务选择最合适的 AgentSpec。
+     * 从 MultiAgentOrchestrator.supervisorDelegate() 提取的路由逻辑。
+     */
+    async selectSpec(task: string, llm: LLMAdapter): Promise<string | null> {
+        const specs = this.listSpecs();
+        if (specs.length === 0) return null;
+
+        const descriptions = specs
+            .map(s => `- ${s.id}: ${s.name} — ${s.description.slice(0, 200)}`)
+            .join('\n');
+
+        const prompt = `根据以下可用 Agent 描述，为任务选择最合适的 Agent。
+可用 Agents:\n${descriptions}\n
+任务: ${task.slice(0, 500)}\n
+直接回复 Agent ID（一个词）:`;
+
+        const response = await llm.chat([{ role: 'user', content: prompt }]);
+        const content = typeof response.content === 'string'
+            ? response.content
+            : (response.content as any[]).map(p => (p as any).text ?? '').join('');
+
+        const specId = content.trim().split(/[\s\n]/)[0];
+        return this.getSpec(specId) ? specId : null;
     }
 }

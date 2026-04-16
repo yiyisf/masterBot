@@ -193,6 +193,8 @@ export interface ExecutionStep {
     spanId?: string;
     // Phase 22: context compression
     droppedCount?: number;
+    // Phase 26: Harness instance tracking（供前端关联子任务面板）
+    harnessInstanceId?: string;
     timestamp: Date;
 }
 
@@ -223,7 +225,10 @@ export type SessionEventType =
     | 'credential_access'   // Gap 4: 凭证访问审计
     | 'permission_check'    // Gap 4: 权限检查审计
     | 'memory_write'        // M3: 记忆写入审计（memory_remember）
-    | 'memory_read';        // M3: 记忆读取审计（memory_recall）
+    | 'memory_read'         // M3: 记忆读取审计（memory_recall）
+    | 'user_message'        // D1: 用户消息记录
+    | 'grader_evaluation'   // D6: Grader 评分结果持久化
+    | 'grader_revision';    // D6: Grader 修订循环持久化
 
 export interface SessionEvent {
     id: string;

@@ -26,6 +26,11 @@ export interface DelegateContext {
 }
 
 /**
+ * @deprecated Phase 28: MultiAgentOrchestrator 已进入渐进退役阶段。
+ * delegate_to_agent 工具现优先走 AgentPool（Harness 路径），此类仅作回退用。
+ * 新 Worker 请通过 SOUL.md 或 API 注册为 AgentSpec。
+ * 计划在 Phase 30 确认无回退调用后完全移除此文件。
+ *
  * Orchestrator that manages worker agents and delegates tasks
  * Phase 21: added delegateStream + supervisorDelegate
  */

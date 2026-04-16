@@ -39,6 +39,10 @@ export interface HarnessExecutionContext {
     parentInstanceId?: string;
     /** Opaque session token（由 CredentialVault 生成，注入到 SkillContext）*/
     sessionToken?: string;
+    /** Phase 26: 父 Chat Session 的 sessionId（建立 Chat → Harness 关联）*/
+    parentSessionId?: string;
+    /** Phase 26: 触发来源（区分 Chat 委派 / 手动 / API / 定时 / Wake 恢复）*/
+    trigger?: 'chat_delegate' | 'manual_spawn' | 'api_spawn' | 'scheduled' | 'wake_recovery';
 }
 
 export class AgentHarness {
@@ -153,6 +157,8 @@ export class AgentHarness {
             task,
             userId: context.userId,
             parentInstanceId: context.parentInstanceId,
+            parentSessionId: context.parentSessionId,
+            trigger: context.trigger ?? 'manual_spawn',
         });
 
         const hookCtx: HookContext = {
@@ -274,6 +280,15 @@ export class AgentHarness {
                     timestamp: new Date(),
                 } as ExecutionStep;
 
+                // D6: Grader 评分结果持久化
+                this.emit('grader_evaluation', {
+                    instanceId: this.instanceId,
+                    revision,
+                    overallScore: graderResult.overallScore,
+                    status: graderResult.status,
+                    feedback: graderResult.feedback?.slice(0, 500),
+                });
+
                 if (graderResult.status === 'satisfied') break;
 
                 if (graderResult.status === 'failed' || graderResult.status === 'grader_error') {
@@ -287,6 +302,14 @@ export class AgentHarness {
                     yield this.makeStep('meta', `🔄 已达到最大修订次数 ${maxRevisions}，以当前输出为最终结果`);
                     break;
                 }
+
+                // D6: 修订循环持久化
+                this.emit('grader_revision', {
+                    instanceId: this.instanceId,
+                    fromRevision: revision,
+                    toRevision: revision + 1,
+                    revisedTask: currentTask.slice(0, 500),
+                });
 
                 // needs_revision：注入 Grader 反馈重试
                 const failedCriteria = graderResult.criteriaResults
