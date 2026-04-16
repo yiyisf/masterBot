@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { Sparkles, ChevronRight, ListTodo, CheckCircle2, XCircle, Clock, Loader2, BrainCircuit, ChevronDown } from "lucide-react";
+import { Sparkles, ChevronRight, ListTodo, CheckCircle2, XCircle, Clock, Loader2, BrainCircuit, ChevronDown, Bot, ExternalLink, BarChart2 } from "lucide-react";
 import { Card } from "@/components/ui/card";
 import { cn } from "@/lib/utils";
 import ReactMarkdown from "react-markdown";
@@ -17,6 +17,16 @@ function isErrorObservation(observation: string): boolean {
     );
 }
 
+export interface SubTaskInfo {
+    delegatedFrom: string;
+    instanceId: string;
+    steps: any[];
+    status: 'running' | 'completed' | 'failed';
+    startTime: Date;
+    endTime?: Date;
+    graderScore?: number;
+}
+
 export interface ChatStep {
     thought?: string;
     plan?: string[]; // Array of plan steps
@@ -24,6 +34,10 @@ export interface ChatStep {
     observation?: string;
     duration?: number;  // ms — tool execution time
     status?: 'pending' | 'running' | 'completed' | 'failed';
+    // Phase 26: 子 Agent 步骤分组（delegatedFrom 标记）
+    subTask?: SubTaskInfo;
+    // Harness Grader 评分
+    grading?: { type: string; content: string };
 }
 
 function ThoughtCard({ thought }: { thought: string }) {
@@ -55,6 +69,97 @@ function ThoughtCard({ thought }: { thought: string }) {
                     )}
                 </div>
             </div>
+        </Card>
+    );
+}
+
+// ─── SubTaskPanel: 子 Agent 执行面板（Phase 26）──────────────────────────────
+
+function SubTaskPanel({ subTask }: { subTask: SubTaskInfo }) {
+    const [collapsed, setCollapsed] = useState(true);
+
+    const actionSteps = subTask.steps.filter((s: any) => s.type === 'action' || s.type === 'observation');
+    const duration = subTask.endTime
+        ? subTask.endTime.getTime() - subTask.startTime.getTime()
+        : null;
+
+    return (
+        <Card className="border border-indigo-200 dark:border-indigo-800/40 bg-indigo-50/30 dark:bg-indigo-950/10 text-xs">
+            <div
+                className="flex items-center gap-2 p-3 cursor-pointer select-none"
+                onClick={() => setCollapsed(v => !v)}
+            >
+                <Bot className="w-3.5 h-3.5 text-indigo-500 shrink-0" />
+                <span className="font-medium text-indigo-700 dark:text-indigo-300">
+                    托管 Agent: {subTask.delegatedFrom}
+                </span>
+                {subTask.status === 'running' && (
+                    <Loader2 className="w-3 h-3 animate-spin text-amber-500" />
+                )}
+                {subTask.status === 'completed' && (
+                    <CheckCircle2 className="w-3 h-3 text-green-500" />
+                )}
+                {subTask.status === 'failed' && (
+                    <XCircle className="w-3 h-3 text-red-500" />
+                )}
+                {subTask.graderScore !== undefined && (
+                    <span className="flex items-center gap-1 text-[10px] text-muted-foreground ml-1">
+                        <BarChart2 className="w-3 h-3" />
+                        质量评分: {subTask.graderScore}/100
+                    </span>
+                )}
+                {duration !== null && (
+                    <span className="text-[10px] text-muted-foreground ml-auto">
+                        {duration >= 1000 ? `${(duration / 1000).toFixed(1)}s` : `${duration}ms`}
+                    </span>
+                )}
+                <a
+                    href="/agents"
+                    className="flex items-center gap-0.5 text-[10px] text-indigo-500 hover:underline ml-1"
+                    onClick={e => e.stopPropagation()}
+                    title="在 /agents 管理台查看详情"
+                >
+                    <ExternalLink className="w-3 h-3" />
+                </a>
+                <ChevronDown className={cn("w-3.5 h-3.5 text-muted-foreground transition-transform", !collapsed && "rotate-180")} />
+            </div>
+
+            <AnimatePresence initial={false}>
+                {!collapsed && (
+                    <motion.div
+                        initial={{ height: 0, opacity: 0 }}
+                        animate={{ height: "auto", opacity: 1 }}
+                        exit={{ height: 0, opacity: 0 }}
+                        transition={{ duration: 0.2 }}
+                        className="overflow-hidden"
+                    >
+                        <div className="px-3 pb-3 space-y-1.5 border-t border-indigo-100 dark:border-indigo-900/30 pt-2">
+                            {actionSteps.map((step: any, idx: number) => (
+                                <div key={idx} className="flex items-start gap-2">
+                                    {step.type === 'action' ? (
+                                        <>
+                                            <ChevronRight className="w-3 h-3 text-indigo-400 mt-0.5 shrink-0" />
+                                            <span className="font-mono text-[10px] text-indigo-600 dark:text-indigo-400">
+                                                {step.toolName || step.content}
+                                            </span>
+                                        </>
+                                    ) : (
+                                        <>
+                                            <CheckCircle2 className="w-3 h-3 text-green-500 mt-0.5 shrink-0" />
+                                            <span className="text-muted-foreground text-[10px] line-clamp-2">
+                                                {(step.content ?? '').slice(0, 150)}
+                                            </span>
+                                        </>
+                                    )}
+                                </div>
+                            ))}
+                            {actionSteps.length === 0 && subTask.status === 'running' && (
+                                <span className="text-muted-foreground/60 text-[10px]">Agent 执行中…</span>
+                            )}
+                        </div>
+                    </motion.div>
+                )}
+            </AnimatePresence>
         </Card>
     );
 }
@@ -140,6 +245,33 @@ export function ChatThinking({ steps }: { steps: ChatStep[] }) {
                                                         <span className="text-muted-foreground">{planStep}</span>
                                                     </div>
                                                 ))}
+                                            </div>
+                                        </Card>
+                                    )}
+
+                                    {/* Phase 26: 子 Agent 托管任务面板 */}
+                                    {step.subTask && (
+                                        <SubTaskPanel subTask={step.subTask} />
+                                    )}
+
+                                    {/* Grader 评分步骤 */}
+                                    {step.grading && (
+                                        <Card className="p-2 text-xs bg-amber-50/30 dark:bg-amber-950/10 border border-amber-200 dark:border-amber-800/30">
+                                            <div className="flex items-center gap-1.5 text-amber-600 dark:text-amber-400">
+                                                <BarChart2 className="w-3.5 h-3.5" />
+                                                <span>
+                                                    {step.grading.type === 'grading'
+                                                        ? step.grading.content
+                                                        : (() => {
+                                                            try {
+                                                                const r = JSON.parse(step.grading.content);
+                                                                return `质量评分: ${r.overallScore}/100 — ${r.status}`;
+                                                            } catch {
+                                                                return step.grading.content;
+                                                            }
+                                                        })()
+                                                    }
+                                                </span>
                                             </div>
                                         </Card>
                                     )}

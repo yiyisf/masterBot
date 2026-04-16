@@ -162,6 +162,48 @@ export class MyRuntimeAdapter implements ChatModelAdapter {
                     });
                     yield buildYield();
 
+                } else if (chunk.type === "grading" || chunk.type === "grade_result") {
+                    // Harness Grader 评分步骤
+                    currentSteps.push({
+                        grading: {
+                            type: chunk.type,
+                            content: chunk.content,
+                        }
+                    });
+                    yield buildYield();
+
+                } else if (chunk.delegatedFrom && chunk.harnessInstanceId) {
+                    // Phase 26: 带 delegatedFrom 标记的子 Agent 步骤
+                    // 聚合到子任务分组中
+                    const instanceId = chunk.harnessInstanceId;
+                    const existingSubTask = currentSteps.find(
+                        (s: any) => s.subTask?.instanceId === instanceId
+                    );
+                    if (existingSubTask) {
+                        existingSubTask.subTask.steps.push(chunk);
+                        if (chunk.type === 'answer') {
+                            existingSubTask.subTask.status = 'completed';
+                            existingSubTask.subTask.endTime = new Date();
+                        }
+                        if (chunk.type === 'grade_result') {
+                            try {
+                                const graderResult = JSON.parse(chunk.content ?? '{}');
+                                existingSubTask.subTask.graderScore = graderResult.overallScore;
+                            } catch { /* ignore */ }
+                        }
+                    } else {
+                        currentSteps.push({
+                            subTask: {
+                                delegatedFrom: chunk.delegatedFrom,
+                                instanceId,
+                                steps: [chunk],
+                                status: 'running',
+                                startTime: new Date(),
+                            }
+                        });
+                    }
+                    yield buildYield();
+
                 } else if (chunk.type === "answer") {
                     // Final answer replaces any partial content chunks
                     currentContent = chunk.content;

@@ -12,7 +12,7 @@
  * 并自动生成审计事件。
  */
 
-import { createCipheriv, createDecipheriv, randomBytes, scryptSync } from 'crypto';
+import { createCipheriv, createDecipheriv, createHmac, randomBytes, scryptSync } from 'crypto';
 import type { DatabaseSync } from 'node:sqlite';
 import { nanoid } from 'nanoid';
 import type { SessionEventStore } from './session-store.js';
@@ -35,6 +35,8 @@ export class CredentialVault {
     private stmtGet: ReturnType<DatabaseSync['prepare']>;
     private stmtList: ReturnType<DatabaseSync['prepare']>;
     private stmtDelete: ReturnType<DatabaseSync['prepare']>;
+    /** D4: sessionToken → sessionId 映射表，用于 retrieveWithToken() 反查 */
+    private tokenToSession = new Map<string, string>();
 
     constructor(
         private db: DatabaseSync,
@@ -148,12 +150,16 @@ export class CredentialVault {
     // ─────────────────────────────────────────────────
 
     /**
-     * 为 sessionId 生成 opaque sessionToken。
-     * 当前实现：sessionToken = sessionId（已足够隔离，可升级为 HMAC 签名）
+     * D4: 为 sessionId 生成 HMAC-SHA256 签名的 opaque sessionToken。
      * skill 代码只持有 sessionToken，不能访问跨 session 的凭证。
      */
     generateSessionToken(sessionId: string): string {
-        return sessionId;
+        const token = createHmac('sha256', this.key)
+            .update(`session:${sessionId}:${Date.now()}`)
+            .digest('hex')
+            .slice(0, 32);
+        this.tokenToSession.set(token, sessionId);
+        return token;
     }
 
     /**
@@ -161,7 +167,8 @@ export class CredentialVault {
      * 写入 credential_access 审计事件。
      */
     retrieveWithToken(key: string, sessionToken: string): string | null {
-        // 当前 sessionToken = sessionId，直接复用 retrieve
-        return this.retrieve(key, sessionToken);
+        // D4: 通过 HMAC token 反查 sessionId
+        const sessionId = this.tokenToSession.get(sessionToken) ?? sessionToken;
+        return this.retrieve(key, sessionId);
     }
 }

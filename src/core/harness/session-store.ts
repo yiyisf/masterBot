@@ -109,31 +109,51 @@ export class SessionEventStore {
      */
     getEvents(sessionId: string, selector: EventSelector): SessionEvent[];
     getEvents(sessionId: string, selector?: EventSelector): SessionEvent[] {
-        const rows = this.stmtGetBySession.all(sessionId) as Array<{
-            id: string;
-            session_id: string;
-            timestamp: number;
-            type: string;
-            payload: string;
-            caused_by: string | null;
-        }>;
-
-        let events: SessionEvent[] = rows.map(r => ({
-            id: r.id,
-            sessionId: r.session_id,
-            timestamp: r.timestamp,
-            type: r.type as SessionEventType,
-            payload: JSON.parse(r.payload),
-            causedBy: r.caused_by ?? undefined,
-        }));
-
-        if (!selector) return events;
-
-        // 按类型过滤
-        if (selector.types && selector.types.length > 0) {
-            events = events.filter(e => selector.types!.includes(e.type));
+        if (!selector) {
+            const rows = this.stmtGetBySession.all(sessionId) as Array<{
+                id: string; session_id: string; timestamp: number; type: string; payload: string; caused_by: string | null;
+            }>;
+            return this.parseRows(rows);
         }
-        // 按 toolName 过滤
+
+        // D2: 动态构建 SQL WHERE 子句，将过滤下推到 SQLite 层
+        const conditions: string[] = ['session_id = ?'];
+        const params: unknown[] = [sessionId];
+
+        if (selector.types && selector.types.length > 0) {
+            const placeholders = selector.types.map(() => '?').join(',');
+            conditions.push(`type IN (${placeholders})`);
+            params.push(...selector.types);
+        }
+        if (selector.fromTimestamp !== undefined) {
+            conditions.push('timestamp >= ?');
+            params.push(selector.fromTimestamp);
+        }
+        if (selector.toTimestamp !== undefined) {
+            conditions.push('timestamp <= ?');
+            params.push(selector.toTimestamp);
+        }
+
+        const whereClause = conditions.join(' AND ');
+        let sql: string;
+
+        if (selector.last !== undefined && selector.last > 0) {
+            // 取最后 N 条：先反序取 N 条再正序
+            sql = `SELECT * FROM (
+                SELECT * FROM session_events WHERE ${whereClause}
+                ORDER BY timestamp DESC LIMIT ?
+            ) sub ORDER BY timestamp ASC`;
+            params.push(selector.last);
+        } else {
+            sql = `SELECT * FROM session_events WHERE ${whereClause} ORDER BY timestamp ASC`;
+        }
+
+        const rows = this.db.prepare(sql).all(...(params as import('node:sqlite').SQLInputValue[])) as Array<{
+            id: string; session_id: string; timestamp: number; type: string; payload: string; caused_by: string | null;
+        }>;
+        let events = this.parseRows(rows);
+
+        // toolName 过滤仍需内存处理（payload 内字段，无法 SQL 索引）
         if (selector.toolName) {
             const tn = selector.toolName;
             events = events.filter(e => {
@@ -141,19 +161,21 @@ export class SessionEventStore {
                 return p.toolName === tn;
             });
         }
-        // 时间范围过滤
-        if (selector.fromTimestamp !== undefined) {
-            events = events.filter(e => e.timestamp >= selector.fromTimestamp!);
-        }
-        if (selector.toTimestamp !== undefined) {
-            events = events.filter(e => e.timestamp <= selector.toTimestamp!);
-        }
-        // 取最后 N 条
-        if (selector.last !== undefined && selector.last > 0) {
-            events = events.slice(-selector.last);
-        }
 
         return events;
+    }
+
+    private parseRows(rows: Array<{
+        id: string; session_id: string; timestamp: number; type: string; payload: string; caused_by: string | null;
+    }>): SessionEvent[] {
+        return rows.map(r => ({
+            id: r.id,
+            sessionId: r.session_id,
+            timestamp: r.timestamp,
+            type: r.type as SessionEventType,
+            payload: JSON.parse(r.payload),
+            causedBy: r.caused_by ?? undefined,
+        }));
     }
 
     /**

@@ -226,7 +226,7 @@ const DELEGATE_AGENT_TOOL: ToolDefinition = {
     type: 'function',
     function: {
         name: 'delegate_to_agent',
-        description: 'Delegate a subtask to a specialized worker agent with different skills or LLM.',
+        description: 'Delegate a subtask to a specialized managed agent. The agent runs with its own tool permissions, quality grading, and lifecycle hooks. Available agents: use worker_id matching the agent spec ID.',
         parameters: {
             type: 'object',
             properties: {
@@ -297,6 +297,7 @@ export class Agent {
     private knowledgeGraph?: any;
     private deepThinkingProvider?: () => LLMAdapter;
     private sessionStore?: SessionEventStore;
+    private agentPool?: import('./harness/agent-pool.js').AgentPool;
 
     constructor(options: {
         llm: LLMAdapter | (() => LLMAdapter);
@@ -312,6 +313,7 @@ export class Agent {
         knowledgeGraph?: any;
         deepThinkingProvider?: () => LLMAdapter;
         sessionStore?: SessionEventStore;
+        agentPool?: import('./harness/agent-pool.js').AgentPool;
     }) {
         this.llmGetter = typeof options.llm === 'function' ? options.llm : () => options.llm as LLMAdapter;
         this.skillRegistry = options.skillRegistry;
@@ -325,6 +327,7 @@ export class Agent {
         this.knowledgeGraph = options.knowledgeGraph;
         this.deepThinkingProvider = options.deepThinkingProvider;
         this.sessionStore = options.sessionStore;
+        this.agentPool = options.agentPool;
         this.contextManager = new ContextManager({
             maxTokens: options.maxContextTokens,
             logger: options.logger,
@@ -379,12 +382,36 @@ export class Agent {
             }
         }
 
+        // Phase 26: 注入可用 Harness Agent 列表（供 LLM 决策 delegate）
+        if (this.agentPool) {
+            const specs = this.agentPool.listSpecs();
+            if (specs.length > 0) {
+                const agentListStr = specs
+                    .map(s => `- ${s.id}: ${s.name} — ${s.description.slice(0, 100)}`)
+                    .join('\n');
+                systemContent += `\n\n可用的专业 Agent（通过 delegate_to_agent 工具调用）:\n${agentListStr}`;
+            }
+        }
+
         const systemMessage: Message = { role: 'system', content: systemContent };
         const currentInput: Message[] = [{
             role: 'user',
             content: input,
             attachments: context.attachments
         }];
+
+        // D1: 发射 user_message 事件（仅当 sessionStore 存在时）
+        if (this.sessionStore) {
+            this.sessionStore.append({
+                sessionId: context.sessionId,
+                timestamp: Date.now(),
+                type: 'user_message',
+                payload: {
+                    content: inputText.slice(0, 1000),
+                    userId: context.userId,
+                },
+            });
+        }
 
         // Apply context window management to prevent exceeding LLM context limit
         const trimResult = await this.contextManager.trimMessages(
@@ -463,6 +490,16 @@ export class Agent {
             let fullContent = '';
             let toolCalls: any[] = [];
 
+            // D1: LLM 调用前发射 llm_request 事件
+            if (this.sessionStore) {
+                this.sessionStore.append({
+                    sessionId: context.sessionId,
+                    timestamp: Date.now(),
+                    type: 'llm_request',
+                    payload: { model: this.llm.provider, messageCount: messages.length, iteration },
+                });
+            }
+
             // 调用 LLM (流式获取内容和工具调用)
             try {
                 for await (const chunk of activeLlm.chatStream(messages, { tools, abortSignal: context.abortSignal })) {
@@ -523,6 +560,19 @@ export class Agent {
                 toolCalls: toolCalls.length > 0 ? toolCalls : undefined,
             };
             messages.push(response);
+
+            // D1: LLM 调用后发射 llm_response 事件
+            if (this.sessionStore) {
+                this.sessionStore.append({
+                    sessionId: context.sessionId,
+                    timestamp: Date.now(),
+                    type: 'llm_response',
+                    payload: {
+                        hasToolCalls: !!response.toolCalls?.length,
+                        contentLength: typeof response.content === 'string' ? response.content.length : 0,
+                    },
+                });
+            }
 
             // 如果没有工具调用，返回最终答案
             if (!response.toolCalls || response.toolCalls.length === 0) {
@@ -655,21 +705,55 @@ export class Agent {
                         yield { type: 'observation', content: errorMsg, toolName, timestamp: new Date() };
                         messages.push({ role: 'tool', content: errorMsg, toolCallId: toolCall.id });
                     }
-                } else if (toolName === 'delegate_to_agent' && this.orchestrator) {
+                } else if (toolName === 'delegate_to_agent') {
                     const { worker_id, task } = params as { worker_id: string; task: string; context_summary?: string };
                     yield { type: 'action', content: `Delegating to agent: ${worker_id}`, toolName, toolInput: params, timestamp: new Date() };
-                    // Phase 21: 开 delegate span
+
                     const delegateSpanId = spanRecorder.startSpan(traceId, agentSpanId, `delegate:${worker_id}`, {
                         sessionId: context.sessionId, workerId: worker_id,
                     });
+
                     try {
-                        // Phase 21: 流式委托 — 实时 yield Worker 每个步骤
                         let lastAnswer = '';
-                        const delegateCtx = { ...context, traceId };
-                        for await (const step of this.orchestrator.delegateStream(worker_id, task, delegateCtx)) {
-                            yield step; // 已带 delegatedFrom 标记
-                            if (step.type === 'answer') lastAnswer = step.content;
+
+                        // Phase 26: 优先走 AgentPool（Harness 路径）
+                        if (this.agentPool?.getSpec(worker_id)) {
+                            const childSessionId = `harness-${nanoid(12)}`;
+                            const instanceId = await this.agentPool.spawn(worker_id, task, {
+                                sessionId: childSessionId,
+                                userId: context.userId,
+                                memory: context.memory,
+                                parentInstanceId: traceId,
+                                parentSessionId: context.sessionId,
+                                trigger: 'chat_delegate',
+                            });
+
+                            // 通知前端：子 Agent 已启动
+                            yield {
+                                type: 'meta' as any,
+                                content: `🤖 托管 Agent [${worker_id}] 已启动 (instance: ${instanceId})`,
+                                harnessInstanceId: instanceId,
+                                delegatedFrom: worker_id,
+                                timestamp: new Date(),
+                            };
+
+                            // 流式消费子 Agent 步骤，内联到 Chat SSE 流
+                            for await (const step of this.agentPool.streamInstance(instanceId)) {
+                                yield { ...step, delegatedFrom: worker_id, harnessInstanceId: instanceId };
+                                if (step.type === 'answer') lastAnswer = step.content ?? '';
+                            }
                         }
+                        // 回退旧路径：MultiAgentOrchestrator
+                        else if (this.orchestrator) {
+                            const delegateCtx = { ...context, traceId };
+                            for await (const step of this.orchestrator.delegateStream(worker_id, task, delegateCtx)) {
+                                yield step;
+                                if (step.type === 'answer') lastAnswer = step.content ?? '';
+                            }
+                        } else {
+                            throw new Error(`Agent "${worker_id}" not found in AgentPool or Orchestrator`);
+                        }
+
                         spanRecorder.endSpan(delegateSpanId, lastAnswer.slice(0, 300));
                         messages.push({ role: 'tool', content: lastAnswer || '(no answer)', toolCallId: toolCall.id });
                     } catch (err: any) {

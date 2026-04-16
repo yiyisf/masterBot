@@ -109,28 +109,8 @@ async function main() {
     }
     const { memoryRouter } = await import('./memory/memory-router.js');
 
-    // Initialize agent with dynamic LLM getter for hot-reloading
-    const agent = new Agent({
-        llm: () => {
-            const provider = config.models.default;
-            const llmConfig = config.models.providers[provider];
-            return llmFactory.getAdapter(provider, llmConfig);
-        },
-        skillRegistry,
-        logger,
-        maxIterations: config.agent?.maxIterations ?? 10,
-        maxContextTokens: config.agent?.maxContextTokens,
-        longTermMemory,
-        memoryRouter,
-        skillConfig: {
-            sandbox: config.skills.shell?.sandbox,
-        },
-        skillGenerator,
-        orchestrator,
-        knowledgeGraph,
-    });
-
     // Phase 24: SessionEventStore — Session 持久层（Meta-Harness Brain/Hands/Session 解耦）
+    // 注意：移到 Agent 创建前，确保 sessionStore 可以直接注入 Agent
     const sessionStore = new SessionEventStore(db);
 
     // Phase 25: CredentialVault — 凭证隔离层（Gap 4）
@@ -153,7 +133,9 @@ async function main() {
         longTermMemory,
         memoryRouter,
         sessionStore,
-        credentialVault
+        credentialVault,
+        // D3: 注入 sessionMemoryManager，使 wake 恢复时可访问短期记忆
+        sessionManager
     );
 
     // Phase 23: 加载 SOUL.md Agent 规格（新格式 + 兼容旧格式）
@@ -161,8 +143,47 @@ async function main() {
     await soulLoader.loadAgents(path.join(process.cwd(), 'agents'));
     await soulLoader.loadAgents(path.join(process.cwd(), 'agents/builtin'));
 
+    // Phase 28: 将 MultiAgentOrchestrator 中的旧 Worker 统一注册为 AgentSpec
+    if (typeof orchestrator.hasWorkers === 'function' && orchestrator.hasWorkers()) {
+        for (const worker of orchestrator.listWorkers()) {
+            if (!agentPool.getSpec(worker.id)) {
+                agentPool.registerLegacyWorker(
+                    worker.id,
+                    worker.name,
+                    worker.description ?? '',
+                    worker.systemPrompt,
+                    worker.skills
+                );
+                logger.info(`[startup] Legacy worker "${worker.name}" registered as AgentSpec`);
+            }
+        }
+    }
+
     // Phase 24: 启动时扫描未完成 session，自动 wake（Harness as Cattle）
     await agentPool.scanAndWake();
+
+    // Phase 26: Agent 在 agentPool 创建后初始化，确保 agentPool 和 sessionStore 可直接注入
+    const agent = new Agent({
+        llm: () => {
+            const provider = config.models.default;
+            const llmConfig = config.models.providers[provider];
+            return llmFactory.getAdapter(provider, llmConfig);
+        },
+        skillRegistry,
+        logger,
+        maxIterations: config.agent?.maxIterations ?? 10,
+        maxContextTokens: config.agent?.maxContextTokens,
+        longTermMemory,
+        memoryRouter,
+        skillConfig: {
+            sandbox: config.skills.shell?.sandbox,
+        },
+        skillGenerator,
+        orchestrator,
+        knowledgeGraph,
+        sessionStore,
+        agentPool,
+    });
 
     const scheduler = new SchedulerService(logger);
 

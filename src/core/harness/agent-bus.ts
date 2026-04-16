@@ -25,7 +25,11 @@ export class AgentBus extends EventEmitter {
     private static instance: AgentBus;
 
     static getInstance(): AgentBus {
-        if (!AgentBus.instance) AgentBus.instance = new AgentBus();
+        if (!AgentBus.instance) {
+            AgentBus.instance = new AgentBus();
+            // D5: 防止大量并发 Agent 实例触发 EventEmitter 内存泄漏警告
+            AgentBus.instance.setMaxListeners(200);
+        }
         return AgentBus.instance;
     }
 
