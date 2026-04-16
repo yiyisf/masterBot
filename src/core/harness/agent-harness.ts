@@ -26,6 +26,7 @@ import type {
 import { type SkillRegistry } from '../../skills/registry.js';
 import type { LongTermMemory } from '../../memory/long-term.js';
 import type { MemoryRouter } from '../../memory/memory-router.js';
+import type { SessionEventStore } from './session-store.js';
 
 export interface HarnessExecutionContext {
     sessionId: string;
@@ -63,7 +64,8 @@ export class AgentHarness {
         longTermMemory?: LongTermMemory,
         memoryRouter?: MemoryRouter,
         private pauseSignal?: { paused: boolean },
-        emitEvent?: (type: string, payload: Record<string, unknown>, causedBy?: string) => string
+        emitEvent?: (type: string, payload: Record<string, unknown>, causedBy?: string) => string,
+        sessionStore?: SessionEventStore
     ) {
         this._emitEvent = emitEvent;
         this.instanceId = nanoid(12);
@@ -74,6 +76,11 @@ export class AgentHarness {
             spec.tools.deny
         );
 
+        // M2: 按 spec.memory 权限决定是否注入记忆工具
+        const memoryAllowed = spec.memory.allowRemember || spec.memory.allowRecall;
+        const effectiveLongTermMemory = memoryAllowed ? longTermMemory : undefined;
+        const effectiveMemoryRouter = memoryAllowed ? memoryRouter : undefined;
+
         // Agent 使用过滤后的 registry，maxIterations 遵守 spec 约束
         // llm 使用函数形式，保持热更新能力（config 切换提供商后生效）
         this.agent = new Agent({
@@ -81,8 +88,10 @@ export class AgentHarness {
             skillRegistry: filteredRegistry,
             logger: this.createScopedLogger(),
             maxIterations: spec.resources.maxIterations,
-            longTermMemory,
-            memoryRouter,
+            longTermMemory: effectiveLongTermMemory,
+            memoryRouter: effectiveMemoryRouter,
+            // M1: 接线 sessionStore，使 session_recall 在 harness 下可用
+            sessionStore,
         });
 
         this.grader = new Grader(getLLM, logger);
@@ -222,6 +231,21 @@ export class AgentHarness {
                             content: (step.content ?? '').slice(0, 500),
                         });
                         await this.hookRunner.run(this.spec.hooks.onToolResult ?? [], { ...hookCtx, step });
+
+                        // M3: 记忆操作专用审计事件
+                        if (step.toolName === 'memory_remember') {
+                            this.emit('memory_write', {
+                                namespace: this.spec.memory.namespace,
+                                specId: this.spec.id,
+                                preview: (step.content ?? '').slice(0, 200),
+                            });
+                        } else if (step.toolName === 'memory_recall') {
+                            this.emit('memory_read', {
+                                namespace: this.spec.memory.namespace,
+                                specId: this.spec.id,
+                                resultCount: (step.content ?? '').split('\n').length,
+                            });
+                        }
                     }
 
                     if (step.type === 'answer') {

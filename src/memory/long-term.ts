@@ -88,16 +88,53 @@ export class LongTermMemory implements MemoryAccess {
 
     /**
      * 向量 cosine 搜索，无 embedding 降级为 LIKE
+     * - embeddingFn 不可用：直接 LIKE 搜索
+     * - embeddingFn 调用失败：LIKE 降级
+     * - vectorSearch 有结果：返回向量结果
+     * - vectorSearch 无结果（历史记忆无 embedding）：LIKE 补充兜底
      */
     async search(query: string, limit = 5): Promise<MemoryEntry[]> {
         if (this.embeddingFn) {
             try {
-                return await this.vectorSearch(query, limit);
+                const results = await this.vectorSearch(query, limit);
+                if (results.length > 0) return results;
+                // 向量结果为空可能是历史记忆无 embedding，用 LIKE 补充
+                this.logger.debug('[memory] Vector search returned 0 results, trying LIKE fallback');
             } catch (err) {
                 this.logger.warn(`Vector search failed, falling back to LIKE: ${(err as Error).message}`);
             }
         }
         return this.likeSearch(query, limit);
+    }
+
+    /**
+     * 为没有 embedding 的历史记忆补充向量（修复历史数据）
+     * 适用于：之前用 Anthropic provider 存入的记忆（无 embedding）
+     */
+    async reindexEmbeddings(batchSize = 50): Promise<{ indexed: number; failed: number }> {
+        if (!this.embeddingFn) return { indexed: 0, failed: 0 };
+
+        const rows = this.db.prepare(
+            'SELECT id, content FROM memories WHERE embedding IS NULL LIMIT ?'
+        ).all(batchSize) as Array<{ id: string; content: string }>;
+
+        let indexed = 0;
+        let failed = 0;
+
+        for (const row of rows) {
+            try {
+                const [embedding] = await this.embeddingFn([row.content]);
+                this.db.prepare(
+                    'UPDATE memories SET embedding = ? WHERE id = ?'
+                ).run(JSON.stringify(embedding), row.id);
+                indexed++;
+            } catch {
+                failed++;
+            }
+        }
+
+        this.logger.info(`[memory] reindexEmbeddings: ${indexed} indexed, ${failed} failed (batch=${batchSize})`);
+        return { indexed, failed };
     }
 
     /**

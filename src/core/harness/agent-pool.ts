@@ -149,7 +149,9 @@ export class AgentPool {
             this.longTermMemory,
             this.memoryRouter,
             undefined,
-            emitEvent
+            emitEvent,
+            // M1: 透传 sessionStore，使 harness 下的 session_recall 工具可用
+            this.sessionStore
         );
 
         this.instances.set(harness.instanceId, harness);

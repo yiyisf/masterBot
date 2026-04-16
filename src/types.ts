@@ -221,7 +221,9 @@ export type SessionEventType =
     | 'harness_wake'
     | 'harness_transform'
     | 'credential_access'   // Gap 4: 凭证访问审计
-    | 'permission_check';   // Gap 4: 权限检查审计
+    | 'permission_check'    // Gap 4: 权限检查审计
+    | 'memory_write'        // M3: 记忆写入审计（memory_remember）
+    | 'memory_read';        // M3: 记忆读取审计（memory_recall）
 
 export interface SessionEvent {
     id: string;
@@ -273,6 +275,8 @@ export interface Config {
     models: {
         default: string;
         providers: Record<string, LLMConfig>;
+        /** 专用于向量 embedding 的提供商名称（默认自动选择第一个 openai/ollama 类型的提供商）*/
+        embeddingProvider?: string;
     };
     agent: {
         maxIterations: number;
