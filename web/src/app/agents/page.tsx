@@ -624,17 +624,19 @@ export default function AgentsPage() {
                             <p className="text-xs">在"Agent 规格"标签页中点击"启动任务"</p>
                         </div>
                     ) : (
-                        <div className="flex flex-col gap-2">
-                            {/* active first, then completed/failed */}
-                            {[...instances]
-                                .sort((a, b) => {
-                                    const order = { running: 0, paused: 1, queued: 2, completed: 3, failed: 4, cancelled: 5 };
-                                    return (order[a.state] ?? 9) - (order[b.state] ?? 9);
-                                })
-                                .map(inst => (
-                                    <InstanceRow key={inst.instanceId} inst={inst} onAction={handleAction} />
-                                ))}
-                        </div>
+                        <ScrollArea className="h-[calc(100vh-280px)] min-h-[300px]">
+                            <div className="flex flex-col gap-2 pr-2">
+                                {/* active first, then completed/failed */}
+                                {[...instances]
+                                    .sort((a, b) => {
+                                        const order = { running: 0, paused: 1, queued: 2, completed: 3, failed: 4, cancelled: 5 };
+                                        return (order[a.state] ?? 9) - (order[b.state] ?? 9);
+                                    })
+                                    .map(inst => (
+                                        <InstanceRow key={inst.instanceId} inst={inst} onAction={handleAction} />
+                                    ))}
+                            </div>
+                        </ScrollArea>
                     )}
                 </TabsContent>
             </Tabs>
