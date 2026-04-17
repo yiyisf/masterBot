@@ -467,9 +467,11 @@ export class Agent {
 
         const tier = classifyComplexity(inputText, externalTools.length);
         if (tier === 1) {
-            this.logger.info(`[AdaptiveThinking] Routing to Tier 1: Fast direct reply. Skipping tools.`);
+            this.logger.info(`[AdaptiveThinking] Routing to Tier 1: Fast direct reply. Skipping external tools.`);
             activeMaxIterations = 1;
-            tools = []; // Don't give it tools to avoid overthinking simple chats
+            // Tier 1 只去掉外部技能工具，保留内置工具（plan/memory/delegate 等）
+            // 确保 delegate_to_agent 在有可用 Harness Agent 时始终可调用
+            tools = builtinTools;
         } else if (tier === 3) {
             this.logger.info(`[AdaptiveThinking] Routing to Tier 3: Deep thinking required.`);
             activeMaxIterations = 25; // Extended patience
