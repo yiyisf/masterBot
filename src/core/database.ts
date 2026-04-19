@@ -319,6 +319,23 @@ export function initDatabase(): DatabaseSync {
             updated_at  INTEGER NOT NULL DEFAULT (unixepoch() * 1000)
         );
         CREATE INDEX IF NOT EXISTS idx_vault_key ON credential_vault(key);
+
+        -- Agent 实例持久化表（重启后历史记录不丢失）
+        CREATE TABLE IF NOT EXISTS agent_instances (
+            id           TEXT PRIMARY KEY,
+            spec_id      TEXT NOT NULL,
+            spec_name    TEXT NOT NULL,
+            state        TEXT NOT NULL DEFAULT 'running',
+            task         TEXT,
+            started_at   INTEGER,
+            completed_at INTEGER,
+            step_count   INTEGER NOT NULL DEFAULT 0,
+            last_score   REAL,
+            error        TEXT,
+            created_at   INTEGER NOT NULL DEFAULT (unixepoch() * 1000)
+        );
+        CREATE INDEX IF NOT EXISTS idx_ai_spec  ON agent_instances(spec_id);
+        CREATE INDEX IF NOT EXISTS idx_ai_state ON agent_instances(state);
     `);
 
     // Auto-migration for existing databases

@@ -21,6 +21,7 @@ import type { SkillRegistry } from '../../skills/registry.js';
 import type { LongTermMemory } from '../../memory/long-term.js';
 import type { MemoryRouter } from '../../memory/memory-router.js';
 import type { SessionMemoryManager } from '../../memory/short-term.js';
+import type { DatabaseSync } from 'node:sqlite';
 
 export { SessionEventStore, CredentialVault };
 
@@ -47,8 +48,89 @@ export class AgentPool {
         private memoryRouter?: MemoryRouter,
         private sessionStore?: SessionEventStore,
         private credentialVault?: CredentialVault,
-        private sessionMemoryManager?: SessionMemoryManager
+        private sessionMemoryManager?: SessionMemoryManager,
+        private db?: DatabaseSync
     ) {}
+
+    // ─────────────────────────────────────────────────
+    // 持久化辅助（agent_instances 表）
+    // ─────────────────────────────────────────────────
+
+    private persistInstance(info: AgentInstanceInfo): void {
+        if (!this.db) return;
+        try {
+            this.db.prepare(`
+                INSERT INTO agent_instances
+                    (id, spec_id, spec_name, state, task, started_at, completed_at, step_count, last_score, error)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(id) DO UPDATE SET
+                    state        = excluded.state,
+                    completed_at = excluded.completed_at,
+                    step_count   = excluded.step_count,
+                    last_score   = excluded.last_score,
+                    error        = excluded.error
+            `).run(
+                info.instanceId,
+                info.specId,
+                info.specName,
+                info.state,
+                info.task ?? null,
+                info.startedAt ? info.startedAt.getTime() : null,
+                info.completedAt ? info.completedAt.getTime() : null,
+                info.stepCount,
+                info.lastScore ?? null,
+                info.error ?? null,
+            );
+        } catch (err) {
+            this.logger.warn(`[agent-pool] persistInstance failed: ${(err as Error).message}`);
+        }
+    }
+
+    /** 从 DB 加载历史实例元数据（不在内存中的） */
+    private loadHistoricalInstances(): AgentInstanceInfo[] {
+        if (!this.db) return [];
+        try {
+            const liveIds = Array.from(this.instances.keys());
+            const placeholders = liveIds.length > 0
+                ? liveIds.map(() => '?').join(',')
+                : "'__none__'";  // 避免空 IN () 导致 SQL 语法错误
+            const rows = this.db.prepare(`
+                SELECT id, spec_id, spec_name, state, task, started_at, completed_at,
+                       step_count, last_score, error
+                FROM agent_instances
+                WHERE id NOT IN (${placeholders})
+                ORDER BY started_at DESC
+                LIMIT 200
+            `).all(...(liveIds as import('node:sqlite').SQLInputValue[])) as Array<{
+                id: string;
+                spec_id: string;
+                spec_name: string;
+                state: string;
+                task: string | null;
+                started_at: number | null;
+                completed_at: number | null;
+                step_count: number;
+                last_score: number | null;
+                error: string | null;
+            }>;
+            return rows.map(r => ({
+                instanceId: r.id,
+                specId: r.spec_id,
+                specName: r.spec_name,
+                state: r.state as AgentLifecycleState,
+                task: r.task ?? '',
+                revision: 0,
+                startedAt: r.started_at ? new Date(r.started_at) : new Date(0),
+                completedAt: r.completed_at ? new Date(r.completed_at) : undefined,
+                stepCount: r.step_count,
+                lastScore: r.last_score ?? undefined,
+                error: r.error ?? undefined,
+            }));
+        } catch (err) {
+            this.logger.warn(`[agent-pool] loadHistoricalInstances failed: ${(err as Error).message}`);
+            return [];
+        }
+    }
 
     // ─────────────────────────────────────────────────
     // Spec 管理
@@ -162,6 +244,21 @@ export class AgentPool {
 
         this.logger.info(`[agent-pool] Spawned ${spec.name} instance ${harness.instanceId}`);
 
+        // 持久化初始实例记录
+        this.persistInstance({
+            instanceId: harness.instanceId,
+            specId: spec.id,
+            specName: spec.name,
+            state: 'running',
+            task,
+            revision: 0,
+            startedAt: harness.getStartedAt(),
+            completedAt: undefined,
+            stepCount: 0,
+            lastScore: undefined,
+            error: undefined,
+        });
+
         // 异步驱动，步骤缓存到 steps map（使用含 sessionToken 的 enrichedContext）
         this.driveInstance(harness, task, enrichedContext).catch(err => {
             this.logger.error(`[agent-pool] Instance ${harness.instanceId} failed: ${err.message}`);
@@ -219,12 +316,40 @@ export class AgentPool {
                 state: harness.getState(),
                 lastScore: harness.getLastScore(),
             }, harness.instanceId);
+            // 持久化最终状态
+            this.persistInstance({
+                instanceId: harness.instanceId,
+                specId: harness.spec.id,
+                specName: harness.spec.name,
+                state: harness.getState(),
+                task,
+                revision: 0,
+                startedAt: harness.getStartedAt(),
+                completedAt: harness.getCompletedAt(),
+                stepCount: steps.length,
+                lastScore: harness.getLastScore(),
+                error: harness.getError(),
+            });
         } catch (err) {
             flushContent();
             agentBus.publish(`agent.error.${harness.instanceId}`, {
                 instanceId: harness.instanceId,
                 error: (err as Error).message,
             }, harness.instanceId);
+            // 持久化失败状态
+            this.persistInstance({
+                instanceId: harness.instanceId,
+                specId: harness.spec.id,
+                specName: harness.spec.name,
+                state: harness.getState(),
+                task,
+                revision: 0,
+                startedAt: harness.getStartedAt(),
+                completedAt: harness.getCompletedAt(),
+                stepCount: steps.length,
+                lastScore: harness.getLastScore(),
+                error: harness.getError() ?? (err as Error).message,
+            });
         } finally {
             this.runningCount.set(harness.spec.id, Math.max(0, (this.runningCount.get(harness.spec.id) ?? 1) - 1));
             this.drainQueue(harness.spec.id);
@@ -334,19 +459,29 @@ export class AgentPool {
     // ─────────────────────────────────────────────────
 
     listInstances(): AgentInstanceInfo[] {
-        return Array.from(this.instances.values()).map(h => ({
+        // 内存中的活跃/近期实例
+        const live: AgentInstanceInfo[] = Array.from(this.instances.values()).map(h => ({
             instanceId: h.instanceId,
             specId: h.spec.id,
             specName: h.spec.name,
             state: h.getState(),
-            task: '',   // task 存储在步骤中，此处省略
+            task: '',
             revision: 0,
             startedAt: h.getStartedAt(),
             completedAt: h.getCompletedAt(),
-            stepCount: h.getStepCount(),
+            // 使用 pool 缓存的已合并步骤数（UI 显示的步骤），而非 harness 内部的
+            // 流式 content chunk 计数（每个 token 块各自+1，会远大于实际步骤数）
+            stepCount: this.steps.get(h.instanceId)?.length ?? h.getStepCount(),
             lastScore: h.getLastScore(),
             error: h.getError(),
         }));
+
+        // 补充 DB 中历史记录（应用重启后仍可查看）
+        const historical = this.loadHistoricalInstances();
+
+        // 合并，去重（live 优先）
+        const liveIds = new Set(live.map(i => i.instanceId));
+        return [...live, ...historical.filter(i => !liveIds.has(i.instanceId))];
     }
 
     getInstanceSteps(instanceId: string): ExecutionStep[] {
