@@ -280,6 +280,80 @@ const SESSION_RECALL_TOOL: ToolDefinition = {
 };
 
 /**
+ * 构建最小合法上下文，避免孤立 tool 消息导致 400 错误。
+ *
+ * 规则：
+ * 1. 从消息末尾向前扫描，收集最近的完整 assistant(tool_calls)+tool 配对。
+ * 2. tool 结果内容超过 2000 字符时截断，防止下一轮再次溢出。
+ * 3. 始终保留最后一条 user 消息（提供对话锚点）。
+ * 4. 不包含第 0 条（system），调用方自行拼接。
+ */
+function buildMinimalContext(messages: Message[]): Message[] {
+    const MAX_TOOL_CONTENT = 2000;
+    // messages[0] 是 system，从 index 1 开始处理
+    const rest = messages.slice(1);
+    if (rest.length === 0) return [];
+
+    const result: Message[] = [];
+    let i = rest.length - 1;
+
+    // 向前扫描：收集最后一组完整的 assistant+tool 配对
+    while (i >= 0) {
+        const msg = rest[i];
+
+        if (msg.role === 'tool') {
+            // 找到对应的 assistant(tool_calls) 消息
+            let j = i - 1;
+            while (j >= 0 && rest[j].role !== 'assistant') j--;
+
+            if (j >= 0 && Array.isArray((rest[j] as any).tool_calls) && (rest[j] as any).tool_calls.length > 0) {
+                // 截断每个 tool 结果内容
+                const toolMsgs: Message[] = [];
+                for (let k = i; k >= j + 1; k--) {
+                    const t = rest[k];
+                    if (t.role === 'tool') {
+                        const content = typeof t.content === 'string' && t.content.length > MAX_TOOL_CONTENT
+                            ? t.content.slice(0, MAX_TOOL_CONTENT) + '\n[内容已截断]'
+                            : t.content;
+                        toolMsgs.unshift({ ...t, content } as Message);
+                    } else {
+                        toolMsgs.unshift(t);
+                    }
+                }
+                result.unshift(rest[j], ...toolMsgs);
+                i = j - 1;
+                // 只保留最后一组配对，停止继续向前
+                break;
+            } else {
+                // 孤立 tool 消息，丢弃
+                i--;
+            }
+        } else if (msg.role === 'user') {
+            // 保留最后一条 user 消息
+            result.unshift(msg);
+            i--;
+            break;
+        } else {
+            i--;
+        }
+    }
+
+    // 确保至少有一条 user 消息作为上下文锚点
+    const hasUser = result.some(m => m.role === 'user');
+    if (!hasUser) {
+        // 从原始消息末尾向前找最后一条 user
+        for (let k = rest.length - 1; k >= 0; k--) {
+            if (rest[k].role === 'user') {
+                result.unshift(rest[k]);
+                break;
+            }
+        }
+    }
+
+    return result;
+}
+
+/**
  * Agent 编排引擎
  * 负责协调 LLM 和技能的交互
  */
@@ -518,20 +592,29 @@ export class Agent {
                 }
             } catch (llmErr: any) {
                 // 处理上下文超限错误：强制丢弃更多历史后重试一次
+                // 注意：仅当明确为 token 超限时才压缩，避免将其他 400 误判为超限
+                const errMsg: string = llmErr?.message ?? '';
                 const isContextLimitErr =
-                    llmErr?.message?.includes('context_length_exceeded') ||
-                    llmErr?.message?.includes('maximum context length') ||
-                    llmErr?.message?.includes('reduce the length') ||
-                    llmErr?.status === 400;
+                    errMsg.includes('context_length_exceeded') ||
+                    errMsg.includes('maximum context length') ||
+                    errMsg.includes('reduce the length') ||
+                    errMsg.includes('too many tokens') ||
+                    errMsg.includes('请求的 token 数量') ||
+                    (llmErr?.status === 400 && (
+                        errMsg.includes('token') ||
+                        errMsg.includes('context') ||
+                        errMsg.includes('length')
+                    ));
 
                 if (isContextLimitErr && messages.length > 3) {
                     this.logger.warn(`LLM context limit hit, aggressively trimming and retrying...`);
-                    // 强制保留 system + 最后 2 条消息（最小化上下文）
+                    // 构建最小合法上下文：
+                    //   system + 最近一组完整的 assistant(tool_calls)+tool 配对（或最后 user 消息）
+                    // 确保不产生孤立 tool 消息导致 400 坏请求
                     const sysMsg = messages[0];
-                    const lastTwo = messages.slice(-2);
-                    messages.splice(1, messages.length - 3, ...lastTwo.slice(0, 0)); // clear middle
+                    const trimmed = buildMinimalContext(messages);
                     messages.length = 0;
-                    messages.push(sysMsg, ...lastTwo);
+                    messages.push(sysMsg, ...trimmed);
                     yield {
                         type: 'context_compressed',
                         content: '上下文超限，已强制压缩历史消息，正在重试…',
