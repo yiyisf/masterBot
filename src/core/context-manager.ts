@@ -150,6 +150,14 @@ export class ContextManager {
             splitIndex = Math.max(0, history.length - 2);
         }
 
+        // --- 关键保护 ---
+        // splitIndex 可能落在一条 'tool' 或 'assistant'(tool_calls) 消息上，
+        // 导致 kept[] 以孤立 tool 消息开头，进而使 LLM API 返回 400 错误。
+        // 向前推进 splitIndex，直到找到合法的 'user' 消息起点（或无消息可保留）。
+        while (splitIndex < history.length && history[splitIndex].role !== 'user') {
+            splitIndex++;
+        }
+
         return {
             trimmed: history.slice(0, splitIndex),
             kept: history.slice(splitIndex),

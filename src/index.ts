@@ -135,7 +135,9 @@ async function main() {
         sessionStore,
         credentialVault,
         // D3: 注入 sessionMemoryManager，使 wake 恢复时可访问短期记忆
-        sessionManager
+        sessionManager,
+        // 注入 db，用于 agent 实例持久化（重启后历史记录不丢失）
+        db
     );
 
     // Phase 23: 加载 SOUL.md Agent 规格（新格式 + 兼容旧格式）
