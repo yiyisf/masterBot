@@ -62,28 +62,12 @@ async function main() {
         logger,
     });
 
-    // Initialize long-term memory
+    // Initialize long-term memory (v2: FTS5 搜索，无 embedding 依赖)
     let longTermMemory: LongTermMemory | undefined;
     if (config.memory.longTerm.enabled) {
-        // M5: 选择支持 embedding 的提供商
-        // 优先级：config.models.embeddingProvider > 第一个 openai/ollama/gemini 类型的提供商 > 默认提供商
-        const embeddingProviderName = config.models.embeddingProvider
-            ?? Object.entries(config.models.providers).find(
-                ([, cfg]) => cfg.type === 'openai' || cfg.type === 'ollama' || cfg.type === 'gemini'
-            )?.[0]
-            ?? config.models.default;
-
-        const embeddingLlmConfig = config.models.providers[embeddingProviderName];
-        logger.info(`[memory] Using provider "${embeddingProviderName}" for embeddings (model: ${embeddingLlmConfig?.embeddingModel ?? 'default'})`);
-
-        const embeddingFn = async (texts: string[]) => {
-            const adapter = llmFactory.getAdapter(embeddingProviderName, embeddingLlmConfig);
-            return adapter.embeddings(texts);
-        };
-
-        longTermMemory = new LongTermMemory({ db, logger, embeddingFn });
+        longTermMemory = new LongTermMemory({ db, logger, dataDir: 'data/.memory' });
         longTermMemory.initialize();
-        logger.info('Long-term memory initialized (SQLite)');
+        logger.info('[memory] Long-term memory initialized (FTS5, no embedding)');
     }
 
     // Initialize new services (must be before Agent so they can be injected)

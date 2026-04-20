@@ -1466,12 +1466,11 @@ export class GatewayServer {
             }
         });
 
-        // M5: 历史记忆 embedding 补全（修复 Anthropic 模式下无向量的历史记忆）
-        this.app.post<{ Body: { batchSize?: number } }>('/api/memories/reindex', async (request, reply) => {
+        // 迁移旧记忆到文件式存储（data/.memory/ 目录）
+        this.app.post('/api/memories/migrate', async (_request, reply) => {
             if (!this.longTermMemory) { reply.status(503); return { error: 'Long-term memory not enabled' }; }
             try {
-                const { batchSize } = (request.body ?? {}) as { batchSize?: number };
-                const result = await this.longTermMemory.reindexEmbeddings(batchSize ?? 50);
+                const result = await this.longTermMemory.migrateToFiles();
                 return { success: true, ...result };
             } catch (err: any) {
                 reply.status(500); return { error: err.message };

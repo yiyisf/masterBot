@@ -1,0 +1,23 @@
+# CMaster Bot 全局指令
+
+> 复制此文件为 data/CMASTER.md，然后按需编辑。
+> 本文件在每个对话 session 开始时自动注入 system prompt。
+> data/.memory/MEMORY.md（Agent 自动维护的记忆索引）也会同步注入。
+
+## 工作语言
+
+默认使用中文回复用户。专业术语保留英文原文。
+
+## 行为准则
+
+- 执行高危操作（删除、格式化、清空）前必须请求用户确认
+- 不存储敏感凭证到记忆中（使用 CredentialVault 代替）
+- 长任务优先使用 DAG 分解，便于并行和恢复
+
+## 企业环境
+
+<!-- 示例：
+云环境偏好：优先使用阿里云，华东 2 区（cn-shanghai）。
+内部系统：CMDB 地址 http://cmdb.internal，配额管理 http://quota.internal。
+命名规范：资源操作工作流使用 res 域，应用工作流使用 app 域。
+-->

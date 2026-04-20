@@ -1,4 +1,6 @@
 import { nanoid } from 'nanoid';
+import { readFile } from 'fs/promises';
+import { existsSync } from 'fs';
 import type {
     LLMAdapter,
     Message,
@@ -105,7 +107,9 @@ const MEMORY_REMEMBER_TOOL: ToolDefinition = {
     type: 'function',
     function: {
         name: 'memory_remember',
-        description: 'Save important information to long-term memory for future recall across sessions',
+        description: 'Save important information to long-term memory for future recall across sessions. ' +
+            'Use category to classify: user (preferences), operational (ops patterns), governance (rules/decisions), ' +
+            'skill (skill tips), correction (corrected mistakes), reference (external pointers).',
         parameters: {
             type: 'object',
             properties: {
@@ -113,9 +117,18 @@ const MEMORY_REMEMBER_TOOL: ToolDefinition = {
                     type: 'string',
                     description: 'The information to remember'
                 },
+                category: {
+                    type: 'string',
+                    enum: ['user', 'operational', 'governance', 'skill', 'correction', 'reference'],
+                    description: 'Memory category (default: user)'
+                },
+                topic: {
+                    type: 'string',
+                    description: 'Short filename-safe topic identifier, e.g. "cloud-quota-lessons" or "user-language-preference"'
+                },
                 tags: {
                     type: 'string',
-                    description: 'Optional comma-separated tags for categorization'
+                    description: 'Optional comma-separated tags for additional categorization'
                 }
             },
             required: ['content']
@@ -365,6 +378,8 @@ export class Agent {
     private contextManager: ContextManager;
     private longTermMemory?: LongTermMemory;
     private memoryRouter?: MemoryRouter;
+    /** 缓存 CMASTER.md + MEMORY.md 拼接后的全局指令，首次加载后复用 */
+    private _globalInstructions: string | null | undefined = undefined;
     private skillConfig: Record<string, unknown>;
     private skillGenerator?: any;
     private orchestrator?: any;
@@ -442,8 +457,19 @@ export class Agent {
             ? input
             : input.filter(p => p.type === 'text').map(p => (p as { type: 'text'; text: string }).text).join(' ');
 
+        // 加载全局指令（CMASTER.md + MEMORY.md 索引），首次运行时懒加载并缓存
+        if (this._globalInstructions === undefined) {
+            this._globalInstructions = await this._loadGlobalInstructions();
+        }
+
         // Auto-inject relevant long-term memories into system prompt
         let systemContent = SYSTEM_PROMPT;
+
+        // 注入 CMASTER.md 全局指令 + MEMORY.md 索引
+        if (this._globalInstructions) {
+            systemContent += this._globalInstructions;
+        }
+
         if (this.longTermMemory) {
             try {
                 const memories = await this.longTermMemory.search(inputText, 3);
@@ -713,8 +739,11 @@ export class Agent {
                     yield { type: 'plan', content: JSON.stringify(steps), toolName: 'plan_task', toolOutput: steps, timestamp: new Date() };
                     messages.push({ role: 'tool', content: `Plan created: ${JSON.stringify(steps)}. Now precede to execute step 1.`, toolCallId: toolCall.id });
                 } else if (toolName === 'memory_remember' && this.longTermMemory) {
-                    const { content: memContent, tags } = params;
-                    const metadata = tags ? { tags: tags.split(',').map((t: string) => t.trim()) } : {};
+                    const { content: memContent, category, topic, tags } = params;
+                    const metadata: Record<string, unknown> = {};
+                    if (category) metadata.category = category;
+                    if (topic) metadata.topic = topic;
+                    if (tags) metadata.tags = tags.split(',').map((t: string) => t.trim());
                     const memId = await this.longTermMemory.remember(memContent, metadata, context.sessionId);
                     const result = `Memory saved (id: ${memId})`;
                     yield { type: 'observation', content: result, toolName, toolOutput: { id: memId }, timestamp: new Date() };
@@ -1166,6 +1195,42 @@ export class Agent {
             .map(line => line.trim().replace(/^\d+[\.\)、]\s*/, ''))
             .filter(line => line.length > 0 && line.length < 50)
             .slice(0, 3);
+    }
+
+    /**
+     * 加载 CMASTER.md（全局指令）和 MEMORY.md 索引（前 200 行），
+     * 拼接后追加到 system prompt。
+     * 结果为 null 表示两者均不存在，空字符串表示加载但内容为空。
+     */
+    private async _loadGlobalInstructions(): Promise<string | null> {
+        const parts: string[] = [];
+
+        // 1. CMASTER.md — 管理员/用户手写的全局指令
+        const cmasterPath = 'data/CMASTER.md';
+        if (existsSync(cmasterPath)) {
+            try {
+                const content = await readFile(cmasterPath, 'utf-8');
+                if (content.trim()) {
+                    parts.push(`\n\n## 全局指令 (CMASTER.md)\n\n${content.trim()}`);
+                }
+            } catch (err) {
+                this.logger.warn(`[agent] Failed to load CMASTER.md: ${(err as Error).message}`);
+            }
+        }
+
+        // 2. MEMORY.md — Agent 自动维护的记忆索引（前 200 行）
+        if (this.longTermMemory) {
+            try {
+                const memIndex = await this.longTermMemory.loadMemoryIndex(200);
+                if (memIndex) {
+                    parts.push(`\n\n## 记忆索引 (MEMORY.md)\n\n${memIndex}`);
+                }
+            } catch (err) {
+                this.logger.warn(`[agent] Failed to load MEMORY.md: ${(err as Error).message}`);
+            }
+        }
+
+        return parts.length > 0 ? parts.join('') : null;
     }
 
     /**
