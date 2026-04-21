@@ -127,6 +127,34 @@ export class GatewayServer {
         const distPath = path.join(process.cwd(), 'web/out');
         if (fs.existsSync(distPath)) {
             this.logger.info(`Serving static files from ${distPath}`);
+
+            // Build a set of known page routes at startup (once) so the onRequest hook
+            // can do an O(1) Set lookup instead of a synchronous fs.existsSync on every request.
+            const pageRoutes = new Set<string>();
+            try {
+                for (const entry of fs.readdirSync(distPath, { withFileTypes: true })) {
+                    if (entry.isDirectory() && fs.existsSync(path.join(distPath, entry.name, 'index.html'))) {
+                        pageRoutes.add('/' + entry.name);
+                    }
+                }
+                this.logger.debug(`[static] Registered ${pageRoutes.size} page routes for trailing-slash redirect`);
+            } catch (err) {
+                this.logger.warn(`[static] Failed to scan page routes: ${(err as Error).message}`);
+            }
+
+            // Next.js static export with trailingSlash:true generates {route}/index.html.
+            // Redirect paths without trailing slash to the slash version so the correct
+            // page HTML is served (e.g. /agents → /agents/).
+            this.app.addHook('onRequest', (request, reply, done) => {
+                const rawUrl = request.raw.url ?? '';
+                const urlPath = rawUrl.split('?')[0];
+                if (pageRoutes.has(urlPath)) {
+                    reply.redirect(rawUrl.replace(urlPath, urlPath + '/'), 301);
+                    return;
+                }
+                done();
+            });
+
             await this.app.register(fastifyStatic, {
                 root: distPath,
                 prefix: '/',
