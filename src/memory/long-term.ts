@@ -71,8 +71,8 @@ export class LongTermMemory implements MemoryAccess {
 
             CREATE VIRTUAL TABLE IF NOT EXISTS memory_fts USING fts5(
                 id UNINDEXED,
-                category,
-                topic,
+                category UNINDEXED,
+                topic UNINDEXED,
                 content,
                 tokenize='unicode61 remove_diacritics 2'
             );
