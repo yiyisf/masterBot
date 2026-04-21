@@ -3,13 +3,15 @@ import { readFileSync } from 'fs';
 import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
 
-// Load schema reference for system prompt
-let schemaReference = '';
+const __dirname = dirname(fileURLToPath(import.meta.url));
+
+// Golden few-shot examples: 5 canonical patterns (~1000 tokens), injected every call
+// Full schema (conductor-schema.md, ~3000 tokens) only loaded when explicitly requested
+let goldenExamples = '';
 try {
-    const __dirname = dirname(fileURLToPath(import.meta.url));
-    schemaReference = readFileSync(join(__dirname, 'conductor-schema.md'), 'utf-8');
+    goldenExamples = readFileSync(join(__dirname, 'conductor-golden-examples.md'), 'utf-8');
 } catch {
-    schemaReference = '(Schema reference file not found)';
+    goldenExamples = '(Golden examples file not found)';
 }
 
 const SYSTEM_PROMPT = `你是 Conductor OSS 工作流编排专家。你的职责是基于用户的自然语言描述，生成、分析或修改符合 Conductor OSS v3.21.20 标准的 WorkflowDef JSON。
@@ -29,8 +31,21 @@ const SYSTEM_PROMPT = `你是 Conductor OSS 工作流编排专家。你的职责
 - 然后输出完整的 WorkflowDef JSON（用 \`\`\`json 代码块包裹）
 - 如果拆解为多个子工作流，每个子工作流单独一个 JSON 代码块，主工作流放在最后
 
-## Conductor Schema 参考
-${schemaReference}`;
+## Golden Examples（5 种典型模式，直接复用结构）
+
+${goldenExamples}`;
+
+/**
+ * 按需加载完整 Schema 参考（仅当 generate_workflow 设置 loadSchema: true 时）
+ * 使用场景：生成高度复杂的工作流时需要完整字段参考
+ */
+function loadFullSchema(): string {
+    try {
+        return readFileSync(join(__dirname, 'conductor-schema.md'), 'utf-8');
+    } catch {
+        return '';
+    }
+}
 
 /**
  * 从 LLM 响应中提取 JSON 代码块
@@ -122,15 +137,24 @@ function validateWorkflowDef(obj: any): { valid: boolean; errors: string[] } {
 
 /**
  * 调用 LLM 生成响应
+ * @param withFullSchema 是否追加完整 Schema 参考（默认 false，按需启用）
  */
-async function callLLM(ctx: SkillContext, userPrompt: string): Promise<string> {
+async function callLLM(ctx: SkillContext, userPrompt: string, withFullSchema = false): Promise<string> {
     const llm = ctx.llm as any;
     if (!llm) {
         throw new Error('LLM adapter not available in skill context');
     }
 
+    let systemPrompt = SYSTEM_PROMPT;
+    if (withFullSchema) {
+        const fullSchema = loadFullSchema();
+        if (fullSchema) {
+            systemPrompt += `\n\n## 完整 Schema 参考（按需）\n\n${fullSchema}`;
+        }
+    }
+
     const messages = [
-        { role: 'system' as const, content: SYSTEM_PROMPT },
+        { role: 'system' as const, content: systemPrompt },
         { role: 'user' as const, content: userPrompt },
     ];
 
@@ -141,13 +165,18 @@ async function callLLM(ctx: SkillContext, userPrompt: string): Promise<string> {
 }
 
 export async function generate_workflow(ctx: SkillContext, params: Record<string, unknown>) {
-            const { description, name } = params as { description: string; name?: string };
-            ctx.logger.info(`[conductor-workflow] Generating workflow from description: ${description.slice(0, 100)}...`);
+            const { description, name, load_schema } = params as {
+                description: string;
+                name?: string;
+                /** 设为 true 时追加完整 Schema 参考（默认 false，生成简单工作流不需要） */
+                load_schema?: boolean;
+            };
+            ctx.logger.info(`[conductor-workflow] Generating workflow: ${description.slice(0, 100)}... (schema=${load_schema ?? false})`);
 
             const nameHint = name ? `\n工作流名称要求: "${name}"` : '';
             const userPrompt = `请根据以下业务逻辑描述生成 Conductor 工作流定义 JSON：\n\n${description}${nameHint}\n\n要求:\n1. 输出完整可运行的 WorkflowDef JSON\n2. 合理使用任务类型和参数配置\n3. 如果流程复杂（超过15个任务），请拆解为多个子工作流并通过 SUB_WORKFLOW 编排\n4. 配置合理的错误处理和超时策略`;
 
-            const llmResponse = await callLLM(ctx, userPrompt);
+            const llmResponse = await callLLM(ctx, userPrompt, load_schema === true);
             const jsonBlocks = extractJsonBlocks(llmResponse);
 
             if (jsonBlocks.length === 0) {

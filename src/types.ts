@@ -280,8 +280,6 @@ export interface Config {
     models: {
         default: string;
         providers: Record<string, LLMConfig>;
-        /** 专用于向量 embedding 的提供商名称（默认自动选择第一个 openai/ollama 类型的提供商）*/
-        embeddingProvider?: string;
     };
     agent: {
         maxIterations: number;
@@ -295,9 +293,8 @@ export interface Config {
         };
         longTerm: {
             enabled: boolean;
-            vectorDb: string;
-            chromaUrl?: string;
-            collectionName: string;
+            /** 文件记忆目录（默认 data/.memory） */
+            dataDir?: string;
         };
     };
     skills: {

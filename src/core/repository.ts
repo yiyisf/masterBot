@@ -11,8 +11,9 @@ export class HistoryRepository {
      */
     getSessions(): any[] {
         return db.prepare(`
-            SELECT s.*, 
-            (SELECT content FROM messages WHERE session_id = s.id ORDER BY created_at ASC LIMIT 1) as first_msg
+            SELECT s.*,
+            (SELECT content FROM messages WHERE session_id = s.id ORDER BY created_at ASC LIMIT 1) as first_msg,
+            (SELECT content FROM messages WHERE session_id = s.id ORDER BY created_at DESC LIMIT 1) as last_msg
             FROM sessions s
             ORDER BY is_pinned DESC, updated_at DESC
         `).all() as any[];

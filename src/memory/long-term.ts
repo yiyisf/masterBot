@@ -1,38 +1,65 @@
 import { DatabaseSync } from 'node:sqlite';
 import { nanoid } from 'nanoid';
+import { readFile, writeFile, mkdir } from 'fs/promises';
+import { existsSync, mkdirSync } from 'fs';
+import { join, dirname } from 'path';
 import type { MemoryAccess, MemoryEntry, Logger } from '../types.js';
 
 export interface LongTermMemoryOptions {
     db: DatabaseSync;
     logger: Logger;
-    embeddingFn?: (texts: string[]) => Promise<number[][]>;
+    /** 文件记忆根目录，默认 data/.memory */
+    dataDir?: string;
 }
 
 /**
- * 长期记忆实现
- * SQLite 存储 + 可选向量嵌入 cosine 搜索
+ * 记忆分类（适配 masterBot 场景）
+ */
+export type MemoryCategory =
+    | 'user'        // 用户偏好与习惯
+    | 'operational' // 运维/操作经验
+    | 'governance'  // 治理规则、架构决策
+    | 'skill'       // Skill 使用经验
+    | 'correction'  // 用户纠正过的错误
+    | 'reference';  // 外部系统指针
+
+const VALID_CATEGORIES = new Set<string>([
+    'user', 'operational', 'governance', 'skill', 'correction', 'reference',
+]);
+
+function sanitizeFilename(s: string): string {
+    return s.replace(/[^a-zA-Z0-9\u4e00-\u9fa5._-]/g, '-').slice(0, 80);
+}
+
+/**
+ * 长期记忆实现（v2）
+ * - 文件为真相来源：data/.memory/{category}/{topic}.md
+ * - SQLite FTS5 为加速层（unicode61 分词）
+ * - 无 embedding 外部依赖，任何 LLM provider 均可用
+ * - 自动维护 data/.memory/MEMORY.md 索引（前 200 行注入每个 session）
  */
 export class LongTermMemory implements MemoryAccess {
     private db: DatabaseSync;
     private logger: Logger;
-    private embeddingFn?: (texts: string[]) => Promise<number[][]>;
+    private dataDir: string;
 
     constructor(options: LongTermMemoryOptions) {
         this.db = options.db;
         this.logger = options.logger;
-        this.embeddingFn = options.embeddingFn;
+        this.dataDir = options.dataDir ?? 'data/.memory';
     }
 
     /**
-     * 初始化 memories 表
+     * 初始化：memories 表 + FTS5 虚拟表 + 触发器
      */
     initialize(): void {
         this.db.exec(`
             CREATE TABLE IF NOT EXISTS memories (
                 id TEXT PRIMARY KEY,
+                category TEXT NOT NULL DEFAULT 'user',
+                topic TEXT NOT NULL DEFAULT '',
                 key TEXT,
                 content TEXT NOT NULL,
-                embedding TEXT,
                 metadata TEXT DEFAULT '{}',
                 session_id TEXT,
                 created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
@@ -40,124 +67,95 @@ export class LongTermMemory implements MemoryAccess {
             );
             CREATE INDEX IF NOT EXISTS idx_memories_key ON memories(key);
             CREATE INDEX IF NOT EXISTS idx_memories_session ON memories(session_id);
+            CREATE INDEX IF NOT EXISTS idx_memories_category ON memories(category);
+
+            CREATE VIRTUAL TABLE IF NOT EXISTS memory_fts USING fts5(
+                id UNINDEXED,
+                category UNINDEXED,
+                topic UNINDEXED,
+                content,
+                tokenize='unicode61 remove_diacritics 2'
+            );
         `);
-        this.logger.info('Long-term memory initialized');
+
+        // 确保文件目录存在
+        for (const cat of VALID_CATEGORIES) {
+            const dir = join(this.dataDir, cat);
+            if (!existsSync(dir)) {
+                try { mkdirSync(dir, { recursive: true }); } catch { /* ok */ }
+            }
+        }
+
+        this.logger.info('[memory] Long-term memory v2 initialized (FTS5, no embedding)');
     }
 
     /**
-     * 按 key 查询
+     * 按 key 查询（兼容旧接口）
      */
     async get(key: string): Promise<unknown> {
         const stmt = this.db.prepare('SELECT content, metadata FROM memories WHERE key = ?');
         const row = stmt.get(key) as { content: string; metadata: string } | undefined;
         if (!row) return undefined;
-        try {
-            return JSON.parse(row.content);
-        } catch {
-            return row.content;
-        }
+        try { return JSON.parse(row.content); } catch { return row.content; }
     }
 
     /**
-     * Upsert by key, 自动计算 embedding
+     * Upsert by key（兼容旧接口，不再计算 embedding）
      */
     async set(key: string, value: unknown): Promise<void> {
         const content = typeof value === 'string' ? value : JSON.stringify(value);
-        let embeddingJson: string | null = null;
+        const existing = this.db.prepare('SELECT id FROM memories WHERE key = ?').get(key) as { id: string } | undefined;
 
-        if (this.embeddingFn) {
-            try {
-                const [embedding] = await this.embeddingFn([content]);
-                embeddingJson = JSON.stringify(embedding);
-            } catch (err) {
-                this.logger.warn(`Embedding failed for key "${key}": ${(err as Error).message}`);
-            }
-        }
-
-        const existing = this.db.prepare('SELECT id FROM memories WHERE key = ?').get(key);
         if (existing) {
             this.db.prepare(
-                'UPDATE memories SET content = ?, embedding = ?, updated_at = CURRENT_TIMESTAMP WHERE key = ?'
-            ).run(content, embeddingJson, key);
-        } else {
+                'UPDATE memories SET content = ?, updated_at = CURRENT_TIMESTAMP WHERE key = ?'
+            ).run(content, key);
             this.db.prepare(
-                'INSERT INTO memories (id, key, content, embedding) VALUES (?, ?, ?, ?)'
-            ).run(nanoid(), key, content, embeddingJson);
+                'UPDATE memory_fts SET content = ? WHERE id = ?'
+            ).run(content, existing.id);
+        } else {
+            const id = nanoid();
+            this.db.prepare(
+                'INSERT INTO memories (id, key, content) VALUES (?, ?, ?)'
+            ).run(id, key, content);
+            this.db.prepare(
+                'INSERT INTO memory_fts (id, category, topic, content) VALUES (?, ?, ?, ?)'
+            ).run(id, 'user', key ?? '', content);
         }
-    }
-
-    /**
-     * 向量 cosine 搜索，无 embedding 降级为 LIKE
-     * - embeddingFn 不可用：直接 LIKE 搜索
-     * - embeddingFn 调用失败：LIKE 降级
-     * - vectorSearch 有结果：返回向量结果
-     * - vectorSearch 无结果（历史记忆无 embedding）：LIKE 补充兜底
-     */
-    async search(query: string, limit = 5): Promise<MemoryEntry[]> {
-        if (this.embeddingFn) {
-            try {
-                const results = await this.vectorSearch(query, limit);
-                if (results.length > 0) return results;
-                // 向量结果为空可能是历史记忆无 embedding，用 LIKE 补充
-                this.logger.debug('[memory] Vector search returned 0 results, trying LIKE fallback');
-            } catch (err) {
-                this.logger.warn(`Vector search failed, falling back to LIKE: ${(err as Error).message}`);
-            }
-        }
-        return this.likeSearch(query, limit);
-    }
-
-    /**
-     * 为没有 embedding 的历史记忆补充向量（修复历史数据）
-     * 适用于：之前用 Anthropic provider 存入的记忆（无 embedding）
-     */
-    async reindexEmbeddings(batchSize = 50): Promise<{ indexed: number; failed: number }> {
-        if (!this.embeddingFn) return { indexed: 0, failed: 0 };
-
-        const rows = this.db.prepare(
-            'SELECT id, content FROM memories WHERE embedding IS NULL LIMIT ?'
-        ).all(batchSize) as Array<{ id: string; content: string }>;
-
-        let indexed = 0;
-        let failed = 0;
-
-        for (const row of rows) {
-            try {
-                const [embedding] = await this.embeddingFn([row.content]);
-                this.db.prepare(
-                    'UPDATE memories SET embedding = ? WHERE id = ?'
-                ).run(JSON.stringify(embedding), row.id);
-                indexed++;
-            } catch {
-                failed++;
-            }
-        }
-
-        this.logger.info(`[memory] reindexEmbeddings: ${indexed} indexed, ${failed} failed (batch=${batchSize})`);
-        return { indexed, failed };
     }
 
     /**
      * 存储记忆条目
+     * - 写文件：data/.memory/{category}/{topic}.md
+     * - 写 FTS5：供 search() 快速检索
+     * - 更新 MEMORY.md 索引
      */
-    async remember(content: string, metadata?: Record<string, unknown>, sessionId?: string): Promise<string> {
+    async remember(
+        content: string,
+        metadata?: Record<string, unknown>,
+        sessionId?: string
+    ): Promise<string> {
         const id = nanoid();
-        let embeddingJson: string | null = null;
+        const category = (metadata?.category as MemoryCategory | undefined) ?? 'user';
+        const topic = (metadata?.topic as string | undefined) ?? `memory-${id.slice(0, 8)}`;
+        const validCategory = VALID_CATEGORIES.has(category) ? category : 'user';
 
-        if (this.embeddingFn) {
-            try {
-                const [embedding] = await this.embeddingFn([content]);
-                embeddingJson = JSON.stringify(embedding);
-            } catch (err) {
-                this.logger.warn(`Embedding failed for remember: ${(err as Error).message}`);
-            }
-        }
-
+        // 写 SQLite
         this.db.prepare(
-            'INSERT INTO memories (id, content, embedding, metadata, session_id) VALUES (?, ?, ?, ?, ?)'
-        ).run(id, content, embeddingJson, JSON.stringify(metadata ?? {}), sessionId ?? null);
+            'INSERT INTO memories (id, category, topic, content, metadata, session_id) VALUES (?, ?, ?, ?, ?, ?)'
+        ).run(id, validCategory, topic, content, JSON.stringify(metadata ?? {}), sessionId ?? null);
 
-        this.logger.debug(`Remembered memory: ${id}`);
+        // 写 FTS5
+        this.db.prepare(
+            'INSERT INTO memory_fts (id, category, topic, content) VALUES (?, ?, ?, ?)'
+        ).run(id, validCategory, topic, content);
+
+        // 写文件（异步，不阻塞）
+        this._writeMemoryFile(validCategory, topic, content, metadata).catch(err =>
+            this.logger.warn(`[memory] Failed to write memory file: ${err.message}`)
+        );
+
+        this.logger.debug(`[memory] Remembered: ${validCategory}/${topic} (${id})`);
         return id;
     }
 
@@ -166,48 +164,116 @@ export class LongTermMemory implements MemoryAccess {
      */
     async forget(id: string): Promise<boolean> {
         const result = this.db.prepare('DELETE FROM memories WHERE id = ?').run(id);
+        if (result.changes > 0) {
+            this.db.prepare('DELETE FROM memory_fts WHERE id = ?').run(id);
+        }
         return result.changes > 0;
     }
 
     /**
-     * 向量搜索 (cosine similarity)
+     * FTS5 搜索 + LIKE 降级
      */
-    private async vectorSearch(query: string, limit: number): Promise<MemoryEntry[]> {
-        const [queryEmbedding] = await this.embeddingFn!([query]);
+    async search(query: string, limit = 5): Promise<MemoryEntry[]> {
+        // 先尝试 FTS5 全文检索
+        try {
+            const ftsResults = this._ftsSearch(query, limit);
+            if (ftsResults.length > 0) return ftsResults;
+        } catch (err) {
+            this.logger.warn(`[memory] FTS5 search failed, falling back to LIKE: ${(err as Error).message}`);
+        }
+        return this._likeSearch(query, limit);
+    }
 
-        // 获取所有有 embedding 的记忆
+    /**
+     * 从 MEMORY.md 中加载前 N 行作为 session 上下文
+     * 用于在每个对话 session 开始时注入到 system prompt
+     */
+    async loadMemoryIndex(maxLines = 200): Promise<string | null> {
+        const indexPath = join(this.dataDir, 'MEMORY.md');
+        if (!existsSync(indexPath)) return null;
+        try {
+            const content = await readFile(indexPath, 'utf-8');
+            const lines = content.split('\n');
+            if (lines.length <= maxLines) return content;
+            return lines.slice(0, maxLines).join('\n') + '\n\n[... MEMORY.md 已截断，仅显示前 200 行 ...]';
+        } catch {
+            return null;
+        }
+    }
+
+    /**
+     * 将现有 SQLite memories 导出为 .memory/ 目录 Markdown 文件（迁移工具）
+     */
+    async migrateToFiles(): Promise<{ exported: number; failed: number }> {
         const rows = this.db.prepare(
-            'SELECT id, content, embedding, metadata, session_id, created_at FROM memories WHERE embedding IS NOT NULL'
+            'SELECT id, category, topic, content, metadata, created_at FROM memories ORDER BY created_at ASC'
         ).all() as Array<{
             id: string;
+            category: string;
+            topic: string;
             content: string;
-            embedding: string;
             metadata: string;
-            session_id: string | null;
             created_at: string;
         }>;
 
-        // 计算 cosine similarity 并排序
-        const scored = rows.map(row => {
-            const embedding = JSON.parse(row.embedding) as number[];
-            const similarity = cosineSimilarity(queryEmbedding, embedding);
-            return { row, similarity };
-        });
+        let exported = 0;
+        let failed = 0;
 
-        scored.sort((a, b) => b.similarity - a.similarity);
+        for (const row of rows) {
+            try {
+                const meta = JSON.parse(row.metadata ?? '{}');
+                meta.migratedAt = new Date().toISOString();
+                meta.originalId = row.id;
+                await this._writeMemoryFile(row.category || 'user', row.topic || row.id, row.content, meta);
 
-        return scored.slice(0, limit).map(({ row }) => ({
+                // 同步到 FTS5（如果还没有）
+                const existing = this.db.prepare('SELECT id FROM memory_fts WHERE id = ?').get(row.id);
+                if (!existing) {
+                    this.db.prepare(
+                        'INSERT INTO memory_fts (id, category, topic, content) VALUES (?, ?, ?, ?)'
+                    ).run(row.id, row.category || 'user', row.topic || '', row.content);
+                }
+
+                exported++;
+            } catch {
+                failed++;
+            }
+        }
+
+        this.logger.info(`[memory] Migration complete: ${exported} exported, ${failed} failed`);
+        return { exported, failed };
+    }
+
+    // ─────────────────────────────── private ───────────────────────────────
+
+    private _ftsSearch(query: string, limit: number): MemoryEntry[] {
+        // FTS5 match 语法：转义特殊字符
+        const safeQuery = query.replace(/["*]/g, ' ').trim();
+        if (!safeQuery) return [];
+
+        const rows = this.db.prepare(`
+            SELECT m.id, m.content, m.metadata, m.created_at
+            FROM memory_fts f
+            JOIN memories m ON m.id = f.id
+            WHERE memory_fts MATCH ?
+            ORDER BY rank
+            LIMIT ?
+        `).all(safeQuery, limit) as Array<{
+            id: string;
+            content: string;
+            metadata: string;
+            created_at: string;
+        }>;
+
+        return rows.map(row => ({
             id: row.id,
             content: row.content,
-            metadata: JSON.parse(row.metadata),
+            metadata: this._parseMeta(row.metadata),
             createdAt: new Date(row.created_at),
         }));
     }
 
-    /**
-     * LIKE 降级搜索
-     */
-    private likeSearch(query: string, limit: number): MemoryEntry[] {
+    private _likeSearch(query: string, limit: number): MemoryEntry[] {
         const rows = this.db.prepare(
             'SELECT id, content, metadata, created_at FROM memories WHERE content LIKE ? ORDER BY updated_at DESC LIMIT ?'
         ).all(`%${query}%`, limit) as Array<{
@@ -220,30 +286,66 @@ export class LongTermMemory implements MemoryAccess {
         return rows.map(row => ({
             id: row.id,
             content: row.content,
-            metadata: JSON.parse(row.metadata),
+            metadata: this._parseMeta(row.metadata),
             createdAt: new Date(row.created_at),
         }));
     }
-}
 
-/**
- * 纯 JS cosine similarity
- */
-function cosineSimilarity(a: number[], b: number[]): number {
-    if (a.length !== b.length) return 0;
-
-    let dotProduct = 0;
-    let normA = 0;
-    let normB = 0;
-
-    for (let i = 0; i < a.length; i++) {
-        dotProduct += a[i] * b[i];
-        normA += a[i] * a[i];
-        normB += b[i] * b[i];
+    private _parseMeta(raw: string): Record<string, unknown> {
+        try { return JSON.parse(raw); } catch { return {}; }
     }
 
-    const denominator = Math.sqrt(normA) * Math.sqrt(normB);
-    if (denominator === 0) return 0;
+    private async _writeMemoryFile(
+        category: string,
+        topic: string,
+        content: string,
+        metadata?: Record<string, unknown>
+    ): Promise<void> {
+        const safeCategory = VALID_CATEGORIES.has(category) ? category : 'user';
+        const safeTopic = sanitizeFilename(topic);
+        const filePath = join(this.dataDir, safeCategory, `${safeTopic}.md`);
 
-    return dotProduct / denominator;
+        const frontmatter = [
+            '---',
+            `name: ${topic}`,
+            `category: ${safeCategory}`,
+            `updated: ${new Date().toISOString()}`,
+            ...(metadata?.tags ? [`tags: ${JSON.stringify(metadata.tags)}`] : []),
+            '---',
+            '',
+        ].join('\n');
+
+        const fileContent = frontmatter + content + '\n';
+
+        await mkdir(dirname(filePath), { recursive: true });
+        await writeFile(filePath, fileContent, 'utf-8');
+
+        // 更新 MEMORY.md 索引
+        await this._updateMemoryIndex(safeCategory, safeTopic, content);
+    }
+
+    private async _updateMemoryIndex(category: string, topic: string, content: string): Promise<void> {
+        const indexPath = join(this.dataDir, 'MEMORY.md');
+        const relPath = `./${category}/${sanitizeFilename(topic)}.md`;
+
+        // 取内容首行作为摘要
+        const summary = content.split('\n')[0].slice(0, 100);
+        const entry = `- [${topic}](${relPath}) — ${summary}`;
+
+        let existing = '';
+        if (existsSync(indexPath)) {
+            try { existing = await readFile(indexPath, 'utf-8'); } catch { /* ok */ }
+        }
+
+        // 如果已有相同路径的条目就替换，否则追加
+        const lines = existing ? existing.split('\n') : ['# Memory Index', ''];
+        const idx = lines.findIndex(l => l.includes(`(${relPath})`));
+        if (idx >= 0) {
+            lines[idx] = entry;
+        } else {
+            lines.push(entry);
+        }
+
+        await writeFile(indexPath, lines.join('\n'), 'utf-8');
+    }
 }

@@ -4,7 +4,6 @@ server:
 
 models:
   default: openai
-  # embeddingProvider: openai  # 可选：指定向量搜索使用的提供商（默认自动选择第一个支持 embedding 的提供商）
   providers:
     openai:
       type: openai
@@ -12,7 +11,6 @@ models:
       apiKey: ${OPENAI_API_KEY}
       model: ${OPENAI_MODEL:gpt-4}
       maxTokens: 4096
-      embeddingModel: ${EMBEDDING_MODEL:text-embedding-3-small}
       
     anthropic:
       type: anthropic
@@ -46,8 +44,8 @@ memory:
     ttlSeconds: 3600
   longTerm:
     enabled: true
-    vectorDb: sqlite
-    collectionName: cmaster_memory
+    # 文件式记忆存储目录（Agent 自动维护）
+    dataDir: data/.memory
 
 skills:
   autoLoad: true

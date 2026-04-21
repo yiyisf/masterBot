@@ -9,9 +9,9 @@ const mockLogger = {
     error: vi.fn(),
 };
 
-function createMemory(embeddingFn?: (texts: string[]) => Promise<number[][]>) {
+function createMemory() {
     const db = new DatabaseSync(':memory:');
-    const mem = new LongTermMemory({ db, logger: mockLogger, embeddingFn });
+    const mem = new LongTermMemory({ db, logger: mockLogger });
     mem.initialize();
     return { db, mem };
 }
@@ -80,8 +80,8 @@ describe('LongTermMemory', () => {
         });
     });
 
-    describe('search (LIKE fallback)', () => {
-        it('should find memories by content substring', async () => {
+    describe('search', () => {
+        it('should find memories by content substring (FTS5)', async () => {
             const { mem } = createMemory();
             await mem.remember('User prefers dark mode');
             await mem.remember('User email is test@example.com');
@@ -108,62 +108,39 @@ describe('LongTermMemory', () => {
             const results = await mem.search('zzz_no_match');
             expect(results).toEqual([]);
         });
-    });
 
-    describe('search (vector)', () => {
-        it('should use embedding function for vector search', async () => {
-            // Mock embedding: simple 3-dim vectors
-            const mockEmbedding = vi.fn(async (texts: string[]) => {
-                return texts.map(t => {
-                    if (t.includes('dark')) return [1, 0, 0];
-                    if (t.includes('light')) return [0.9, 0.1, 0];
-                    if (t.includes('deadline')) return [0, 0, 1];
-                    return [0.5, 0.5, 0.5]; // query default
-                });
-            });
+        it('should search by category and topic metadata', async () => {
+            const { mem } = createMemory();
+            await mem.remember('deploy kubernetes cluster', { category: 'operational', topic: 'k8s-deploy' });
+            await mem.remember('user prefers english language', { category: 'user', topic: 'language-pref' });
 
-            const { mem } = createMemory(mockEmbedding);
-            await mem.remember('dark mode preference');
-            await mem.remember('light theme option');
-            await mem.remember('project deadline Friday');
-
-            const results = await mem.search('dark theme', 2);
-            expect(results.length).toBe(2);
-            // dark and light should be most similar to "dark theme"
-            expect(results[0].content).toContain('dark');
-        });
-
-        it('should fall back to LIKE when embedding fails', async () => {
-            const failingEmbedding = vi.fn()
-                .mockResolvedValueOnce([[1, 0, 0]]) // succeed on remember
-                .mockRejectedValueOnce(new Error('API error')); // fail on search
-
-            const { mem } = createMemory(failingEmbedding);
-            await mem.remember('findable content');
-
-            // Should fall back to LIKE and still find
-            const results = await mem.search('findable');
+            const results = await mem.search('kubernetes');
             expect(results.length).toBe(1);
+            expect(results[0].content).toContain('kubernetes');
         });
     });
 
-    describe('set with embedding', () => {
-        it('should compute embedding on set', async () => {
-            const mockEmbedding = vi.fn(async (texts: string[]) => texts.map(() => [1, 0]));
-            const { mem, db } = createMemory(mockEmbedding);
-
-            await mem.set('key1', 'hello');
-            const row = db.prepare('SELECT embedding FROM memories WHERE key = ?').get('key1') as any;
-            expect(JSON.parse(row.embedding)).toEqual([1, 0]);
-            expect(mockEmbedding).toHaveBeenCalledWith(['hello']);
+    describe('remember with metadata', () => {
+        it('should store category in DB', async () => {
+            const { mem, db } = createMemory();
+            await mem.remember('governance rule', { category: 'governance', topic: 'rule-1' });
+            const row = db.prepare('SELECT category, topic FROM memories WHERE content = ?').get('governance rule') as any;
+            expect(row.category).toBe('governance');
+            expect(row.topic).toBe('rule-1');
         });
 
-        it('should still set value when embedding fails', async () => {
-            const failingEmbedding = vi.fn().mockRejectedValue(new Error('fail'));
-            const { mem } = createMemory(failingEmbedding);
+        it('should default to user category', async () => {
+            const { mem, db } = createMemory();
+            await mem.remember('plain memory');
+            const row = db.prepare('SELECT category FROM memories WHERE content = ?').get('plain memory') as any;
+            expect(row.category).toBe('user');
+        });
 
-            await mem.set('key1', 'value');
-            expect(await mem.get('key1')).toBe('value');
+        it('should fall back to user for invalid category', async () => {
+            const { mem, db } = createMemory();
+            await mem.remember('test content', { category: 'invalid_category' });
+            const row = db.prepare('SELECT category FROM memories WHERE content = ?').get('test content') as any;
+            expect(row.category).toBe('user');
         });
     });
 });
