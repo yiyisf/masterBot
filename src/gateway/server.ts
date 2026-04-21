@@ -569,13 +569,19 @@ export class GatewayServer {
         // Get all sessions
         this.app.get('/api/sessions', async () => {
             const sessions = historyRepository.getSessions();
-            return sessions.map(s => ({
-                id: s.id,
-                title: s.title || s.first_msg || '新对话',
-                updatedAt: s.updated_at,
-                createdAt: s.created_at,
-                is_pinned: Boolean(s.is_pinned),
-            }));
+            return sessions.map(s => {
+                // 从最后一条消息内容提取纯文本预览（去除 JSON/Markdown 标记）
+                const rawPreview: string = s.last_msg ?? s.first_msg ?? '';
+                const preview = rawPreview.replace(/```[\s\S]*?```/g, '[代码]').slice(0, 80);
+                return {
+                    id: s.id,
+                    title: s.title || s.first_msg || '新对话',
+                    updatedAt: s.updated_at,
+                    createdAt: s.created_at,
+                    is_pinned: Boolean(s.is_pinned),
+                    preview: preview || undefined,
+                };
+            });
         });
 
         // Get specific session messages (paginated)

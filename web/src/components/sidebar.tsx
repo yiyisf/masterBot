@@ -26,6 +26,8 @@ import {
   FileText,
   Wifi,
   ShieldCheck,
+  Search,
+  X,
 } from "lucide-react";
 
 
@@ -110,7 +112,38 @@ interface SessionItem {
   id: string;
   title: string;
   updatedAt: string;
+  createdAt?: string;
   is_pinned: boolean;
+  /** 最后一条消息的纯文本预览（后端截断至 80 字符） */
+  preview?: string;
+}
+
+/** 按 updatedAt 将会话分组为：置顶 / 今天 / 昨天 / 本周 / 更早 */
+function groupSessions(sessions: SessionItem[]): Array<{ label: string; items: SessionItem[] }> {
+  const pinned = sessions.filter(s => s.is_pinned);
+  const rest = sessions.filter(s => !s.is_pinned);
+
+  const now = new Date();
+  const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  const yesterdayStart = new Date(todayStart.getTime() - 86400_000);
+  const weekStart = new Date(todayStart.getTime() - 6 * 86400_000);
+
+  const groups: Record<string, SessionItem[]> = { today: [], yesterday: [], week: [], older: [] };
+  for (const s of rest) {
+    const d = new Date(s.updatedAt);
+    if (d >= todayStart) groups.today.push(s);
+    else if (d >= yesterdayStart) groups.yesterday.push(s);
+    else if (d >= weekStart) groups.week.push(s);
+    else groups.older.push(s);
+  }
+
+  return [
+    ...(pinned.length ? [{ label: '📌 置顶', items: pinned }] : []),
+    ...(groups.today.length ? [{ label: '今天', items: groups.today }] : []),
+    ...(groups.yesterday.length ? [{ label: '昨天', items: groups.yesterday }] : []),
+    ...(groups.week.length ? [{ label: '本周', items: groups.week }] : []),
+    ...(groups.older.length ? [{ label: '更早', items: groups.older }] : []),
+  ];
 }
 
 const data: SidebarData = {
@@ -212,14 +245,13 @@ const data: SidebarData = {
   ],
 };
 
-const SESSION_LIMIT = 10;
-
 /**
- * Session list component for the sidebar
+ * Session list with search, date grouping and last-message preview
  */
 function SessionList() {
   const [sessions, setSessions] = React.useState<SessionItem[]>([]);
   const [loading, setLoading] = React.useState(true);
+  const [search, setSearch] = React.useState("");
   const [editingId, setEditingId] = React.useState<string | null>(null);
   const [editTitle, setEditTitle] = React.useState("");
   const router = useRouter();
@@ -235,9 +267,7 @@ function SessionList() {
     }
   }, []);
 
-  React.useEffect(() => {
-    loadSessions();
-  }, [loadSessions]);
+  React.useEffect(() => { loadSessions(); }, [loadSessions]);
 
   const handleDelete = async (id: string, e: React.MouseEvent) => {
     e.stopPropagation();
@@ -269,18 +299,13 @@ function SessionList() {
   };
 
   const handleRename = async (id: string) => {
-    if (!editTitle.trim()) {
-      setEditingId(null);
-      return;
-    }
+    if (!editTitle.trim()) { setEditingId(null); return; }
     try {
       await fetchApi(`/api/sessions/${id}/title`, {
         method: 'PATCH',
         body: JSON.stringify({ title: editTitle.trim() }),
       });
-      setSessions(prev =>
-        prev.map(s => s.id === id ? { ...s, title: editTitle.trim() } : s)
-      );
+      setSessions(prev => prev.map(s => s.id === id ? { ...s, title: editTitle.trim() } : s));
     } catch (err) {
       console.error('Failed to rename session:', err);
     }
@@ -289,89 +314,138 @@ function SessionList() {
 
   if (loading) {
     return (
-      <div className="px-3 py-2 text-xs text-muted-foreground animate-pulse">
-        加载会话列表...
+      <div className="flex flex-col gap-1 px-2 pt-2">
+        {[1, 2, 3].map(i => (
+          <div key={i} className="h-10 rounded-md bg-muted/40 animate-pulse" />
+        ))}
       </div>
     );
   }
 
-  if (sessions.length === 0) {
-    return (
-      <div className="px-3 py-2 text-xs text-muted-foreground">
-        暂无历史会话
-      </div>
-    );
-  }
+  // Filter by search query
+  const q = search.toLowerCase().trim();
+  const filtered = q
+    ? sessions.filter(s =>
+        s.title.toLowerCase().includes(q) || (s.preview ?? '').toLowerCase().includes(q)
+      )
+    : sessions;
 
-  // Show at most SESSION_LIMIT items; pinned sessions always visible first
-  const displayed = sessions.slice(0, SESSION_LIMIT);
-  const hasMore = sessions.length > SESSION_LIMIT;
+  const groups = groupSessions(filtered);
 
   return (
-    // flex-col + min-h-0 so this div participates in the parent flex layout
     <div className="flex flex-col min-h-0 flex-1">
-      <ScrollArea className="flex-1 min-h-0">
-        <div className="space-y-0.5 px-1">
-          {displayed.map(session => (
-            <div
-              key={session.id}
-              className="group/session flex items-center gap-1 rounded-md px-2 py-1.5 text-xs hover:bg-muted/50 cursor-pointer transition-colors"
-              onClick={() => router.push(`/chat?sessionId=${session.id}`)}
+      {/* Search input */}
+      <div className="px-2 pb-1.5 shrink-0">
+        <div className="relative flex items-center">
+          <Search className="absolute left-2 w-3 h-3 text-muted-foreground/60 pointer-events-none" />
+          <input
+            type="text"
+            placeholder="搜索会话…"
+            value={search}
+            onChange={e => setSearch(e.target.value)}
+            className="w-full bg-muted/40 text-xs rounded-md pl-6 pr-6 py-1.5 outline-none border border-transparent focus:border-border focus:bg-background transition-colors placeholder:text-muted-foreground/50"
+          />
+          {search && (
+            <button
+              onClick={() => setSearch("")}
+              className="absolute right-1.5 p-0.5 rounded hover:bg-muted text-muted-foreground/60"
             >
-              {session.is_pinned && <Pin className="w-3 h-3 text-amber-500 shrink-0" />}
-              {editingId === session.id ? (
-                <input
-                  className="flex-1 bg-transparent border-b border-primary text-xs outline-none min-w-0"
-                  value={editTitle}
-                  onChange={(e) => setEditTitle(e.target.value)}
-                  onBlur={() => handleRename(session.id)}
-                  onKeyDown={(e) => {
-                    if (e.key === 'Enter') handleRename(session.id);
-                    if (e.key === 'Escape') setEditingId(null);
-                  }}
-                  autoFocus
-                  onClick={(e) => e.stopPropagation()}
-                />
-              ) : (
-                <span className="flex-1 truncate text-muted-foreground group-hover/session:text-foreground transition-colors">
-                  {session.title}
-                </span>
-              )}
-              <div className="flex gap-0.5 opacity-0 group-hover/session:opacity-100 transition-opacity shrink-0">
-                <button
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    setEditingId(session.id);
-                    setEditTitle(session.title);
-                  }}
-                  className="p-0.5 rounded hover:bg-muted"
-                  title="重命名"
-                >
-                  <Pencil className="w-3 h-3" />
-                </button>
-                <button
-                  onClick={(e) => handleTogglePin(session.id, session.is_pinned, e)}
-                  className="p-0.5 rounded hover:bg-muted"
-                  title={session.is_pinned ? "取消置顶" : "置顶"}
-                >
-                  {session.is_pinned ? <PinOff className="w-3 h-3" /> : <Pin className="w-3 h-3" />}
-                </button>
-                <button
-                  onClick={(e) => handleDelete(session.id, e)}
-                  className="p-0.5 rounded hover:bg-destructive/10 text-destructive"
-                  title="删除"
-                >
-                  <Trash2 className="w-3 h-3" />
-                </button>
-              </div>
-            </div>
-          ))}
+              <X className="w-3 h-3" />
+            </button>
+          )}
         </div>
+      </div>
+
+      {/* Session list with date groups */}
+      <ScrollArea className="flex-1 min-h-0">
+        {groups.length === 0 ? (
+          <div className="px-3 py-4 text-xs text-muted-foreground text-center">
+            {q ? '没有匹配的会话' : '暂无历史会话'}
+          </div>
+        ) : (
+          <div className="space-y-0.5 px-1 pb-1">
+            {groups.map(group => (
+              <div key={group.label}>
+                {/* Group label */}
+                <div className="px-2 pt-2 pb-0.5 text-[10px] font-semibold text-muted-foreground/60 uppercase tracking-wider select-none">
+                  {group.label}
+                </div>
+                {group.items.map(session => (
+                  <div
+                    key={session.id}
+                    className="group/session flex items-start gap-1 rounded-md px-2 py-1.5 hover:bg-muted/50 cursor-pointer transition-colors"
+                    onClick={() => router.push(`/chat?sessionId=${session.id}`)}
+                  >
+                    {session.is_pinned && (
+                      <Pin className="w-3 h-3 text-amber-500 shrink-0 mt-0.5" />
+                    )}
+                    <div className="flex-1 min-w-0">
+                      {editingId === session.id ? (
+                        <input
+                          className="w-full bg-transparent border-b border-primary text-xs outline-none"
+                          value={editTitle}
+                          onChange={e => setEditTitle(e.target.value)}
+                          onBlur={() => handleRename(session.id)}
+                          onKeyDown={e => {
+                            if (e.key === 'Enter') handleRename(session.id);
+                            if (e.key === 'Escape') setEditingId(null);
+                          }}
+                          autoFocus
+                          onClick={e => e.stopPropagation()}
+                        />
+                      ) : (
+                        <>
+                          <p className="text-xs truncate text-foreground/80 group-hover/session:text-foreground transition-colors leading-tight">
+                            {session.title}
+                          </p>
+                          {session.preview && (
+                            <p className="text-[10px] truncate text-muted-foreground/50 leading-tight mt-0.5">
+                              {session.preview}
+                            </p>
+                          )}
+                        </>
+                      )}
+                    </div>
+                    <div className="flex gap-0.5 opacity-0 group-hover/session:opacity-100 transition-opacity shrink-0 mt-0.5">
+                      <button
+                        onClick={e => {
+                          e.stopPropagation();
+                          setEditingId(session.id);
+                          setEditTitle(session.title);
+                        }}
+                        className="p-0.5 rounded hover:bg-muted"
+                        title="重命名"
+                      >
+                        <Pencil className="w-3 h-3" />
+                      </button>
+                      <button
+                        onClick={e => handleTogglePin(session.id, session.is_pinned, e)}
+                        className="p-0.5 rounded hover:bg-muted"
+                        title={session.is_pinned ? "取消置顶" : "置顶"}
+                      >
+                        {session.is_pinned ? <PinOff className="w-3 h-3" /> : <Pin className="w-3 h-3" />}
+                      </button>
+                      <button
+                        onClick={e => handleDelete(session.id, e)}
+                        className="p-0.5 rounded hover:bg-destructive/10 text-destructive"
+                        title="删除"
+                      >
+                        <Trash2 className="w-3 h-3" />
+                      </button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            ))}
+          </div>
+        )}
       </ScrollArea>
-      {hasMore && (
+
+      {/* View all link */}
+      {sessions.length > 20 && !q && (
         <Link
           href="/memory"
-          className="mx-3 mt-1 mb-0.5 flex items-center gap-1 text-[11px] text-muted-foreground hover:text-foreground transition-colors"
+          className="mx-3 mt-0.5 mb-1 flex items-center gap-1 text-[11px] text-muted-foreground hover:text-foreground transition-colors shrink-0"
         >
           <ChevronRight className="w-3 h-3" />
           查看全部 {sessions.length} 条会话
