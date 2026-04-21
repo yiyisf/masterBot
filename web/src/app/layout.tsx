@@ -1,5 +1,5 @@
 import type { Metadata } from "next";
-import { Inter } from "next/font/google";
+import localFont from "next/font/local";
 import "./globals.css";
 import { AppSidebar } from "@/components/sidebar";
 import {
@@ -9,7 +9,17 @@ import {
 } from "@/components/ui/sidebar";
 import { Separator } from "@/components/ui/separator";
 
-const inter = Inter({ subsets: ["latin"] });
+// Use locally bundled Inter font to avoid network requests to Google CDN at build time.
+// Font files are in web/src/fonts/ (copied from Next.js font cache).
+const inter = localFont({
+  src: [
+    { path: "../fonts/inter-latin.woff2", style: "normal" },
+    { path: "../fonts/inter-latin-ext.woff2", style: "normal" },
+  ],
+  weight: "100 900",
+  display: "swap",
+  variable: "--font-inter",
+});
 
 export const metadata: Metadata = {
   title: "CMaster Bot | AI Assistant",
