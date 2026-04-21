@@ -3,5 +3,10 @@ dist/
 .env
 *.log
 .DS_Store
-data/
+# 忽略 data/ 下的运行时文件（数据库、运行时记忆内容）
+data/*.db
+data/*.db-shm
+data/*.db-wal
+data/.memory/MEMORY.md
+data/.memory/**/*.md
 mcp-servers.json
