@@ -65,6 +65,20 @@ export class LongTermMemory implements MemoryAccess {
                 created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
                 updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
             );
+        `);
+
+        // 自动迁移：为旧表补充新列（旧版本无 category/topic/metadata/session_id）
+        for (const migration of [
+            "ALTER TABLE memories ADD COLUMN category TEXT NOT NULL DEFAULT 'user'",
+            "ALTER TABLE memories ADD COLUMN topic TEXT NOT NULL DEFAULT ''",
+            "ALTER TABLE memories ADD COLUMN metadata TEXT DEFAULT '{}'",
+            'ALTER TABLE memories ADD COLUMN session_id TEXT',
+            'ALTER TABLE memories ADD COLUMN updated_at DATETIME DEFAULT CURRENT_TIMESTAMP',
+        ]) {
+            try { this.db.exec(migration); } catch { /* 列已存在，忽略 */ }
+        }
+
+        this.db.exec(`
             CREATE INDEX IF NOT EXISTS idx_memories_key ON memories(key);
             CREATE INDEX IF NOT EXISTS idx_memories_session ON memories(session_id);
             CREATE INDEX IF NOT EXISTS idx_memories_category ON memories(category);
