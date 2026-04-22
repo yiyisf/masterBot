@@ -42,6 +42,8 @@ export class LongTermMemory implements MemoryAccess {
     private db: DatabaseSync;
     private logger: Logger;
     private dataDir: string;
+    /** FTS5 是否可用（部分 Windows/旧 Node 构建中 SQLite 可能未编译 FTS5）*/
+    private _ftsAvailable = false;
 
     constructor(options: LongTermMemoryOptions) {
         this.db = options.db;
@@ -50,7 +52,8 @@ export class LongTermMemory implements MemoryAccess {
     }
 
     /**
-     * 初始化：memories 表 + FTS5 虚拟表 + 触发器
+     * 初始化：memories 表 + 可选 FTS5 虚拟表
+     * FTS5 不可用时（Windows 部分构建）自动降级为 LIKE 搜索，不抛出错误。
      */
     initialize(): void {
         this.db.exec(`
@@ -82,15 +85,25 @@ export class LongTermMemory implements MemoryAccess {
             CREATE INDEX IF NOT EXISTS idx_memories_key ON memories(key);
             CREATE INDEX IF NOT EXISTS idx_memories_session ON memories(session_id);
             CREATE INDEX IF NOT EXISTS idx_memories_category ON memories(category);
-
-            CREATE VIRTUAL TABLE IF NOT EXISTS memory_fts USING fts5(
-                id UNINDEXED,
-                category UNINDEXED,
-                topic UNINDEXED,
-                content,
-                tokenize='unicode61 remove_diacritics 2'
-            );
         `);
+
+        // FTS5 为可选加速层：部分 Windows 构建的 SQLite 未编译 FTS5，捕获错误后降级 LIKE 搜索
+        try {
+            this.db.exec(`
+                CREATE VIRTUAL TABLE IF NOT EXISTS memory_fts USING fts5(
+                    id UNINDEXED,
+                    category UNINDEXED,
+                    topic UNINDEXED,
+                    content,
+                    tokenize='unicode61 remove_diacritics 2'
+                );
+            `);
+            this._ftsAvailable = true;
+            this.logger.debug('[memory] FTS5 available');
+        } catch (err) {
+            this._ftsAvailable = false;
+            this.logger.warn(`[memory] FTS5 not available, falling back to LIKE search: ${(err as Error).message}`);
+        }
 
         // 确保文件目录存在
         for (const cat of VALID_CATEGORIES) {
@@ -100,7 +113,7 @@ export class LongTermMemory implements MemoryAccess {
             }
         }
 
-        this.logger.info('[memory] Long-term memory v2 initialized (FTS5, no embedding)');
+        this.logger.info(`[memory] Long-term memory v2 initialized (search: ${this._ftsAvailable ? 'FTS5' : 'LIKE'})`);
     }
 
     /**
@@ -124,17 +137,23 @@ export class LongTermMemory implements MemoryAccess {
             this.db.prepare(
                 'UPDATE memories SET content = ?, updated_at = CURRENT_TIMESTAMP WHERE key = ?'
             ).run(content, key);
-            this.db.prepare(
-                'UPDATE memory_fts SET content = ? WHERE id = ?'
-            ).run(content, existing.id);
+            if (this._ftsAvailable) {
+                // 用 INSERT OR REPLACE 而非 UPDATE：该行可能在 FTS5 不可用期间写入，
+                // FTS5 中没有对应记录，UPDATE 会静默失败造成索引缺失。
+                this.db.prepare(
+                    'INSERT OR REPLACE INTO memory_fts (id, category, topic, content) VALUES (?, ?, ?, ?)'
+                ).run(existing.id, 'user', key ?? '', content);
+            }
         } else {
             const id = nanoid();
             this.db.prepare(
                 'INSERT INTO memories (id, key, content) VALUES (?, ?, ?)'
             ).run(id, key, content);
-            this.db.prepare(
-                'INSERT INTO memory_fts (id, category, topic, content) VALUES (?, ?, ?, ?)'
-            ).run(id, 'user', key ?? '', content);
+            if (this._ftsAvailable) {
+                this.db.prepare(
+                    'INSERT INTO memory_fts (id, category, topic, content) VALUES (?, ?, ?, ?)'
+                ).run(id, 'user', key ?? '', content);
+            }
         }
     }
 
@@ -159,10 +178,12 @@ export class LongTermMemory implements MemoryAccess {
             'INSERT INTO memories (id, category, topic, content, metadata, session_id) VALUES (?, ?, ?, ?, ?, ?)'
         ).run(id, validCategory, topic, content, JSON.stringify(metadata ?? {}), sessionId ?? null);
 
-        // 写 FTS5
-        this.db.prepare(
-            'INSERT INTO memory_fts (id, category, topic, content) VALUES (?, ?, ?, ?)'
-        ).run(id, validCategory, topic, content);
+        // 写 FTS5（仅当可用时）
+        if (this._ftsAvailable) {
+            this.db.prepare(
+                'INSERT INTO memory_fts (id, category, topic, content) VALUES (?, ?, ?, ?)'
+            ).run(id, validCategory, topic, content);
+        }
 
         // 写文件（异步，不阻塞）
         this._writeMemoryFile(validCategory, topic, content, metadata).catch(err =>
@@ -178,7 +199,7 @@ export class LongTermMemory implements MemoryAccess {
      */
     async forget(id: string): Promise<boolean> {
         const result = this.db.prepare('DELETE FROM memories WHERE id = ?').run(id);
-        if (result.changes > 0) {
+        if (result.changes > 0 && this._ftsAvailable) {
             this.db.prepare('DELETE FROM memory_fts WHERE id = ?').run(id);
         }
         return result.changes > 0;
@@ -186,8 +207,12 @@ export class LongTermMemory implements MemoryAccess {
 
     /**
      * FTS5 搜索 + LIKE 降级
+     * FTS5 不可用时（Windows 部分构建）直接使用 LIKE。
      */
     async search(query: string, limit = 5): Promise<MemoryEntry[]> {
+        if (!this._ftsAvailable) {
+            return this._likeSearch(query, limit);
+        }
         // 先尝试 FTS5 全文检索
         try {
             const ftsResults = this._ftsSearch(query, limit);

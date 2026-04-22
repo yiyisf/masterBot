@@ -336,6 +336,16 @@ export function initDatabase(): DatabaseSync {
         );
         CREATE INDEX IF NOT EXISTS idx_ai_spec  ON agent_instances(spec_id);
         CREATE INDEX IF NOT EXISTS idx_ai_state ON agent_instances(state);
+
+        CREATE TABLE IF NOT EXISTS checkpoints (
+            id          TEXT PRIMARY KEY,
+            session_id  TEXT NOT NULL,
+            label       TEXT NOT NULL DEFAULT '',
+            message_count INTEGER NOT NULL DEFAULT 0,
+            messages_json TEXT NOT NULL,
+            created_at  DATETIME DEFAULT CURRENT_TIMESTAMP
+        );
+        CREATE INDEX IF NOT EXISTS idx_checkpoints_session ON checkpoints(session_id);
     `);
 
     // Auto-migration for existing databases

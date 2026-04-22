@@ -48,6 +48,7 @@ export class GatewayServer {
     private imGateway?: ImGateway;
     private agentPool?: AgentPool;
     private longTermMemory?: import('../memory/long-term.js').LongTermMemory;
+    private checkpointManager?: import('../core/checkpoint-manager.js').CheckpointManager;
 
     constructor(options: {
         agent: Agent;
@@ -63,6 +64,7 @@ export class GatewayServer {
         selfImprovementEngine?: SelfImprovementEngine;
         agentPool?: AgentPool;
         longTermMemory?: import('../memory/long-term.js').LongTermMemory;
+        checkpointManager?: import('../core/checkpoint-manager.js').CheckpointManager;
     }) {
         this.agent = options.agent;
         this.sessionManager = options.sessionManager;
@@ -78,6 +80,7 @@ export class GatewayServer {
         this.agentGateway = new AgentGateway(options.logger);
         this.agentPool = options.agentPool;
         this.longTermMemory = options.longTermMemory;
+        this.checkpointManager = options.checkpointManager;
 
         // Initialize IM Gateway if enabled
         if (options.config.im?.enabled && options.config.im.platform === 'feishu') {
@@ -1509,6 +1512,55 @@ export class GatewayServer {
             } catch (err: any) {
                 reply.status(500); return { error: err.message };
             }
+        });
+
+        // ===== CHECKPOINTS (T2-4) =====
+        // GET  /api/sessions/:id/checkpoints         — 列出检查点
+        this.app.get<{ Params: { id: string } }>('/api/sessions/:id/checkpoints', async (request, reply) => {
+            if (!this.checkpointManager) { reply.status(503); return { error: 'Checkpoint manager not available' }; }
+            return this.checkpointManager.list(request.params.id);
+        });
+
+        // POST /api/sessions/:id/checkpoints         — 创建检查点
+        this.app.post<{ Params: { id: string }; Body: { label?: string } }>('/api/sessions/:id/checkpoints', async (request, reply) => {
+            if (!this.checkpointManager) { reply.status(503); return { error: 'Checkpoint manager not available' }; }
+            const { id: sessionId } = request.params;
+            const { label } = request.body ?? {};
+            try {
+                // 从 repository 获取当前消息历史
+                const { historyRepository } = await import('../core/repository.js');
+                const msgs = historyRepository.getMessages(sessionId);
+
+                // 防止超大快照（限 10MB）
+                const json = JSON.stringify(msgs);
+                if (json.length > 10 * 1024 * 1024) {
+                    reply.status(413);
+                    return { error: `消息历史过大（${(json.length / 1024 / 1024).toFixed(1)} MB），超出检查点 10 MB 限制` };
+                }
+
+                const cpId = this.checkpointManager.save(sessionId, msgs as any[], label);
+                return { id: cpId, messageCount: msgs.length };
+            } catch (err: any) {
+                reply.status(500); return { error: err.message };
+            }
+        });
+
+        // POST /api/sessions/:id/checkpoints/:cpId/restore — 恢复检查点（校验 session 归属）
+        this.app.post<{ Params: { id: string; cpId: string } }>('/api/sessions/:id/checkpoints/:cpId/restore', async (request, reply) => {
+            if (!this.checkpointManager) { reply.status(503); return { error: 'Checkpoint manager not available' }; }
+            const { id: sessionId, cpId } = request.params;
+            const messages = this.checkpointManager.restore(cpId, sessionId);
+            if (!messages) { reply.status(404); return { error: 'Checkpoint not found' }; }
+            return { messages, messageCount: messages.length };
+        });
+
+        // DELETE /api/sessions/:id/checkpoints/:cpId — 删除检查点（校验 session 归属）
+        this.app.delete<{ Params: { id: string; cpId: string } }>('/api/sessions/:id/checkpoints/:cpId', async (request, reply) => {
+            if (!this.checkpointManager) { reply.status(503); return { error: 'Checkpoint manager not available' }; }
+            const { id: sessionId, cpId } = request.params;
+            const deleted = this.checkpointManager.delete(cpId, sessionId);
+            if (!deleted) { reply.status(404); return { error: 'Checkpoint not found' }; }
+            return { success: true };
         });
 
         // ===== PROMPT TEMPLATES =====
