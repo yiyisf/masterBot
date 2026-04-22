@@ -20,6 +20,7 @@ import { SelfImprovementEngine } from './core/self-improvement.js';
 import { initMemoryRouter } from './memory/memory-router.js';
 import { SoulLoader } from './core/soul-loader.js';
 import { AgentPool, SessionEventStore, CredentialVault } from './core/harness/agent-pool.js';
+import { CheckpointManager } from './core/checkpoint-manager.js';
 
 async function main() {
     console.log(`
@@ -198,6 +199,10 @@ async function main() {
         }
     }
 
+    // T2-4: 初始化检查点管理器
+    const checkpointManager = new CheckpointManager(db, logger);
+    checkpointManager.initialize();
+
     // Start gateway server
     const server = new GatewayServer({
         agent,
@@ -213,6 +218,7 @@ async function main() {
         selfImprovementEngine,
         agentPool,
         longTermMemory,
+        checkpointManager,
     });
 
     await server.start(config.server.port, config.server.host);
