@@ -249,6 +249,26 @@ export async function* handleBuiltinToolCall(
 }
 
 // ─────────────────────────────────────────────
+// Timeout utility
+// ─────────────────────────────────────────────
+
+/**
+ * 为技能执行添加超时保护（默认 60s）。
+ * 恢复自重构前 Agent.executeWithTimeout()，防止调用 LLM 的技能（如 conductor-workflow）挂死。
+ */
+function executeWithTimeout<T>(fn: () => Promise<T>, timeoutMs: number, toolName: string): Promise<T> {
+    return new Promise<T>((resolve, reject) => {
+        const timer = setTimeout(() => {
+            reject(new Error(`Tool "${toolName}" timed out after ${timeoutMs}ms`));
+        }, timeoutMs);
+        fn().then(
+            (result) => { clearTimeout(timer); resolve(result); },
+            (error)  => { clearTimeout(timer); reject(error); }
+        );
+    });
+}
+
+// ─────────────────────────────────────────────
 // External skill calls handler
 // ─────────────────────────────────────────────
 
@@ -336,7 +356,11 @@ export async function* handleExternalToolCalls(
     const toolStartTimes = parsedCalls.map(() => Date.now());
     const results = await Promise.allSettled(
         parsedCalls.map(({ toolName, params }) =>
-            skillRegistry.executeAction(toolName, params, skillContext)
+            executeWithTimeout(
+                () => skillRegistry.executeAction(toolName, params, skillContext),
+                60000,
+                toolName,
+            )
         )
     );
 
@@ -354,18 +378,37 @@ export async function* handleExternalToolCalls(
                 let parsedOutput: unknown = resultStr;
                 try { parsedOutput = JSON.parse(resultStr); } catch { /* keep string */ }
 
-                yield { type: 'observation', content: resultStr, toolName, toolOutput: parsedOutput, duration, timestamp: new Date() };
+                // workflow_generated 类型：observation 面板显示简要摘要，避免渲染整个大 JSON；
+                // LLM tool message 仍使用完整 JSON，保证 LLM 上下文完整。
+                let observationContent = resultStr;
+                const isWorkflowGenerated =
+                    parsedOutput && typeof parsedOutput === 'object' &&
+                    (parsedOutput as any).type === 'workflow_generated';
+                if (isWorkflowGenerated) {
+                    const wf = parsedOutput as any;
+                    const name = wf.workflow?.name ?? '';
+                    const count: number = wf.workflow?.tasks?.length ?? 0;
+                    const subCount: number = wf.subWorkflows?.length ?? 0;
+                    const validFlag = wf.allValid ? '' : '，含校验警告';
+                    const subPart = subCount > 0 ? `，含 ${subCount} 个子工作流` : '';
+                    observationContent = name
+                        ? `工作流「${name}」已生成（${count} 个任务节点${subPart}${validFlag}）`
+                        : `工作流已生成（${count} 个任务节点${subPart}${validFlag}）`;
+                }
 
-                // workflow_generated 特殊 step
-                if (parsedOutput && typeof parsedOutput === 'object' && (parsedOutput as any).type === 'workflow_generated') {
+                yield { type: 'observation', content: observationContent, toolName, toolOutput: parsedOutput, duration, timestamp: new Date() };
+
+                // workflow_generated 特殊 step（供前端渲染 WorkflowIDE 卡片）
+                if (isWorkflowGenerated) {
                     const wf = parsedOutput as any;
                     yield {
-                        type: 'workflow_generated', content: resultStr, toolName,
+                        type: 'workflow_generated', content: observationContent, toolName,
                         workflow: wf.workflow, subWorkflows: wf.subWorkflows,
                         validation: wf.validation, allValid: wf.allValid,
                         explanation: wf.explanation, timestamp: new Date(),
                     } as any;
                 }
+                // LLM tool result 保留完整 JSON（确保 LLM 能看到工作流细节）
                 messages.push({ role: 'tool', content: resultStr, toolCallId: toolCall.id });
             } else {
                 const errorMsg = `Error: ${toolResult.message}`;
