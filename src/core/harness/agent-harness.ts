@@ -291,13 +291,10 @@ export class AgentHarness {
 
                 if (graderResult.status === 'satisfied') break;
 
-                if (graderResult.status === 'failed' || graderResult.status === 'grader_error') {
-                    if (graderResult.status === 'failed') {
-                        throw new Error(`[Grader] 任务质量评估失败: ${graderResult.feedback}`);
-                    }
-                    break;  // grader_error 不影响 Agent 结果，接受当前输出
-                }
+                // grader_error：Grader 自身调用失败，不惩罚 Agent，接受当前输出
+                if (graderResult.status === 'grader_error') break;
 
+                // failed / needs_revision：均应触发修订循环，不直接抛出异常
                 if (revision > maxRevisions) {
                     yield this.makeStep('meta', `🔄 已达到最大修订次数 ${maxRevisions}，以当前输出为最终结果`);
                     break;
@@ -311,7 +308,7 @@ export class AgentHarness {
                     revisedTask: currentTask.slice(0, 500),
                 });
 
-                // needs_revision：注入 Grader 反馈重试
+                // failed / needs_revision：注入 Grader 反馈重试
                 const failedCriteria = graderResult.criteriaResults
                     .filter(r => !r.passed && r.suggestions)
                     .map(r => `• [${r.criterionId}] ${r.suggestions}`)
@@ -324,7 +321,8 @@ ${graderResult.feedback}
 
 ${failedCriteria ? `各维度具体问题：\n${failedCriteria}` : ''}`;
 
-                yield this.makeStep('meta', `🔄 评分 ${graderResult.overallScore}/100，正在根据 Grader 建议进行第 ${revision + 1} 次修订...`);
+                const statusLabel = graderResult.status === 'failed' ? '必要项未达标' : '需修订';
+                yield this.makeStep('meta', `🔄 评分 ${graderResult.overallScore}/100（${statusLabel}），正在根据 Grader 建议进行第 ${revision + 1} 次修订...`);
             }
 
             this.state = 'completed';
