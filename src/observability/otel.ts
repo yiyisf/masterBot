@@ -22,7 +22,6 @@ const GEN_AI = {
     USAGE_INPUT_TOKENS: 'gen_ai.usage.input_tokens',
     USAGE_OUTPUT_TOKENS: 'gen_ai.usage.output_tokens',
     USAGE_CACHE_READ_INPUT_TOKENS: 'gen_ai.usage.cache_read_input_tokens',
-    RESPONSE_FINISH_REASON: 'gen_ai.response.finish_reasons',
 } as const;
 
 // ─── SDK 初始化 ───────────────────────────────────────────────────────────────
@@ -34,6 +33,8 @@ export function initOtel(options: {
     serviceName?: string;
     enabled?: boolean;
 }): void {
+    if (_sdk !== null) return;  // 防止重复初始化
+
     const enabled = options.enabled ?? process.env.OTEL_ENABLED !== 'false';
     if (!enabled) return;
 
@@ -41,15 +42,20 @@ export function initOtel(options: {
         ?? process.env.OTEL_EXPORTER_OTLP_ENDPOINT
         ?? 'http://localhost:4318';
 
+    // 解析 "key=value,key2=value2" 格式，value 中的 = 须保留（如 base64）
+    const rawHeaders = process.env.OTEL_EXPORTER_OTLP_HEADERS;
+    const headers: Record<string, string> = rawHeaders
+        ? Object.fromEntries(
+            rawHeaders.split(',').map(h => {
+                const idx = h.indexOf('=');
+                return [h.slice(0, idx), h.slice(idx + 1)] as [string, string];
+            })
+          )
+        : {};
+
     const exporter = new OTLPTraceExporter({
         url: `${endpoint}/v1/traces`,
-        headers: process.env.OTEL_EXPORTER_OTLP_HEADERS
-            ? Object.fromEntries(
-                process.env.OTEL_EXPORTER_OTLP_HEADERS
-                    .split(',')
-                    .map(h => h.split('=') as [string, string])
-              )
-            : {},
+        headers,
     });
 
     _sdk = new NodeSDK({
@@ -85,7 +91,6 @@ export interface AgentSpanInput {
     userId?: string;
     model?: string;
     provider?: string;
-    traceId?: string;
 }
 
 export interface ModelUsage {

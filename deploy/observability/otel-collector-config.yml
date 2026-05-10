@@ -13,10 +13,11 @@ processors:
 
 exporters:
   # 转发到 Langfuse OTLP 端点
+  # ${env:VAR} 是 OTel Collector contrib 的环境变量展开语法（非 Docker Compose 语法）
   otlphttp/langfuse:
     endpoint: http://langfuse-web:3000/api/public/otel
     headers:
-      Authorization: "Basic ${LANGFUSE_OTLP_AUTH_HEADER}"  # base64(pk:sk)
+      Authorization: "Basic ${env:LANGFUSE_OTLP_AUTH_HEADER}"
     tls:
       insecure: true
 
