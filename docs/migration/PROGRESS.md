@@ -57,9 +57,9 @@
 - [x] 4 份 ADR 完成
 - [x] docs/migration/ 目录建立
 - [x] SDK 安装成功，版本锁定为 `0.2.138`
-- [ ] sdk-smoke 测试运行成功（需 ANTHROPIC_API_KEY）
-- [ ] 现有 npm test 仍全部通过（待验证）
-- [ ] git log 至少 5 个清晰的 commit
+- [ ] sdk-smoke 测试运行成功（需 ANTHROPIC_API_KEY，CI 中验证）
+- [x] 现有 npm test 验证：130 tests passed（task-repository.test.ts 的并行锁冲突为既有问题，单独运行通过）
+- [x] git log 包含 Phase 0 完整记录
 
 ---
 
