@@ -1,0 +1,91 @@
+version: "3.9"
+
+# masterBot 可观测性栈 (Langfuse self-hosted)
+# 启动: docker-compose -f deploy/observability/docker-compose.yml up -d
+# 停止: docker-compose -f deploy/observability/docker-compose.yml down
+# Langfuse UI: http://localhost:3001 (注意: masterBot 后端默认用 3000)
+
+services:
+  # ── Langfuse Web (API + UI) ───────────────────────────────────────────
+  langfuse-web:
+    image: langfuse/langfuse:latest
+    restart: unless-stopped
+    ports:
+      - "3001:3000"
+    depends_on:
+      - langfuse-db
+      - langfuse-redis
+    env_file:
+      - .env
+    environment:
+      NODE_ENV: production
+      DATABASE_URL: postgresql://${POSTGRES_USER:-langfuse}:${POSTGRES_PASSWORD:-langfuse}@langfuse-db:5432/${POSTGRES_DB:-langfuse}
+      REDIS_CONNECTION_STRING: redis://langfuse-redis:6379
+      NEXTAUTH_URL: http://localhost:3001
+      NEXTAUTH_SECRET: ${LANGFUSE_SECRET:-changeme-in-production}
+      LANGFUSE_INIT_ORG_ID: masterbot-org
+      LANGFUSE_INIT_ORG_NAME: masterBot
+      LANGFUSE_INIT_PROJECT_ID: masterbot-project
+      LANGFUSE_INIT_PROJECT_NAME: masterBot Dev
+      LANGFUSE_INIT_PROJECT_PUBLIC_KEY: ${LANGFUSE_PUBLIC_KEY:-pk-lf-local}
+      LANGFUSE_INIT_PROJECT_SECRET_KEY: ${LANGFUSE_SECRET_KEY:-sk-lf-local}
+      LANGFUSE_INIT_USER_EMAIL: ${LANGFUSE_ADMIN_EMAIL:-admin@masterbot.local}
+      LANGFUSE_INIT_USER_PASSWORD: ${LANGFUSE_ADMIN_PASSWORD:-admin123}
+      LANGFUSE_INIT_USER_NAME: Admin
+      # OTLP 入口（接收 masterBot 的 OTel traces）
+      LANGFUSE_OTLP_ENABLED: "true"
+
+  # ── Langfuse Worker (background jobs) ───────────────────────────────────
+  langfuse-worker:
+    image: langfuse/langfuse-worker:latest
+    restart: unless-stopped
+    depends_on:
+      - langfuse-db
+      - langfuse-redis
+    env_file:
+      - .env
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER:-langfuse}:${POSTGRES_PASSWORD:-langfuse}@langfuse-db:5432/${POSTGRES_DB:-langfuse}
+      REDIS_CONNECTION_STRING: redis://langfuse-redis:6379
+      LANGFUSE_SECRET: ${LANGFUSE_SECRET:-changeme-in-production}
+
+  # ── PostgreSQL ─────────────────────────────────────────────────────────
+  langfuse-db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    volumes:
+      - langfuse_postgres_data:/var/lib/postgresql/data
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-langfuse}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-langfuse}
+      POSTGRES_DB: ${POSTGRES_DB:-langfuse}
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-langfuse}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ── Redis ──────────────────────────────────────────────────────────────
+  langfuse-redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    command: redis-server --maxmemory 256mb --maxmemory-policy allkeys-lru
+    volumes:
+      - langfuse_redis_data:/data
+
+  # ── OTel Collector（可选：统一收集后转发到 Langfuse）─────────────────────
+  otel-collector:
+    image: otel/opentelemetry-collector-contrib:latest
+    restart: unless-stopped
+    ports:
+      - "4317:4317"   # gRPC
+      - "4318:4318"   # HTTP (masterBot 使用此端口)
+      - "8888:8888"   # Prometheus metrics
+    volumes:
+      - ./otel-collector-config.yml:/etc/otelcol-contrib/config.yaml:ro
+    depends_on:
+      - langfuse-web
+
+volumes:
+  langfuse_postgres_data:
+  langfuse_redis_data:

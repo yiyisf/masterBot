@@ -1,5 +1,7 @@
 import { nanoid } from 'nanoid';
 import { db } from './database.js';
+import type { Span as OtelSpan } from '@opentelemetry/api';
+import { otelObserver } from '../observability/otel.js';
 
 export interface Span {
     id: string;
@@ -44,10 +46,14 @@ function rowToSpan(row: Record<string, unknown>): Span {
 }
 
 /**
- * 分布式追踪 — Span 记录器
- * 写入 agent_spans SQLite 表
+ * @deprecated Phase 1: SpanRecorder 内部已代理到 OtelObserver。
+ * Phase 2+ 将直接使用 OtelObserver 并移除此类。
+ * 外部 API 保持不变以确保向后兼容。
  */
 export class SpanRecorder {
+    // string spanId → OTel Span 的桥接映射
+    private readonly _otelSpans = new Map<string, OtelSpan>();
+
     startSpan(
         traceId: string,
         parentId: string | undefined,
@@ -56,6 +62,8 @@ export class SpanRecorder {
     ): string {
         const id = nanoid();
         const now = new Date().toISOString();
+
+        // ── 1. SQLite 写入（向后兼容，供 /api/traces 使用）──
         db.prepare(`
             INSERT INTO agent_spans (id, trace_id, parent_id, name, session_id, status, meta, started_at, created_at)
             VALUES (?, ?, ?, ?, ?, 'running', ?, ?, ?)
@@ -69,14 +77,30 @@ export class SpanRecorder {
             now,
             now
         );
+
+        // ── 2. OTel span（双写到 Langfuse）──
+        const parentOtelSpan = parentId ? this._otelSpans.get(parentId) : undefined;
+        const otelSpan = otelObserver.startGenericSpan(
+            name,
+            {
+                'legacy.trace_id': traceId,
+                'legacy.span_id': id,
+                ...(meta?.sessionId ? { 'agent.session_id': meta.sessionId as string } : {}),
+            },
+            parentOtelSpan,
+        );
+        this._otelSpans.set(id, otelSpan);
+
         return id;
     }
 
     endSpan(spanId: string, result?: string, error?: string): void {
         const now = new Date().toISOString();
-        const span = db.prepare('SELECT started_at FROM agent_spans WHERE id = ?')
+
+        // ── 1. SQLite 更新──
+        const row = db.prepare('SELECT started_at FROM agent_spans WHERE id = ?')
             .get(spanId) as { started_at: string } | undefined;
-        const durationMs = span ? Date.now() - new Date(span.started_at).getTime() : null;
+        const durationMs = row ? Date.now() - new Date(row.started_at).getTime() : null;
         const status = error ? 'failed' : 'success';
         db.prepare(`
             UPDATE agent_spans
@@ -90,6 +114,13 @@ export class SpanRecorder {
             now,
             spanId
         );
+
+        // ── 2. OTel span 结束 ──
+        const otelSpan = this._otelSpans.get(spanId);
+        if (otelSpan) {
+            otelObserver.endSpan(otelSpan, { result, error });
+            this._otelSpans.delete(spanId);
+        }
     }
 
     getTrace(traceId: string): Span[] {
