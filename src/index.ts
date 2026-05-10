@@ -1,5 +1,6 @@
 import 'dotenv/config';
 import { initOtel } from './observability/otel.js';
+import { setupDefaultHooks } from './core/hooks/setup.js';
 import { loadConfig } from './config.js';
 import { createLogger } from './utils/logger.js';
 import { llmFactory } from './llm/index.js';
@@ -47,6 +48,13 @@ async function main() {
     });
 
     logger.info('Starting CMaster Bot...');
+
+    // Phase 2: 注册内置 Hook（sandbox/retry/audit/otel）
+    // Phase 3 ClaudeManagedAgent 上线后将自动从 globalHookRegistry 获益
+    setupDefaultHooks({
+        sandbox: config.skills.shell?.sandbox,
+        logger,
+    });
 
     logger.info(`LLM system ready (Default: ${config.models.default})`);
 
