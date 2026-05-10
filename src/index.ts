@@ -1,4 +1,5 @@
 import 'dotenv/config';
+import { initOtel } from './observability/otel.js';
 import { loadConfig } from './config.js';
 import { createLogger } from './utils/logger.js';
 import { llmFactory } from './llm/index.js';
@@ -32,6 +33,9 @@ async function main() {
    ╚═════╝╚═╝     ╚═╝╚═╝  ╚═╝╚══════╝   ╚═╝   ╚══════╝╚═╝  ╚═╝
                     Enterprise AI Assistant
   `);
+
+    // 初始化 OTel（在加载配置前，确保追踪从最早时刻生效）
+    initOtel({ serviceName: 'masterbot' });
 
     // Load configuration
     const config = await loadConfig();

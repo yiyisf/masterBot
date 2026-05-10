@@ -1,6 +1,6 @@
 # masterBot v3 重构进度追踪
 
-最后更新：2026-05-10
+最后更新：2026-05-10（Phase 1 完成）
 
 ---
 
@@ -8,8 +8,8 @@
 
 | Phase | 名称 | 状态 | 分支 | PR | 完成日期 |
 |-------|------|------|------|----|---------|
-| **P0** | 准备工作 | 🔄 进行中 | `refactor-v3-p0-preparation` | - | - |
-| P1 | 可观测性先行 | ⬜ TODO | - | - | - |
+| **P0** | 准备工作 | ✅ 完成 | `refactor-v3-p0-preparation` | #32 | 2026-05-10 |
+| **P1** | 可观测性先行 | ✅ 完成 | `v3-p1-observability` | - | 2026-05-10 |
 | P2 | Hooks 重构 | ⬜ TODO | - | - | - |
 | P2.5 | Identity & Policy | ⬜ TODO | - | - | - |
 | P3 | ClaudeManagedAgent 上线 | ⬜ TODO | - | - | - |
@@ -69,3 +69,32 @@
 |------|------|------|---------|
 | 2026-05-10 | `@anthropic-ai/claude-agent-sdk` 要求 `zod@^4`，项目现在是 `zod@^3` | 记录 | 用 `--legacy-peer-deps` 安装，Phase 2 升级 zod |
 | 2026-05-10 | git 不支持 `refactor/v3` 和 `refactor/v3/p0-preparation` 并存 | 记录 | 改用 `-` 分隔：`refactor-v3-p0-preparation` |
+
+---
+
+## Phase 1 详细进度（已完成）
+
+### 任务清单
+
+- [x] 任务 1：安装 OTel 依赖（api/sdk-node/auto-instrumentations/otlp-http/semantic-conventions）
+- [x] 任务 2：实现 `src/observability/otel.ts`（OtelObserver，GenAI Semantic Conventions）
+- [x] 任务 3：`SpanRecorder` 内部代理到 OtelObserver（双写 SQLite+OTel，@deprecated 标记）
+- [x] 任务 4：`deploy/observability/` Langfuse self-hosted docker-compose
+- [x] 任务 5：OTel Collector 配置导出到 Langfuse OTLP 端点
+- [x] 任务 6：`tests/performance/otel-overhead.test.ts`（3 个性能测试全通过，开销 < 100ms/1000 ops）
+- [x] 任务 7：`docs/migration/langfuse-setup.md` + `observability-guide.md`
+
+### 完成标准验证
+
+- [x] OtelObserver 通过性能测试
+- [x] SpanRecorder 所有调用点透明迁移（agent.ts x3, agent-run-helpers.ts x7, server.ts x2）
+- [x] 143 个测试全部通过（TypeScript 零错误）
+- [x] Langfuse docker-compose 配置完整
+
+### 设计决策
+
+| 决策 | 原因 |
+|------|------|
+| SpanRecorder 双写而非直接替换 | Phase 1 不改接口，避免触碰 RunContext 类型链（Phase 2 统一处理）|
+| OTel Collector 作为中间层 | 便于未来切换后端（Jaeger/Tempo/Datadog）而不修改 masterBot 代码 |
+| `--legacy-peer-deps` | OTel 某些包也与 zod v3 有间接依赖冲突，Phase 2 升级 zod 后解决 |
