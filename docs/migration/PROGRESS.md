@@ -1,6 +1,6 @@
 # masterBot v3 重构进度追踪
 
-最后更新：2026-05-11（Phase 3 完成 + Review 修复）
+最后更新：2026-05-11（Phase 4 完成）
 
 ---
 
@@ -13,7 +13,7 @@
 | **P2** | Hooks 重构 | ✅ 完成 | `v3-p2-hooks` | - | 2026-05-10 |
 | P2.5 | Identity & Policy | ⬜ TODO | - | - | - |
 | **P3** | ClaudeManagedAgent 上线 | ✅ 完成 | `v3-p3-claude-managed` | #35 | 2026-05-11 |
-| P4 | Skills + Subagents 升级 | ⬜ TODO | - | - | - |
+| **P4** | Skills + Subagents 升级 | 🔄 进行中 | `v3-p4-skills-subagents` | #36 | - |
 | P5 | Session 高级特性 | ⬜ TODO | - | - | - |
 | P6 | Memory 四层 + 租户隔离 | ⬜ TODO | - | - | - |
 | P7 | 企业 IM 一等公民 | ⬜ TODO | - | - | - |
@@ -208,3 +208,49 @@
 | AgentEvent → ExecutionStep 中间层 | 解耦 SDK 消息格式与前端 SSE 协议，SDK 升级时只需改适配层 |
 | 灰度默认 5% | SDK 路径未经生产验证，5% 足够收集指标同时控制风险 |
 | hitl HiTL PermissionRequest 为 no-op | SDK hook 是同步返回值模型，异步 IM 审批流程推迟到 Phase 7 IM 一等公民阶段实现 |
+
+---
+
+## Phase 4 详细进度（进行中）
+
+### 任务清单
+
+- [x] 任务 1：`src/types.ts` 新增 `SkillTier` / `SkillCategory` 类型，`ToolDefinition` 携带 tier/category
+- [x] 任务 2：`src/skills/registry.ts` `parseSkillMd` 读取 frontmatter tier/category
+- [x] 任务 3：`src/skills/loader.ts` `getTools()` 输出携带 tier/category
+- [x] 任务 4：所有 13 个 built-in SKILL.md 标注 tier/category
+  - [x] core: shell, file-manager, http-client
+  - [x] extended: notification, document-processor, vision, database-connector, log-analyzer, im-bot
+  - [x] experimental: browser-automation, gemini-cli, claude-code, conductor-workflow
+- [x] 任务 5：`src/skills/sdk-mcp-wrapper.ts` 新增 `tierFilter?: SkillTier[]` 参数
+- [x] 任务 6：`src/core/agent/subagents.ts` 实现 `buildSubagentDefs()`（4 个部门专家）
+- [x] 任务 7：`src/core/agent/claude-managed.ts` 集成 core-tier 过滤 + subagents
+- [x] 任务 8：`scripts/token-count.ts` token 节省测量脚本
+- [x] 任务 9：`tests/skills-tier.test.ts`（9 个测试）
+
+### 完成标准验证
+
+- [x] TypeScript 零错误（`npx tsc --noEmit`）
+- [x] 167 个测试全部通过（+9 个 Phase 4 新增）
+- [x] token 节省 ≥30%：实际 **81.3%**（208 → 39 tokens）
+- [x] 4 个部门专家 Subagent：hr-specialist / finance-analyst / it-support / engineering-assistant
+- [x] 权限隔离验证：hr-specialist 无 shell，it-support 有 shell
+- [x] PR #36 已提交（base: refactor/v3）
+
+### Token 节省报告
+
+| 路径 | 工具数 | 估算 tokens | 备注 |
+|------|--------|-------------|------|
+| Phase 3（全量） | 13 技能，38 actions | ~208 | 所有工具注入主 Agent |
+| Phase 4（core） | 3 技能，11 actions | ~39 | 仅 shell/file-manager/http-client |
+| **节省** | - | **~169 (81.3%)** | ✅ 超额完成 ≥30% 目标 |
+
+### 设计决策
+
+| 决策 | 原因 |
+|------|------|
+| core tier 只含 3 个技能 | shell/file/http 是绝大多数任务的基础工具，其余通过 Subagent 委派获取 |
+| Subagent tools 用 `skill.action` 格式 | 与 LocalSkillSource 的命名约定一致，便于 MCP wrapper 路由 |
+| hr-specialist 无 shell 权限 | 最小权限原则：HR 任务不需要任意代码执行能力 |
+| it-support maxTurns=30 | 运维任务可能需要多步骤诊断，给予更多轮次空间 |
+| ToolDefinition 携带 tier 字段 | 避免额外索引查询，过滤逻辑在 MCP wrapper 层一次完成 |
