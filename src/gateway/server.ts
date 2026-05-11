@@ -26,6 +26,8 @@ import { AgentGateway } from '../core/agent-gateway.js';
 import type { AgentPool } from '../core/harness/agent-pool.js';
 import { auditRepository } from '../core/audit-repository.js';
 import { ImGateway, FeishuAdapter, imUserRegistry, imSessionMapper } from './im-gateway.js';
+import type { AgentRouter } from '../core/agent/router.js';
+import { adaptAgentEvents } from '../core/agent/agent-event-adapter.js';
 
 /**
  * Gateway 服务器
@@ -34,6 +36,7 @@ import { ImGateway, FeishuAdapter, imUserRegistry, imSessionMapper } from './im-
 export class GatewayServer {
     private app: FastifyInstance;
     private agent: Agent;
+    private agentRouter?: AgentRouter;
     private sessionManager: SessionMemoryManager;
     private logger: Logger;
     private config: Config;
@@ -52,6 +55,7 @@ export class GatewayServer {
 
     constructor(options: {
         agent: Agent;
+        agentRouter?: AgentRouter;
         sessionManager: SessionMemoryManager;
         logger: Logger;
         config: Config;
@@ -67,6 +71,7 @@ export class GatewayServer {
         checkpointManager?: import('../core/checkpoint-manager.js').CheckpointManager;
     }) {
         this.agent = options.agent;
+        this.agentRouter = options.agentRouter;
         this.sessionManager = options.sessionManager;
         this.logger = options.logger;
         this.config = options.config;
@@ -270,14 +275,18 @@ export class GatewayServer {
             const userInput = (messageContent && messageContent.length > 0 ? messageContent : message) as string;
 
             try {
-                for await (const step of this.agent.run(userInput, {
-                    sessionId,
-                    userId,
-                    memory,
-                    history,
-                    abortSignal: abortController.signal,
-                    attachments
-                })) {
+                // Phase 3: 通过 AgentRouter 路由；fallback 到 Legacy Agent
+                const stepStream = this.agentRouter
+                    ? adaptAgentEvents(this.agentRouter.execute({
+                        message: typeof userInput === 'string' ? userInput : JSON.stringify(userInput),
+                        sessionId,
+                        userId: userId ?? 'anonymous',
+                        tenantId: 'default',
+                        provider: (this.config.models.default === 'anthropic' ? 'anthropic' : 'openai') as 'anthropic' | 'openai',
+                    }))
+                    : this.agent.run(userInput, { sessionId, userId, memory, history, abortSignal: abortController.signal, attachments });
+
+                for await (const step of stepStream) {
                     if (step.type === 'answer') {
                         assistantAnswer = step.content;
                     }

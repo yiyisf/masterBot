@@ -1,0 +1,44 @@
+# 多轮对话连贯性评测用例
+# 目的: 验证 Agent 在多轮对话中的记忆和上下文连贯性
+
+cases:
+  - id: multi-turn-memory-1
+    turns:
+      - user: "我叫张三，今年 30 岁。"
+        expect_not_empty: true
+      - user: "我叫什么名字？"
+        expect_contains: ["张三"]
+    tags: [multi-turn, memory]
+
+  - id: multi-turn-reference-1
+    turns:
+      - user: "现在有一个变量 x = 42。"
+        expect_not_empty: true
+      - user: "x 乘以 2 等于多少？"
+        expect_contains: ["84"]
+    tags: [multi-turn, reasoning]
+
+  - id: multi-turn-refinement
+    turns:
+      - user: "给我写一个简单的 Hello World Python 程序。"
+        expect_not_empty: true
+        expect_contains: ["print"]
+      - user: "修改上面的程序，让它打印 'Hello, masterBot!'。"
+        expect_contains: ["masterBot"]
+    tags: [multi-turn, code]
+
+  - id: multi-turn-context-switch
+    turns:
+      - user: "2 + 2 等于多少？"
+        expect_contains: ["4"]
+      - user: "再加上 6 是多少？"
+        expect_contains: ["10"]
+    tags: [multi-turn, math]
+
+  - id: multi-turn-topic-tracking
+    turns:
+      - user: "介绍一下 Python 这门编程语言。"
+        expect_not_empty: true
+      - user: "它的主要用途是什么？"
+        expect_contains_any: ["Python", "数据", "AI", "科学", "自动化"]
+    tags: [multi-turn, coherence]
