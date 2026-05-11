@@ -3,6 +3,8 @@
  * 包装 Claude Agent SDK 的 query()，实现 IAgent 接口。
  * Phase 4 新增：
  *   - 主 Agent 只注入 core tier 技能（减少 input tokens）
+ *   - Extended/experimental 技能通过独立 MCP 服务器暴露给子 Agent
+ *   - 主 Agent 用 disallowedTools 过滤 extended 工具，子 Agent 通过 mcpServers 引用获取
  *   - 通过 options.agents 注入 4 个部门专家 Subagent
  */
 
@@ -15,6 +17,9 @@ import { buildSubagentDefs } from './subagents.js';
 import type { HookRegistry } from '../hooks/registry.js';
 import type { ISkillRegistry } from '../../skills/registry.js';
 import type { Logger, MemoryAccess } from '../../types.js';
+
+// 子 Agent 定义只需计算一次（静态结构，不含运行时状态）
+const SUBAGENT_DEFS = buildSubagentDefs();
 
 export interface ClaudeManagedAgentOptions {
     hookRegistry: HookRegistry;
@@ -54,10 +59,24 @@ export class ClaudeManagedAgent implements IAgent {
             mcpCtx,
             this.opts.logger,
             ['core'],
+            'masterbot-skills',
         );
 
-        // Phase 4: 部门专家 Subagent 定义（HR / 财务 / IT / 工程）
-        const agents = buildSubagentDefs();
+        // Phase 4 (P0 fix): extended/experimental 技能注册为独立 MCP 服务器供子 Agent 使用
+        // 主 Agent 通过 disallowedTools 过滤这些工具，子 Agent 通过 mcpServers 引用访问
+        const extendedMcp = await createMasterBotMcpServer(
+            this.opts.skillRegistry,
+            mcpCtx,
+            this.opts.logger,
+            ['extended', 'experimental'],
+            'masterbot-extended',
+        );
+
+        // 计算需要对主 Agent 隐藏的 extended/experimental 工具名称列表
+        const allToolDefs = await this.opts.skillRegistry.getToolDefinitions();
+        const disallowedTools = allToolDefs
+            .filter(d => (d.tier ?? 'extended') !== 'core')
+            .map(d => d.function.name);
 
         // 将上层 AbortSignal 桥接为 SDK 所需的 AbortController
         const abortController = new AbortController();
@@ -75,9 +94,11 @@ export class ClaudeManagedAgent implements IAgent {
                 thinking: { type: 'adaptive' },
                 abortController,
                 hooks,
-                agents,
+                agents: SUBAGENT_DEFS,
+                disallowedTools,
                 mcpServers: {
                     'masterbot-skills': coreMcp,
+                    'masterbot-extended': extendedMcp,
                 },
                 env: {
                     CLAUDE_AGENT_SDK_CLIENT_APP: 'masterbot/4.0.0',

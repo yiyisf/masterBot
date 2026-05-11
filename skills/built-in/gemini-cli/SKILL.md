@@ -2,6 +2,7 @@
 name: gemini-cli
 version: 1.0.0
 description: 调用本地 Gemini CLI 执行 AI 任务（代码分析、文件处理、搜索等）
+author: CMaster Team
 tier: experimental
 category: ai
 ---

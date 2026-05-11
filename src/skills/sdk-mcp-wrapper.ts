@@ -54,6 +54,7 @@ function jsonSchemaToZod(schema: Record<string, unknown>): Record<string, z.ZodT
  *
  * @param tierFilter 若指定，只包装匹配 tier 的技能（缺省 tier 视为 'extended'）。
  *   主 Agent 传 ['core']，子 Agent 或全量传 undefined。
+ * @param serverName MCP Server 名称，默认 'masterbot-skills'。创建多个服务器时传入不同名称。
  */
 export async function createMasterBotMcpServer(
     skillRegistry: ISkillRegistry,
@@ -65,6 +66,7 @@ export async function createMasterBotMcpServer(
     },
     logger: Logger,
     tierFilter?: SkillTier[],
+    serverName = 'masterbot-skills',
 ) {
     const allToolDefs = await skillRegistry.getToolDefinitions();
 
@@ -113,7 +115,7 @@ export async function createMasterBotMcpServer(
     logger.info?.(`[sdk-mcp-wrapper] 包装了 ${sdkTools.length}/${allToolDefs.length} 个技能 (tier=${tierLabel})`);
 
     return createSdkMcpServer({
-        name: 'masterbot-skills',
+        name: serverName,
         version: '1.0.0',
         tools: sdkTools,
     });

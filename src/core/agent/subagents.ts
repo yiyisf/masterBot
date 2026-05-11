@@ -2,17 +2,24 @@
  * Phase 4: 部门专家 Subagent 定义
  * 基于 Claude Agent SDK AgentDefinition 格式，将复杂任务路由到专领域的子 Agent，
  * 避免将所有工具注入主 Agent，显著减少 input tokens。
+ *
+ * 架构说明：
+ *   - 主 Agent：只注入 core tier 技能（masterbot-skills MCP 服务器）
+ *   - 子 Agent：通过 mcpServers 引用 masterbot-extended MCP 服务器获取 extended/experimental 技能
+ *     （masterbot-extended 在父级 Options.mcpServers 中注册，但主 Agent 通过 disallowedTools 过滤）
  */
 
 import type { AgentDefinition } from '@anthropic-ai/claude-agent-sdk';
 
+/** masterbot-extended MCP 服务器的 McpSdkServerConfig 引用（子 Agent 共用） */
+const EXTENDED_MCP_REF = { 'masterbot-extended': { type: 'sdk' as const, name: 'masterbot-extended' } };
+
 /**
- * 构建部门专家 Subagent 定义表。
+ * 构建部门专家 Subagent 定义表（模块级常量，只计算一次）。
  * 返回值直接传入 query() options.agents。
  *
  * 各 Subagent 的 tools 列表使用 "${skillName}.${actionName}" 格式，
  * 与 LocalSkillSource.getTools() 生成的工具名保持一致。
- * 通配符 "shell.*" 表示 shell 技能的所有动作。
  */
 export function buildSubagentDefs(): Record<string, AgentDefinition> {
     return {
@@ -35,6 +42,7 @@ export function buildSubagentDefs(): Record<string, AgentDefinition> {
 - 对于不确定的法律问题，建议咨询法律顾问
 
 请用专业、简洁、友好的语气回答。`,
+            mcpServers: [EXTENDED_MCP_REF],
             tools: [
                 'file-manager.read_file',
                 'file-manager.list_directory',
@@ -69,6 +77,7 @@ export function buildSubagentDefs(): Record<string, AgentDefinition> {
 - 财务数据严格保密，不得外传
 
 请使用精确的数字和专业术语，在关键节点给出结论性判断。`,
+            mcpServers: [EXTENDED_MCP_REF],
             tools: [
                 'file-manager.read_file',
                 'file-manager.write_file',
@@ -101,6 +110,7 @@ export function buildSubagentDefs(): Record<string, AgentDefinition> {
 - 记录所有变更操作
 
 请提供具体命令而非模糊建议，并解释每个关键命令的作用。`,
+            mcpServers: [EXTENDED_MCP_REF],
             tools: [
                 'shell.execute',
                 'shell.execute_background',
@@ -138,6 +148,7 @@ export function buildSubagentDefs(): Record<string, AgentDefinition> {
 - 遵循当前项目的语言和框架规范
 
 提供可直接使用的代码，而非伪代码。在架构建议中比较不同方案的优劣。`,
+            mcpServers: [EXTENDED_MCP_REF],
             tools: [
                 'shell.execute',
                 'file-manager.read_file',
@@ -153,9 +164,4 @@ export function buildSubagentDefs(): Record<string, AgentDefinition> {
             maxTurns: 30,
         },
     };
-}
-
-/** 获取所有 Subagent ID 列表 */
-export function getSubagentIds(): string[] {
-    return ['hr-specialist', 'finance-analyst', 'it-support', 'engineering-assistant'];
 }

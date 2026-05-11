@@ -2,6 +2,7 @@
 name: vision
 version: 1.0.0
 description: 图像理解技能，使用 LLM 的视觉能力分析图像、执行 OCR 和描述图表。
+author: CMaster Team
 tier: extended
 category: ai
 ---

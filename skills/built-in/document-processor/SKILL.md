@@ -2,6 +2,7 @@
 name: document-processor
 version: 1.0.0
 description: 处理各种文档格式，包括 PDF、Word、Excel 文件的读取、转换和写入。
+author: CMaster Team
 tier: extended
 category: file
 dependencies:
