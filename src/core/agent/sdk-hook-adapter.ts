@@ -114,6 +114,15 @@ function mapSdkInputToHookEvent(
             return { type: 'SubagentStop', workerId: String(input['agent_id'] ?? ''), outcome: 'success', ctx };
         case 'PreCompact':
             return { type: 'PreCompact', droppedCount: 0, ctx };
+        case 'PermissionRequest':
+            // resolve 是 hitl-hook 调用的回调；SDK 路径下审批结果由返回值决定，此处提供空实现防止运行时报错
+            return {
+                type: 'PermissionRequest',
+                toolName: input['tool_name'] as string ?? '',
+                reason: String(input['reason'] ?? ''),
+                resolve: (_approved: boolean) => { /* no-op: 决策通过 SyncHookJSONOutput 返回值传递 */ },
+                ctx,
+            };
         case 'Stop':
             return { type: 'Stop', reason: 'answer', ctx };
         case 'Notification':

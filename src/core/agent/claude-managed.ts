@@ -50,6 +50,12 @@ export class ClaudeManagedAgent implements IAgent {
             this.opts.logger,
         );
 
+        // 将上层 AbortSignal 桥接为 SDK 所需的 AbortController
+        const abortController = new AbortController();
+        if (input.abortSignal) {
+            input.abortSignal.addEventListener('abort', () => abortController.abort(), { once: true });
+        }
+
         const sdkStream = query({
             prompt: input.message,
             options: {
@@ -58,13 +64,11 @@ export class ClaudeManagedAgent implements IAgent {
                 sessionId: input.sessionId,
                 resume: input.resumeFrom,
                 thinking: { type: 'adaptive' },
+                abortController,
                 hooks,
                 mcpServers: {
                     'masterbot-skills': masterbotMcp,
                 },
-                // 禁用内置 Claude Code 工具（避免与 masterBot 工具重叠），
-                // 但保留 Bash 供需要 shell 访问的技能
-                // Phase 4 会精细化这里的工具列表
                 env: {
                     CLAUDE_AGENT_SDK_CLIENT_APP: 'masterbot/3.0.0',
                 },

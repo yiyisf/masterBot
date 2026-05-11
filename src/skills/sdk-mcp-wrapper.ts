@@ -5,7 +5,7 @@
  */
 
 import { createSdkMcpServer, tool } from '@anthropic-ai/claude-agent-sdk';
-import { z } from 'zod';
+import { z } from 'zod/v4';
 import type { ISkillRegistry } from './registry.js';
 import type { Logger, MemoryAccess } from '../types.js';
 
@@ -32,7 +32,7 @@ function jsonSchemaToZod(schema: Record<string, unknown>): Record<string, z.ZodT
                 zodType = z.array(z.unknown());
                 break;
             case 'object':
-                zodType = z.record(z.unknown());
+                zodType = z.record(z.string(), z.unknown());
                 break;
             default:
                 zodType = z.string();

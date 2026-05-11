@@ -283,6 +283,8 @@ export class GatewayServer {
                         userId: userId ?? 'anonymous',
                         tenantId: 'default',
                         provider: (this.config.models.default === 'anthropic' ? 'anthropic' : 'openai') as 'anthropic' | 'openai',
+                        forceLegacy: (request.body as unknown as Record<string, unknown>).forceLegacy === true,
+                        abortSignal: abortController.signal,
                     }))
                     : this.agent.run(userInput, { sessionId, userId, memory, history, abortSignal: abortController.signal, attachments });
 

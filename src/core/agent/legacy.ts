@@ -60,6 +60,7 @@ export class LegacySelfHostedAgent implements IAgent {
             sessionId: input.sessionId,
             userId: input.userId,
             memory,
+            abortSignal: input.abortSignal,
         });
 
         for await (const step of gen) {
