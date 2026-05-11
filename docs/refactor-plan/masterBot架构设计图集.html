@@ -1,0 +1,1982 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>masterBot 优化架构设计图集 · v1.0</title>
+<style>
+  :root {
+    --bg-base: #0f1419;
+    --bg-surface: #1a2028;
+    --bg-elevated: #232a35;
+    --border: #2d3540;
+    --border-strong: #3d4856;
+
+    --text-primary: #e8ecf2;
+    --text-secondary: #a8b2c1;
+    --text-muted: #6b7689;
+
+    --claude-orange: #cc7a4e;
+    --claude-warm: #d4936b;
+
+    --accent-blue: #6ba3e8;
+    --accent-cyan: #5cc6c7;
+    --accent-green: #7cb98a;
+    --accent-purple: #a98bd4;
+    --accent-amber: #d4a661;
+    --accent-rose: #d47a8e;
+
+    --line-height: 1.65;
+    --font-mono: 'JetBrains Mono', 'SF Mono', Consolas, 'Microsoft YaHei Mono', monospace;
+    --font-sans: 'Inter', -apple-system, 'PingFang SC', 'Microsoft YaHei', sans-serif;
+    --font-display: 'Fraunces', 'Source Serif Pro', 'Songti SC', serif;
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    background: var(--bg-base);
+    color: var(--text-primary);
+    font-family: var(--font-sans);
+    line-height: var(--line-height);
+    -webkit-font-smoothing: antialiased;
+    background-image:
+      radial-gradient(circle at 15% 20%, rgba(204, 122, 78, 0.04) 0%, transparent 40%),
+      radial-gradient(circle at 85% 80%, rgba(107, 163, 232, 0.03) 0%, transparent 40%);
+    min-height: 100vh;
+  }
+
+  .container {
+    max-width: 1400px;
+    margin: 0 auto;
+    padding: 60px 40px 100px;
+  }
+
+  /* ─── Hero ─── */
+  .hero {
+    border-bottom: 1px solid var(--border);
+    padding-bottom: 40px;
+    margin-bottom: 60px;
+  }
+
+  .hero-tag {
+    display: inline-block;
+    font-family: var(--font-mono);
+    font-size: 11px;
+    letter-spacing: 0.15em;
+    color: var(--claude-orange);
+    text-transform: uppercase;
+    margin-bottom: 24px;
+    padding: 6px 14px;
+    border: 1px solid rgba(204, 122, 78, 0.3);
+    border-radius: 4px;
+    background: rgba(204, 122, 78, 0.05);
+  }
+
+  h1 {
+    font-family: var(--font-display);
+    font-size: 56px;
+    font-weight: 500;
+    letter-spacing: -0.02em;
+    line-height: 1.1;
+    margin-bottom: 20px;
+  }
+
+  h1 .accent {
+    font-style: italic;
+    color: var(--claude-warm);
+  }
+
+  .hero-meta {
+    color: var(--text-muted);
+    font-family: var(--font-mono);
+    font-size: 13px;
+    display: flex;
+    gap: 24px;
+    margin-bottom: 24px;
+  }
+
+  .hero-meta span::before {
+    content: '·';
+    margin-right: 8px;
+    color: var(--border-strong);
+  }
+  .hero-meta span:first-child::before { content: ''; margin: 0; }
+
+  .hero-desc {
+    color: var(--text-secondary);
+    font-size: 18px;
+    line-height: 1.7;
+    max-width: 800px;
+  }
+
+  /* ─── TOC ─── */
+  .toc {
+    background: var(--bg-surface);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 28px 32px;
+    margin-bottom: 80px;
+  }
+
+  .toc-title {
+    font-family: var(--font-mono);
+    font-size: 11px;
+    letter-spacing: 0.15em;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    margin-bottom: 20px;
+  }
+
+  .toc ol {
+    list-style: none;
+    counter-reset: toc-counter;
+    columns: 2;
+    column-gap: 40px;
+  }
+
+  .toc li {
+    counter-increment: toc-counter;
+    padding: 8px 0;
+    color: var(--text-secondary);
+    font-size: 15px;
+    break-inside: avoid;
+  }
+
+  .toc li::before {
+    content: counter(toc-counter, decimal-leading-zero);
+    color: var(--claude-orange);
+    font-family: var(--font-mono);
+    font-size: 11px;
+    margin-right: 12px;
+  }
+
+  .toc a {
+    color: inherit;
+    text-decoration: none;
+    transition: color 0.2s;
+  }
+
+  .toc a:hover {
+    color: var(--claude-warm);
+  }
+
+  /* ─── Sections ─── */
+  section.fig {
+    margin-bottom: 100px;
+    scroll-margin-top: 30px;
+  }
+
+  .fig-num {
+    font-family: var(--font-mono);
+    font-size: 12px;
+    color: var(--claude-orange);
+    letter-spacing: 0.1em;
+    margin-bottom: 12px;
+    display: block;
+  }
+
+  .fig-title {
+    font-family: var(--font-display);
+    font-size: 36px;
+    font-weight: 500;
+    letter-spacing: -0.01em;
+    margin-bottom: 14px;
+    line-height: 1.2;
+  }
+
+  .fig-subtitle {
+    color: var(--text-secondary);
+    font-size: 16px;
+    margin-bottom: 36px;
+    max-width: 880px;
+    line-height: 1.7;
+  }
+
+  .fig-canvas {
+    background: var(--bg-surface);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 40px;
+    overflow-x: auto;
+  }
+
+  .fig-caption {
+    margin-top: 20px;
+    padding-top: 20px;
+    border-top: 1px dashed var(--border);
+    color: var(--text-muted);
+    font-size: 13px;
+    font-style: italic;
+    line-height: 1.6;
+  }
+
+  .fig-caption strong { color: var(--text-secondary); font-style: normal; font-weight: 600; }
+
+  /* ─── Mermaid override ─── */
+  .mermaid {
+    background: transparent !important;
+    text-align: center;
+  }
+
+  /* ─── SVG Architecture ─── */
+  .arch-svg {
+    width: 100%;
+    height: auto;
+    max-width: 1100px;
+    margin: 0 auto;
+    display: block;
+  }
+
+  /* ─── Layered architecture (Figure 1) ─── */
+  .arch-layered {
+    display: flex;
+    flex-direction: column;
+    gap: 18px;
+    max-width: 1080px;
+    margin: 0 auto;
+  }
+
+  .layer {
+    border-radius: 10px;
+    padding: 22px 26px;
+    border: 1px solid;
+    position: relative;
+    transition: transform 0.2s;
+  }
+
+  .layer:hover { transform: translateX(4px); }
+
+  .layer-frontend { background: rgba(107, 163, 232, 0.06); border-color: rgba(107, 163, 232, 0.3); }
+  .layer-gateway { background: rgba(92, 198, 199, 0.06); border-color: rgba(92, 198, 199, 0.3); }
+  .layer-router { background: rgba(204, 122, 78, 0.08); border-color: rgba(204, 122, 78, 0.4); }
+  .layer-agent { background: rgba(212, 122, 142, 0.06); border-color: rgba(212, 122, 142, 0.3); }
+  .layer-shared { background: rgba(169, 139, 212, 0.06); border-color: rgba(169, 139, 212, 0.3); }
+  .layer-persist { background: rgba(124, 185, 138, 0.06); border-color: rgba(124, 185, 138, 0.3); }
+
+  .layer-head {
+    display: flex;
+    align-items: baseline;
+    gap: 16px;
+    margin-bottom: 14px;
+  }
+
+  .layer-num {
+    font-family: var(--font-mono);
+    font-size: 11px;
+    color: var(--text-muted);
+    letter-spacing: 0.1em;
+  }
+
+  .layer-name {
+    font-family: var(--font-display);
+    font-size: 20px;
+    font-weight: 600;
+  }
+
+  .layer-frontend .layer-name { color: var(--accent-blue); }
+  .layer-gateway .layer-name { color: var(--accent-cyan); }
+  .layer-router .layer-name { color: var(--claude-orange); }
+  .layer-agent .layer-name { color: var(--accent-rose); }
+  .layer-shared .layer-name { color: var(--accent-purple); }
+  .layer-persist .layer-name { color: var(--accent-green); }
+
+  .layer-tag {
+    margin-left: auto;
+    font-family: var(--font-mono);
+    font-size: 10px;
+    color: var(--text-muted);
+    padding: 3px 8px;
+    border: 1px solid var(--border);
+    border-radius: 3px;
+  }
+
+  .layer-modules {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+    gap: 10px;
+  }
+
+  .module {
+    background: var(--bg-elevated);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 12px 14px;
+    font-size: 13px;
+  }
+
+  .module-name {
+    font-family: var(--font-mono);
+    font-weight: 600;
+    color: var(--text-primary);
+    margin-bottom: 4px;
+  }
+
+  .module-desc {
+    color: var(--text-muted);
+    font-size: 12px;
+    line-height: 1.5;
+  }
+
+  .module-status {
+    display: inline-block;
+    margin-left: 6px;
+    font-size: 10px;
+    padding: 1px 5px;
+    border-radius: 2px;
+    font-family: var(--font-mono);
+    vertical-align: middle;
+  }
+  .module-status.new { background: rgba(204, 122, 78, 0.15); color: var(--claude-warm); }
+  .module-status.kept { background: rgba(124, 185, 138, 0.12); color: var(--accent-green); }
+  .module-status.upgrade { background: rgba(212, 166, 97, 0.15); color: var(--accent-amber); }
+
+  /* ─── Router Diagram (Figure 2) ─── */
+  .router-diagram {
+    max-width: 1000px;
+    margin: 0 auto;
+  }
+
+  .router-flow {
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: 30px;
+    align-items: center;
+  }
+
+  .router-input,
+  .router-decision,
+  .router-output-pair {
+    text-align: center;
+  }
+
+  .router-box {
+    background: var(--bg-elevated);
+    border: 2px solid var(--border-strong);
+    border-radius: 10px;
+    padding: 18px 24px;
+    display: inline-block;
+    min-width: 280px;
+  }
+
+  .router-box.input {
+    border-color: var(--accent-cyan);
+    background: rgba(92, 198, 199, 0.05);
+  }
+
+  .router-box.decision {
+    border-color: var(--claude-orange);
+    background: rgba(204, 122, 78, 0.08);
+    border-style: dashed;
+  }
+
+  .router-output-pair {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 30px;
+  }
+
+  .router-box.claude {
+    border-color: var(--accent-rose);
+    background: rgba(212, 122, 142, 0.05);
+    width: 100%;
+  }
+
+  .router-box.legacy {
+    border-color: var(--accent-blue);
+    background: rgba(107, 163, 232, 0.05);
+    width: 100%;
+  }
+
+  .router-box-title {
+    font-family: var(--font-mono);
+    font-weight: 700;
+    font-size: 14px;
+    margin-bottom: 8px;
+  }
+
+  .router-box-desc {
+    font-size: 12px;
+    color: var(--text-secondary);
+    text-align: left;
+    line-height: 1.6;
+  }
+
+  .router-arrow {
+    font-family: var(--font-mono);
+    color: var(--text-muted);
+    font-size: 20px;
+    text-align: center;
+  }
+
+  .router-cond {
+    font-family: var(--font-mono);
+    font-size: 12px;
+    color: var(--claude-warm);
+    background: var(--bg-base);
+    padding: 4px 10px;
+    border-radius: 4px;
+    display: inline-block;
+    margin: 0 8px;
+  }
+
+  /* ─── Hooks Pipeline (Figure 3) ─── */
+  .hooks-pipeline {
+    max-width: 1100px;
+    margin: 0 auto;
+  }
+
+  .pipeline-stage {
+    display: grid;
+    grid-template-columns: 180px 1fr;
+    gap: 20px;
+    align-items: center;
+    margin-bottom: 24px;
+  }
+
+  .pipeline-event {
+    text-align: right;
+    font-family: var(--font-mono);
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--claude-warm);
+  }
+
+  .pipeline-event-desc {
+    font-size: 11px;
+    color: var(--text-muted);
+    margin-top: 2px;
+  }
+
+  .pipeline-hooks {
+    display: flex;
+    gap: 10px;
+    flex-wrap: wrap;
+    padding: 12px 16px;
+    background: var(--bg-elevated);
+    border-radius: 8px;
+    border-left: 3px solid var(--claude-orange);
+  }
+
+  .hook-chip {
+    background: var(--bg-base);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    padding: 6px 12px;
+    font-family: var(--font-mono);
+    font-size: 12px;
+    color: var(--text-secondary);
+    transition: all 0.15s;
+  }
+
+  .hook-chip.critical { border-color: var(--accent-rose); color: var(--accent-rose); }
+  .hook-chip.observe { border-color: var(--accent-cyan); color: var(--accent-cyan); }
+  .hook-chip.security { border-color: var(--accent-amber); color: var(--accent-amber); }
+
+  .pipeline-divider {
+    grid-column: 2;
+    height: 16px;
+    background-image: linear-gradient(to bottom, var(--border-strong) 50%, transparent 50%);
+    background-size: 1px 4px;
+    background-repeat: repeat-y;
+    background-position: 30px 0;
+    margin: -8px 0;
+  }
+
+  /* ─── Subagents (Figure 4) ─── */
+  .subagent-tree {
+    max-width: 1100px;
+    margin: 0 auto;
+  }
+
+  .supervisor-box {
+    background: linear-gradient(135deg, rgba(204, 122, 78, 0.12), rgba(212, 147, 107, 0.06));
+    border: 2px solid var(--claude-orange);
+    border-radius: 12px;
+    padding: 24px;
+    margin-bottom: 40px;
+    text-align: center;
+    position: relative;
+  }
+
+  .supervisor-box::after {
+    content: '';
+    position: absolute;
+    bottom: -28px; left: 50%;
+    width: 2px; height: 28px;
+    background: var(--claude-orange);
+    transform: translateX(-50%);
+  }
+
+  .supervisor-title {
+    font-family: var(--font-display);
+    font-size: 22px;
+    color: var(--claude-warm);
+    margin-bottom: 6px;
+  }
+
+  .supervisor-meta {
+    font-family: var(--font-mono);
+    font-size: 12px;
+    color: var(--text-muted);
+  }
+
+  .subagents-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+    gap: 18px;
+    position: relative;
+  }
+
+  .subagents-grid::before {
+    content: '';
+    position: absolute;
+    top: -28px; left: 5%; right: 5%;
+    height: 2px;
+    background: var(--claude-orange);
+  }
+
+  .subagent-card {
+    background: var(--bg-elevated);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 18px;
+    position: relative;
+  }
+
+  .subagent-card::before {
+    content: '';
+    position: absolute;
+    top: -28px; left: 50%;
+    width: 2px; height: 28px;
+    background: var(--claude-orange);
+    transform: translateX(-50%);
+  }
+
+  .subagent-name {
+    font-family: var(--font-mono);
+    font-weight: 700;
+    font-size: 14px;
+    margin-bottom: 8px;
+  }
+
+  .subagent-card.researcher .subagent-name { color: var(--accent-purple); }
+  .subagent-card.email .subagent-name { color: var(--accent-blue); }
+  .subagent-card.calendar .subagent-name { color: var(--accent-cyan); }
+  .subagent-card.secretary .subagent-name { color: var(--accent-amber); }
+
+  .subagent-purpose {
+    font-size: 12px;
+    color: var(--text-secondary);
+    margin-bottom: 12px;
+    line-height: 1.5;
+  }
+
+  .subagent-meta-row {
+    display: flex;
+    justify-content: space-between;
+    font-family: var(--font-mono);
+    font-size: 10px;
+    color: var(--text-muted);
+    border-top: 1px dashed var(--border);
+    padding-top: 10px;
+  }
+
+  .subagent-model {
+    color: var(--accent-green);
+    font-weight: 600;
+  }
+
+  /* ─── Memory 4-Layer (Figure 5) ─── */
+  .memory-stack {
+    max-width: 1000px;
+    margin: 0 auto;
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+  }
+
+  .memory-layer {
+    display: grid;
+    grid-template-columns: 60px 1fr 220px;
+    gap: 20px;
+    align-items: center;
+    padding: 20px 24px;
+    border-radius: 10px;
+    border: 1px solid var(--border);
+    background: var(--bg-elevated);
+  }
+
+  .memory-layer-num {
+    font-family: var(--font-display);
+    font-size: 32px;
+    color: var(--claude-orange);
+    text-align: center;
+  }
+
+  .memory-layer-name {
+    font-family: var(--font-display);
+    font-size: 19px;
+    font-weight: 600;
+    margin-bottom: 4px;
+  }
+
+  .memory-layer-en {
+    font-family: var(--font-mono);
+    font-size: 11px;
+    color: var(--text-muted);
+    margin-bottom: 8px;
+  }
+
+  .memory-layer-desc {
+    color: var(--text-secondary);
+    font-size: 13px;
+    line-height: 1.6;
+  }
+
+  .memory-layer-tech {
+    font-family: var(--font-mono);
+    font-size: 11px;
+    color: var(--text-muted);
+    text-align: right;
+  }
+
+  .memory-layer-tech div {
+    margin-bottom: 3px;
+  }
+
+  .memory-layer-tech .tech-tag {
+    display: inline-block;
+    background: var(--bg-base);
+    padding: 2px 8px;
+    border-radius: 3px;
+    border: 1px solid var(--border);
+    color: var(--accent-green);
+  }
+
+  /* ─── Permission Flow (Figure 6) ─── */
+  .perm-flow {
+    max-width: 900px;
+    margin: 0 auto;
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+  }
+
+  .perm-step {
+    display: grid;
+    grid-template-columns: 60px 1fr 140px;
+    align-items: center;
+    gap: 16px;
+    padding: 16px 22px;
+    background: var(--bg-elevated);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    border-left: 4px solid var(--claude-orange);
+    position: relative;
+  }
+
+  .perm-step.deny { border-left-color: var(--accent-rose); }
+  .perm-step.allow { border-left-color: var(--accent-green); }
+
+  .perm-step-num {
+    font-family: var(--font-mono);
+    font-size: 14px;
+    font-weight: 700;
+    color: var(--claude-warm);
+    text-align: center;
+    background: var(--bg-base);
+    padding: 8px;
+    border-radius: 50%;
+    width: 40px;
+    height: 40px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+
+  .perm-step-content {
+    flex: 1;
+  }
+
+  .perm-step-name {
+    font-family: var(--font-mono);
+    font-weight: 700;
+    margin-bottom: 4px;
+    font-size: 14px;
+  }
+
+  .perm-step-desc {
+    font-size: 12px;
+    color: var(--text-secondary);
+  }
+
+  .perm-step-action {
+    text-align: right;
+    font-family: var(--font-mono);
+    font-size: 11px;
+    color: var(--text-muted);
+  }
+
+  .perm-action-deny { color: var(--accent-rose); }
+  .perm-action-allow { color: var(--accent-green); }
+  .perm-action-pass { color: var(--accent-amber); }
+
+  /* ─── Sequence Diagram (Figure 7) ─── */
+  .seq-diagram {
+    max-width: 1200px;
+    margin: 0 auto;
+    font-family: var(--font-mono);
+  }
+
+  .seq-actors {
+    display: grid;
+    grid-template-columns: repeat(10, 1fr);
+    gap: 4px;
+    margin-bottom: 0;
+    position: relative;
+    z-index: 2;
+  }
+
+  .seq-actor {
+    background: var(--bg-elevated);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 8px 4px;
+    text-align: center;
+    font-size: 10.5px;
+    font-weight: 600;
+    color: var(--text-secondary);
+  }
+
+  .seq-actor.user { border-color: var(--accent-blue); color: var(--accent-blue); }
+  .seq-actor.channel { border-color: var(--accent-cyan); color: var(--accent-cyan); }
+  .seq-actor.gateway { border-color: var(--accent-cyan); color: var(--accent-cyan); }
+  .seq-actor.router { border-color: var(--claude-orange); color: var(--claude-warm); background: rgba(204,122,78,0.08); }
+  .seq-actor.agent { border-color: var(--accent-rose); color: var(--accent-rose); background: rgba(212,122,142,0.08); }
+  .seq-actor.hooks { border-color: var(--accent-amber); color: var(--accent-amber); }
+  .seq-actor.sub1 { border-color: var(--accent-purple); color: var(--accent-purple); }
+  .seq-actor.sub2 { border-color: var(--accent-purple); color: var(--accent-purple); }
+  .seq-actor.mcp { border-color: var(--text-muted); color: var(--text-secondary); }
+  .seq-actor.db { border-color: var(--accent-green); color: var(--accent-green); }
+
+  .seq-body {
+    position: relative;
+    padding: 30px 0 30px;
+    margin-top: -1px;
+  }
+
+  .seq-lines {
+    position: absolute;
+    top: 0; bottom: 0; left: 0; right: 0;
+    display: grid;
+    grid-template-columns: repeat(10, 1fr);
+    pointer-events: none;
+  }
+
+  .seq-line {
+    position: relative;
+  }
+
+  .seq-line::before {
+    content: '';
+    position: absolute;
+    top: 0; bottom: 0; left: 50%;
+    width: 1px;
+    background: var(--border-strong);
+    background-image: linear-gradient(to bottom, var(--border-strong) 50%, transparent 50%);
+    background-size: 1px 6px;
+    background-repeat: repeat-y;
+    transform: translateX(-50%);
+  }
+
+  .seq-msg {
+    position: relative;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin: 6px 0;
+    padding: 8px 14px;
+    background: var(--bg-elevated);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    border-left: 3px solid var(--claude-orange);
+    font-size: 12px;
+    color: var(--text-secondary);
+    z-index: 1;
+  }
+
+  .seq-msg::after {
+    content: attr(data-label);
+    margin-left: auto;
+    padding: 2px 8px;
+    background: var(--bg-base);
+    border: 1px solid var(--border);
+    border-radius: 3px;
+    font-family: var(--font-mono);
+    font-size: 10px;
+    color: var(--text-muted);
+    white-space: nowrap;
+  }
+
+  .seq-msg.back {
+    border-left-color: var(--accent-green);
+    border-left-style: dashed;
+    color: var(--text-secondary);
+    font-style: italic;
+  }
+
+  .seq-num {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 22px;
+    height: 22px;
+    border-radius: 50%;
+    background: var(--claude-orange);
+    color: var(--bg-base);
+    font-size: 10px;
+    font-weight: 700;
+    flex-shrink: 0;
+  }
+
+  .seq-msg.back .seq-num {
+    background: var(--accent-green);
+  }
+
+  .seq-note {
+    background: rgba(212, 166, 97, 0.1);
+    border: 1px solid var(--accent-amber);
+    color: var(--accent-amber);
+    border-radius: 4px;
+    padding: 6px 12px;
+    margin: 4px 60px;
+    font-size: 11px;
+    text-align: center;
+    z-index: 1;
+    position: relative;
+    line-height: 1.4;
+  }
+
+  .seq-note::after {
+    content: attr(data-label);
+    display: block;
+    margin-top: 4px;
+    font-family: var(--font-mono);
+    font-size: 9px;
+    color: var(--text-muted);
+    opacity: 0.7;
+  }
+
+  .seq-self {
+    background: rgba(169, 139, 212, 0.08);
+    border: 1px dashed var(--accent-purple);
+    color: var(--accent-purple);
+    border-radius: 6px;
+    padding: 8px 14px;
+    margin: 6px 50% 6px 35%;
+    font-size: 11px;
+    z-index: 1;
+    position: relative;
+    line-height: 1.5;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+
+  .seq-self::after {
+    content: attr(data-label);
+    margin-left: auto;
+    padding: 2px 8px;
+    background: var(--bg-base);
+    border: 1px solid var(--accent-purple);
+    border-radius: 3px;
+    font-family: var(--font-mono);
+    font-size: 9px;
+    color: var(--accent-purple);
+    white-space: nowrap;
+  }
+
+  .seq-self .seq-num {
+    background: var(--accent-purple);
+  }
+
+  /* ─── Phase Timeline (Figure 8) ─── */
+  .phase-timeline {
+    max-width: 1100px;
+    margin: 0 auto;
+    position: relative;
+  }
+
+  .phase-timeline::before {
+    content: '';
+    position: absolute;
+    left: 32px; top: 30px; bottom: 30px;
+    width: 2px;
+    background: linear-gradient(to bottom,
+      var(--accent-cyan), var(--claude-orange), var(--accent-rose), var(--accent-green));
+  }
+
+  .phase-item {
+    display: grid;
+    grid-template-columns: 80px 1fr;
+    gap: 20px;
+    margin-bottom: 30px;
+    position: relative;
+  }
+
+  .phase-marker {
+    position: relative;
+    z-index: 1;
+  }
+
+  .phase-circle {
+    width: 64px;
+    height: 64px;
+    border-radius: 50%;
+    background: var(--bg-elevated);
+    border: 3px solid var(--claude-orange);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-family: var(--font-display);
+    font-size: 22px;
+    font-weight: 600;
+    color: var(--claude-warm);
+  }
+
+  .phase-content {
+    background: var(--bg-elevated);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 18px 24px;
+  }
+
+  .phase-header {
+    display: flex;
+    align-items: baseline;
+    gap: 14px;
+    margin-bottom: 10px;
+  }
+
+  .phase-name {
+    font-family: var(--font-display);
+    font-size: 20px;
+    font-weight: 600;
+  }
+
+  .phase-duration {
+    font-family: var(--font-mono);
+    font-size: 12px;
+    color: var(--text-muted);
+    border: 1px solid var(--border);
+    padding: 2px 8px;
+    border-radius: 3px;
+  }
+
+  .phase-issue {
+    margin-left: auto;
+    font-family: var(--font-mono);
+    font-size: 11px;
+    color: var(--accent-amber);
+  }
+
+  .phase-deliverables {
+    color: var(--text-secondary);
+    font-size: 13px;
+    line-height: 1.7;
+    margin-top: 8px;
+  }
+
+  .phase-deliverables strong {
+    color: var(--accent-green);
+    font-weight: 500;
+  }
+
+  /* ─── Footer ─── */
+  footer {
+    margin-top: 100px;
+    padding-top: 40px;
+    border-top: 1px solid var(--border);
+    text-align: center;
+    color: var(--text-muted);
+    font-size: 12px;
+    font-family: var(--font-mono);
+  }
+
+  footer a { color: var(--claude-warm); text-decoration: none; }
+
+  /* ─── Print ─── */
+  @media print {
+    body { background: white; color: black; }
+    .container { padding: 20px; }
+    section.fig { page-break-inside: avoid; margin-bottom: 50px; }
+    .fig-canvas { border: 1px solid #ccc; background: white; }
+  }
+
+  /* ─── Responsive ─── */
+  @media (max-width: 768px) {
+    .container { padding: 30px 20px; }
+    h1 { font-size: 36px; }
+    .fig-title { font-size: 28px; }
+    .toc ol { columns: 1; }
+    .pipeline-stage { grid-template-columns: 1fr; }
+    .pipeline-event { text-align: left; }
+    .memory-layer { grid-template-columns: 1fr; }
+    .memory-layer-num, .memory-layer-tech { text-align: left; }
+  }
+</style>
+</head>
+<body>
+
+<div class="container">
+
+  <!-- ═══ HERO ═══ -->
+  <header class="hero">
+    <span class="hero-tag">masterBot · Architecture Diagram Set</span>
+    <h1>架构设计<span class="accent">图集</span></h1>
+    <div class="hero-meta">
+      <span>v1.0</span>
+      <span>2026.05.08</span>
+      <span>Hybrid: Claude Managed + Self-Hosted Fallback</span>
+    </div>
+    <p class="hero-desc">
+      本图集是 masterBot 优化报告的可视化补充，从 8 个不同维度展示目标架构：
+      系统全景、Hybrid 路由、Hooks 拦截链、Subagent 委派、Memory 四层、Permission 五层、端到端时序、Phase 演进。
+      所有图均围绕一个核心理念展开 ——
+      <strong style="color: var(--claude-warm);">把 Agent Loop 让渡给 Claude SDK，把工程精力集中到 Harness。</strong>
+    </p>
+  </header>
+
+  <!-- ═══ TOC ═══ -->
+  <nav class="toc">
+    <div class="toc-title">Figures · 图索引</div>
+    <ol>
+      <li><a href="#fig1">系统分层全景图</a></li>
+      <li><a href="#fig2">AgentRouter Hybrid 路由</a></li>
+      <li><a href="#fig3">Hooks 拦截链路</a></li>
+      <li><a href="#fig4">Subagent 委派拓扑</a></li>
+      <li><a href="#fig5">Memory 四层架构</a></li>
+      <li><a href="#fig6">Permission 五层评估</a></li>
+      <li><a href="#fig7">端到端请求时序</a></li>
+      <li><a href="#fig8">Phase 演进路线</a></li>
+    </ol>
+  </nav>
+
+  <!-- ═══ FIGURE 1: SYSTEM OVERVIEW ═══ -->
+  <section class="fig" id="fig1">
+    <span class="fig-num">FIGURE 01 · System Overview</span>
+    <h2 class="fig-title">系统分层全景图</h2>
+    <p class="fig-subtitle">
+      从前端到持久化的 6 层架构。颜色编码：<span style="color: var(--claude-warm);">●</span> 新增模块、
+      <span style="color: var(--accent-green);">●</span> 保留并增强、
+      <span style="color: var(--accent-amber);">●</span> 待升级。
+      关键洞察：你 90% 的现有代码（蓝、紫、绿色）都得以保留，仅在最关键的 Agent Core 层（橙色）换芯。
+    </p>
+
+    <div class="fig-canvas">
+      <div class="arch-layered">
+
+        <!-- L1: Frontend -->
+        <div class="layer layer-frontend">
+          <div class="layer-head">
+            <span class="layer-num">L1</span>
+            <span class="layer-name">Frontend Layer · 前端层</span>
+            <span class="layer-tag">Multi-Channel</span>
+          </div>
+          <div class="layer-modules">
+            <div class="module"><div class="module-name">Web Console <span class="module-status upgrade">UPGRADE</span></div><div class="module-desc">Next.js 16 + 12 页面 · 改用 AG-UI 协议</div></div>
+            <div class="module"><div class="module-name">Telegram Bot <span class="module-status new">NEW</span></div><div class="module-desc">P0 · telegraf + webhook</div></div>
+            <div class="module"><div class="module-name">iMessage <span class="module-status new">NEW</span></div><div class="module-desc">P0 · macOS 个人助手刚需</div></div>
+            <div class="module"><div class="module-name">飞书 / 钉钉 <span class="module-status kept">KEPT</span></div><div class="module-desc">企业渠道保留</div></div>
+            <div class="module"><div class="module-name">WhatsApp / Discord <span class="module-status new">NEW</span></div><div class="module-desc">P1 · 拓展个人渠道</div></div>
+          </div>
+        </div>
+
+        <!-- L2: Gateway -->
+        <div class="layer layer-gateway">
+          <div class="layer-head">
+            <span class="layer-num">L2</span>
+            <span class="layer-name">Gateway Layer · 网关层</span>
+            <span class="layer-tag">Fastify + AG-UI</span>
+          </div>
+          <div class="layer-modules">
+            <div class="module"><div class="module-name">/api/chat/stream <span class="module-status upgrade">UPGRADE</span></div><div class="module-desc">SSE → AG-UI 标准事件</div></div>
+            <div class="module"><div class="module-name">/api/sessions/fork <span class="module-status new">NEW</span></div><div class="module-desc">会话分叉</div></div>
+            <div class="module"><div class="module-name">/api/sessions/resume <span class="module-status new">NEW</span></div><div class="module-desc">中断恢复</div></div>
+            <div class="module"><div class="module-name">/api/sessions/checkpoint <span class="module-status new">NEW</span></div><div class="module-desc">状态快照</div></div>
+            <div class="module"><div class="module-name">IChannel 抽象 <span class="module-status new">NEW</span></div><div class="module-desc">统一渠道接口</div></div>
+            <div class="module"><div class="module-name">Auth (API Key/JWT) <span class="module-status kept">KEPT</span></div><div class="module-desc">认证中间件</div></div>
+          </div>
+        </div>
+
+        <!-- L3: Agent Router (核心) -->
+        <div class="layer layer-router">
+          <div class="layer-head">
+            <span class="layer-num">L3</span>
+            <span class="layer-name">★ AgentRouter · 路由抽象层</span>
+            <span class="layer-tag">关键新增</span>
+          </div>
+          <div class="layer-modules">
+            <div class="module"><div class="module-name">IAgent 接口 <span class="module-status new">NEW</span></div><div class="module-desc">execute / resume / fork / checkpoint</div></div>
+            <div class="module"><div class="module-name">Provider 路由 <span class="module-status new">NEW</span></div><div class="module-desc">anthropic → SDK；其他 → Legacy</div></div>
+            <div class="module"><div class="module-name">FeatureFlag <span class="module-status new">NEW</span></div><div class="module-desc">灰度切换 · 按用户/百分比</div></div>
+            <div class="module"><div class="module-name">A/B Compare <span class="module-status new">NEW</span></div><div class="module-desc">Langfuse 实时对比指标</div></div>
+          </div>
+        </div>
+
+        <!-- L4: Agent Implementations -->
+        <div class="layer layer-agent">
+          <div class="layer-head">
+            <span class="layer-num">L4</span>
+            <span class="layer-name">Agent Implementations · 智能体实现层</span>
+            <span class="layer-tag">双引擎并存</span>
+          </div>
+          <div class="layer-modules">
+            <div class="module"><div class="module-name">ClaudeManagedAgent <span class="module-status new">NEW</span></div><div class="module-desc">@anthropic-ai/claude-agent-sdk · Anthropic provider 走此路径</div></div>
+            <div class="module"><div class="module-name">LegacySelfHostedAgent <span class="module-status kept">KEPT</span></div><div class="module-desc">现有 ReAct loop · OpenAI/Gemini/Ollama 兜底</div></div>
+            <div class="module"><div class="module-name">SDK Options Builder <span class="module-status new">NEW</span></div><div class="module-desc">hooks/agents/mcpServers 配置生成器</div></div>
+            <div class="module"><div class="module-name">SDK Event Translator <span class="module-status new">NEW</span></div><div class="module-desc">SDK Message → AgentEvent</div></div>
+          </div>
+        </div>
+
+        <!-- L5: Shared Infrastructure -->
+        <div class="layer layer-shared">
+          <div class="layer-head">
+            <span class="layer-num">L5</span>
+            <span class="layer-name">Shared Infrastructure · 共享基础设施</span>
+            <span class="layer-tag">SDK 协议对齐</span>
+          </div>
+          <div class="layer-modules">
+            <div class="module"><div class="module-name">Hook System <span class="module-status upgrade">UPGRADE</span></div><div class="module-desc">12 个事件 · sandbox/PII/audit/memory 全部 hookify</div></div>
+            <div class="module"><div class="module-name">Skills Registry <span class="module-status upgrade">UPGRADE</span></div><div class="module-desc">SKILL.md → Progressive Disclosure</div></div>
+            <div class="module"><div class="module-name">Subagent Defs <span class="module-status new">NEW</span></div><div class="module-desc">researcher/email/calendar/secretary</div></div>
+            <div class="module"><div class="module-name">MCP Servers <span class="module-status kept">KEPT</span></div><div class="module-desc">stdio/SSE 双传输 · 已有保留</div></div>
+            <div class="module"><div class="module-name">Permission Engine <span class="module-status upgrade">UPGRADE</span></div><div class="module-desc">5 层评估 · 替代单一沙箱</div></div>
+            <div class="module"><div class="module-name">Memory Router <span class="module-status upgrade">UPGRADE</span></div><div class="module-desc">四层统一接口</div></div>
+            <div class="module"><div class="module-name">SDK MCP Wrapper <span class="module-status new">NEW</span></div><div class="module-desc">现有 skills → SDK 可调</div></div>
+          </div>
+        </div>
+
+        <!-- L6: Persistence & Observability -->
+        <div class="layer layer-persist">
+          <div class="layer-head">
+            <span class="layer-num">L6</span>
+            <span class="layer-name">Persistence & Observability · 持久化与可观测</span>
+            <span class="layer-tag">OTel Standard</span>
+          </div>
+          <div class="layer-modules">
+            <div class="module"><div class="module-name">PostgreSQL + pgvector <span class="module-status upgrade">UPGRADE</span></div><div class="module-desc">替换 SQLite 长期记忆</div></div>
+            <div class="module"><div class="module-name">SQLite (sessions) <span class="module-status kept">KEPT</span></div><div class="module-desc">会话/checkpoint 仍用</div></div>
+            <div class="module"><div class="module-name">Knowledge Graph <span class="module-status kept">KEPT</span></div><div class="module-desc">BFS 多跳 · 已有</div></div>
+            <div class="module"><div class="module-name">OTel SDK <span class="module-status new">NEW</span></div><div class="module-desc">替换 SpanRecorder · GenAI Conventions</div></div>
+            <div class="module"><div class="module-name">Langfuse <span class="module-status new">NEW</span></div><div class="module-desc">self-hosted · trace + eval + cost</div></div>
+            <div class="module"><div class="module-name">file_checkpoints <span class="module-status new">NEW</span></div><div class="module-desc">文件级回滚</div></div>
+          </div>
+        </div>
+
+      </div>
+    </div>
+
+    <p class="fig-caption">
+      <strong>读图要点：</strong>L3 的 AgentRouter 是整个改造的「枢纽」——它把 SDK 路径与 Legacy 路径在抽象上对齐，
+      上层（L1/L2）和下层（L5/L6）都不需要感知底下用的是哪个 agent 引擎。这种设计让你可以渐进式迁移，
+      而不是一次性 rewrite。
+    </p>
+  </section>
+
+  <!-- ═══ FIGURE 2: ROUTER FLOW ═══ -->
+  <section class="fig" id="fig2">
+    <span class="fig-num">FIGURE 02 · Hybrid Router</span>
+    <h2 class="fig-title">AgentRouter Hybrid 路由</h2>
+    <p class="fig-subtitle">
+      路由层是 Hybrid 方案的灵魂。它接收一个 AgentConfig，根据 provider 字段 + FeatureFlag 决定路由到 Claude SDK 还是 Legacy 引擎。
+      关键设计：<strong style="color: var(--claude-warm);">任何 provider 都可以强制 forceLegacy=true 走自研路径</strong>，作为兜底逃生通道。
+    </p>
+
+    <div class="fig-canvas">
+      <div class="router-diagram">
+
+        <div class="router-flow">
+          <div class="router-input">
+            <div class="router-box input">
+              <div class="router-box-title" style="color: var(--accent-cyan);">▼ AgentConfig 入参</div>
+              <div class="router-box-desc">
+                provider · model · sessionId · userId<br>
+                forceLegacy? · resumeFromSession? · message
+              </div>
+            </div>
+          </div>
+
+          <div class="router-arrow">▼</div>
+
+          <div class="router-decision">
+            <div class="router-box decision">
+              <div class="router-box-title" style="color: var(--claude-warm);">◆ AgentRouter.route()</div>
+              <div class="router-box-desc" style="text-align: center;">
+                <span class="router-cond">provider === 'anthropic'</span>
+                <br>
+                <span style="color: var(--text-muted); font-size: 11px;">AND</span>
+                <br>
+                <span class="router-cond">!config.forceLegacy</span>
+                <br>
+                <span style="color: var(--text-muted); font-size: 11px;">AND</span>
+                <br>
+                <span class="router-cond">featureFlag.enabled(userId)</span>
+              </div>
+            </div>
+          </div>
+
+          <div class="router-arrow">▼</div>
+
+          <div class="router-output-pair">
+            <div class="router-box claude">
+              <div class="router-box-title" style="color: var(--accent-rose);">✓ TRUE → ClaudeManagedAgent</div>
+              <div class="router-box-desc">
+                · @anthropic-ai/claude-agent-sdk<br>
+                · 自动 caching / compaction<br>
+                · 原生 fork / resume<br>
+                · 内置 12 种 hooks<br>
+                · Subagent context isolation<br>
+                · maxTurns 250+
+              </div>
+            </div>
+
+            <div class="router-box legacy">
+              <div class="router-box-title" style="color: var(--accent-blue);">✗ FALSE → LegacySelfHostedAgent</div>
+              <div class="router-box-desc">
+                · 现有 src/core/agent.ts<br>
+                · OpenAI / Gemini / Ollama<br>
+                · 自研 ReAct loop<br>
+                · ContextManager + DAG<br>
+                · 维护至 SDK 支持 OpenAI 兼容接口<br>
+                · maxIterations 10 → 提升至 50
+              </div>
+            </div>
+          </div>
+        </div>
+
+      </div>
+    </div>
+
+    <p class="fig-caption">
+      <strong>灰度策略：</strong>初期 5% 流量走 Claude SDK，对比指标稳定后逐步放量到 50% / 100%。
+      LegacySelfHostedAgent <strong style="color: var(--accent-green);">永不下线</strong>——既保护多 provider 用户，也是 SDK 故障时的逃生通道。
+    </p>
+  </section>
+
+  <!-- ═══ FIGURE 3: HOOKS PIPELINE ═══ -->
+  <section class="fig" id="fig3">
+    <span class="fig-num">FIGURE 03 · Hooks Pipeline</span>
+    <h2 class="fig-title">Hooks 拦截链路</h2>
+    <p class="fig-subtitle">
+      Anthropic 的 Hook 系统是 masterBot 当前架构最大的升级点——你目前散落在各处的 sandbox / SpanRecorder / IM 审批 / 长记忆注入 / PII 脱敏，
+      <strong style="color: var(--claude-warm);">全部统一为 12 个事件钩子</strong>。
+      下图显示了一次完整 agent 调用过程中，每个事件触发时挂载的 Hook。
+    </p>
+
+    <div class="fig-canvas">
+      <div class="hooks-pipeline">
+
+        <div class="pipeline-stage">
+          <div class="pipeline-event">
+            UserPromptSubmit
+            <div class="pipeline-event-desc">用户消息进入</div>
+          </div>
+          <div class="pipeline-hooks">
+            <span class="hook-chip security">promptInjectionGuard</span>
+            <span class="hook-chip security">piiInputRedaction</span>
+            <span class="hook-chip observe">otelStartRootSpan</span>
+            <span class="hook-chip">auditLogStart</span>
+          </div>
+        </div>
+        <div class="pipeline-divider"></div>
+
+        <div class="pipeline-stage">
+          <div class="pipeline-event">
+            SessionStart
+            <div class="pipeline-event-desc">新会话首轮</div>
+          </div>
+          <div class="pipeline-hooks">
+            <span class="hook-chip">memoryInjection</span>
+            <span class="hook-chip">loadUserPreferences</span>
+            <span class="hook-chip">loadProceduralMemory</span>
+            <span class="hook-chip observe">otelSessionMeta</span>
+          </div>
+        </div>
+        <div class="pipeline-divider"></div>
+
+        <div class="pipeline-stage">
+          <div class="pipeline-event">
+            PreToolUse
+            <div class="pipeline-event-desc">工具调用前</div>
+          </div>
+          <div class="pipeline-hooks">
+            <span class="hook-chip critical">sandboxValidator</span>
+            <span class="hook-chip critical">permissionEngine</span>
+            <span class="hook-chip security">piiArgRedaction</span>
+            <span class="hook-chip security">lethalTrifectaCheck</span>
+            <span class="hook-chip observe">otelToolSpanStart</span>
+            <span class="hook-chip">rateLimiter</span>
+          </div>
+        </div>
+        <div class="pipeline-divider"></div>
+
+        <div class="pipeline-stage">
+          <div class="pipeline-event">
+            PostToolUse
+            <div class="pipeline-event-desc">工具调用后</div>
+          </div>
+          <div class="pipeline-hooks">
+            <span class="hook-chip">resultValidator</span>
+            <span class="hook-chip">tokenUsageMeter</span>
+            <span class="hook-chip observe">otelToolSpanEnd</span>
+            <span class="hook-chip">auditLogTool</span>
+          </div>
+        </div>
+        <div class="pipeline-divider"></div>
+
+        <div class="pipeline-stage">
+          <div class="pipeline-event">
+            PostToolUseFailure
+            <div class="pipeline-event-desc">工具失败</div>
+          </div>
+          <div class="pipeline-hooks">
+            <span class="hook-chip">autoRetry (max=2)</span>
+            <span class="hook-chip">circuitBreaker</span>
+            <span class="hook-chip critical">alertNotifier</span>
+          </div>
+        </div>
+        <div class="pipeline-divider"></div>
+
+        <div class="pipeline-stage">
+          <div class="pipeline-event">
+            SubagentStart / Stop
+            <div class="pipeline-event-desc">子智能体启停</div>
+          </div>
+          <div class="pipeline-hooks">
+            <span class="hook-chip observe">otelSubagentSpan</span>
+            <span class="hook-chip">subagentBudget</span>
+            <span class="hook-chip">contextIsolation</span>
+          </div>
+        </div>
+        <div class="pipeline-divider"></div>
+
+        <div class="pipeline-stage">
+          <div class="pipeline-event">
+            PreCompact
+            <div class="pipeline-event-desc">压缩前</div>
+          </div>
+          <div class="pipeline-hooks">
+            <span class="hook-chip critical">protectCriticalContext</span>
+            <span class="hook-chip">extractFactsForLongTerm</span>
+          </div>
+        </div>
+        <div class="pipeline-divider"></div>
+
+        <div class="pipeline-stage">
+          <div class="pipeline-event">
+            SessionEnd / Stop
+            <div class="pipeline-event-desc">会话结束</div>
+          </div>
+          <div class="pipeline-hooks">
+            <span class="hook-chip">extractAndPersistMemory</span>
+            <span class="hook-chip observe">otelEndRootSpan</span>
+            <span class="hook-chip">costAggregation</span>
+            <span class="hook-chip">checkpointAutoSave</span>
+          </div>
+        </div>
+
+      </div>
+    </div>
+
+    <p class="fig-caption">
+      <strong>颜色语义：</strong>
+      <span style="color: var(--accent-rose);">●</span> 关键安全/审批 ·
+      <span style="color: var(--accent-amber);">●</span> 数据保护 ·
+      <span style="color: var(--accent-cyan);">●</span> 可观测性 ·
+      普通 = 业务逻辑。
+      所有 Hook 都是<strong style="color: var(--claude-warm);">独立、可测、可热插拔</strong>——你可以单独启用/停用任何一个，无需改主流程。
+    </p>
+  </section>
+
+  <!-- ═══ FIGURE 4: SUBAGENT TREE ═══ -->
+  <section class="fig" id="fig4">
+    <span class="fig-num">FIGURE 04 · Subagent Topology</span>
+    <h2 class="fig-title">Subagent 委派拓扑</h2>
+    <p class="fig-subtitle">
+      Subagent 的核心价值不是"多 agent 协作"，而是<strong style="color: var(--claude-warm);">context 隔离</strong> 和 <strong style="color: var(--claude-warm);">模型成本梯度</strong>。
+      下图展示一个典型场景：用户说"帮我整理今天工作"，主 agent 自动委派给 4 个专家子 agent，每个用最合适的模型。
+    </p>
+
+    <div class="fig-canvas">
+      <div class="subagent-tree">
+
+        <div class="supervisor-box">
+          <div class="supervisor-title">★ Main Agent · 主线协调者</div>
+          <div class="supervisor-meta">
+            model: claude-opus-4-7 · maxTurns: 250 · 看到 systemPrompt + AGENTS.md + 子 agent 描述
+          </div>
+        </div>
+
+        <div class="subagents-grid">
+
+          <div class="subagent-card secretary">
+            <div class="subagent-name">▸ secretary</div>
+            <div class="subagent-purpose">
+              个人秘书 · 综合协调日常事务 ·
+              「整理今日待办、给出 3 件最重要的事」
+            </div>
+            <div class="subagent-meta-row">
+              <span>tools: Task + Read</span>
+              <span class="subagent-model">sonnet-4-6</span>
+            </div>
+          </div>
+
+          <div class="subagent-card email">
+            <div class="subagent-name">▸ email-handler</div>
+            <div class="subagent-purpose">
+              邮件助手 · 搜索/起草/发送 ·
+              批量操作时主线只看到摘要不见数百封邮件
+            </div>
+            <div class="subagent-meta-row">
+              <span>tools: gmail__list/get/send</span>
+              <span class="subagent-model">haiku-4-5</span>
+            </div>
+          </div>
+
+          <div class="subagent-card calendar">
+            <div class="subagent-name">▸ calendar-handler</div>
+            <div class="subagent-purpose">
+              日程助手 · 查询/创建/修改/查找空闲 ·
+              涉及外部人员强制双重确认
+            </div>
+            <div class="subagent-meta-row">
+              <span>tools: gcal__list/create/update</span>
+              <span class="subagent-model">haiku-4-5</span>
+            </div>
+          </div>
+
+          <div class="subagent-card researcher">
+            <div class="subagent-name">▸ researcher</div>
+            <div class="subagent-purpose">
+              深度研究 · 关键词扩展 + 并行抓取 + 引用结构化报告
+            </div>
+            <div class="subagent-meta-row">
+              <span>tools: WebSearch/Fetch/Read</span>
+              <span class="subagent-model">opus-4-7</span>
+            </div>
+          </div>
+
+        </div>
+      </div>
+    </div>
+
+    <p class="fig-caption">
+      <strong>关键提升数据：</strong>子 agent 的 context 隔离机制可减少 <strong style="color: var(--accent-green);">~67%</strong> 的跨域 token 浪费（LangChain 实测）。
+      模型梯度：Haiku 处理高频简单任务（邮件操作/日历查询）、Sonnet 处理协调（秘书）、Opus 处理需要深度推理的任务（研究）——
+      自然形成「<strong style="color: var(--claude-warm);">便宜的多、贵的少</strong>」的成本最优解。
+    </p>
+  </section>
+
+  <!-- ═══ FIGURE 5: MEMORY 4-LAYER ═══ -->
+  <section class="fig" id="fig5">
+    <span class="fig-num">FIGURE 05 · Memory Architecture</span>
+    <h2 class="fig-title">Memory 四层架构</h2>
+    <p class="fig-subtitle">
+      当前 masterBot 的短期/长期/知识图谱三套独立体系，统一为<strong style="color: var(--claude-warm);">认知科学派</strong>的四层结构：
+      Working / Episodic / Semantic / Procedural。每层各司其职、有明确生命周期、有独立写入路径。
+    </p>
+
+    <div class="fig-canvas">
+      <div class="memory-stack">
+
+        <div class="memory-layer">
+          <div class="memory-layer-num">L1</div>
+          <div>
+            <div class="memory-layer-name">Working Memory · 工作记忆</div>
+            <div class="memory-layer-en">in-context messages</div>
+            <div class="memory-layer-desc">
+              当前会话的消息列表 · Claude SDK 自动管理 · 触发 compaction 时归档至 L2
+            </div>
+          </div>
+          <div class="memory-layer-tech">
+            <div><span class="tech-tag">SDK Native</span></div>
+            <div>auto-compaction</div>
+            <div>prompt caching</div>
+          </div>
+        </div>
+
+        <div class="memory-layer">
+          <div class="memory-layer-num">L2</div>
+          <div>
+            <div class="memory-layer-name">Episodic Memory · 情景记忆</div>
+            <div class="memory-layer-en">past conversations</div>
+            <div class="memory-layer-desc">
+              历史对话归档 · BM25 + 语义混合检索 · TTL 90 天后降级为 L3 实体抽取
+            </div>
+          </div>
+          <div class="memory-layer-tech">
+            <div><span class="tech-tag">pgvector</span></div>
+            <div>hybrid search</div>
+            <div>TTL = 90d</div>
+          </div>
+        </div>
+
+        <div class="memory-layer">
+          <div class="memory-layer-num">L3</div>
+          <div>
+            <div class="memory-layer-name">Semantic Memory · 语义记忆</div>
+            <div class="memory-layer-en">facts &amp; relations · KG</div>
+            <div class="memory-layer-desc">
+              "永久"事实与实体关系 · 知识图谱 BFS 多跳 ·
+              <strong style="color: var(--accent-rose);">写入必须 HitL 审批</strong>（防 prompt injection 污染）
+            </div>
+          </div>
+          <div class="memory-layer-tech">
+            <div><span class="tech-tag">Knowledge Graph</span></div>
+            <div>HitL gate</div>
+            <div>conflict resolution</div>
+          </div>
+        </div>
+
+        <div class="memory-layer">
+          <div class="memory-layer-num">L4</div>
+          <div>
+            <div class="memory-layer-name">Procedural Memory · 程序记忆</div>
+            <div class="memory-layer-en">how to work · markdown</div>
+            <div class="memory-layer-desc">
+              元规则与系统宪法 · AGENTS.md / SOUL.md / SKILL.md 文件 · 通过 SessionStart hook 注入
+            </div>
+          </div>
+          <div class="memory-layer-tech">
+            <div><span class="tech-tag">Filesystem</span></div>
+            <div>git versioned</div>
+            <div>hot reload</div>
+          </div>
+        </div>
+
+      </div>
+    </div>
+
+    <p class="fig-caption">
+      <strong>核心改动：</strong>引入 <code style="font-family: var(--font-mono); color: var(--claude-warm);">memory_consolidate</code> 工具
+      让 agent <strong style="color: var(--claude-warm);">自主决定</strong>何时压缩、归档（active context compression 模式）。
+      实测：相比 harness 强制压缩，可减少 <strong style="color: var(--accent-green);">22.7%</strong> token 消耗且无准确率损失。
+    </p>
+  </section>
+
+  <!-- ═══ FIGURE 6: PERMISSION 5-LAYER ═══ -->
+  <section class="fig" id="fig6">
+    <span class="fig-num">FIGURE 06 · Permission Engine</span>
+    <h2 class="fig-title">Permission 五层评估流程</h2>
+    <p class="fig-subtitle">
+      Claude SDK 的标准权限评估顺序。每一层都有明确职责、不能用单一 if-else 替代。
+      masterBot 当前的 sandbox 主要在第 2 层、HitL 卡片在第 5 层——补齐 1、3、4 层后才有真正的「<strong style="color: var(--claude-warm);">深度防御</strong>」。
+    </p>
+
+    <div class="fig-canvas">
+      <div class="perm-flow">
+
+        <div class="perm-step">
+          <div class="perm-step-num">1</div>
+          <div class="perm-step-content">
+            <div class="perm-step-name" style="color: var(--accent-cyan);">Hooks (PreToolUse)</div>
+            <div class="perm-step-desc">运行你注册的 hook 函数 · 可 deny / modify / log · 灵活的程序化控制</div>
+          </div>
+          <div class="perm-step-action">
+            <span class="perm-action-deny">→ deny / modify</span><br>
+            或 <span class="perm-action-pass">↓ 继续</span>
+          </div>
+        </div>
+
+        <div class="perm-step deny">
+          <div class="perm-step-num">2</div>
+          <div class="perm-step-content">
+            <div class="perm-step-name" style="color: var(--accent-rose);">Deny Rules · 静态黑名单</div>
+            <div class="perm-step-desc">
+              来自 disallowedTools + .claude/settings.json ·
+              <strong style="color: var(--accent-rose);">即使 bypassPermissions 也无法绕过</strong>
+            </div>
+          </div>
+          <div class="perm-step-action">
+            <span class="perm-action-deny">→ 强制 deny</span>
+          </div>
+        </div>
+
+        <div class="perm-step">
+          <div class="perm-step-num">3</div>
+          <div class="perm-step-content">
+            <div class="perm-step-name" style="color: var(--accent-amber);">Permission Mode · 全局模式</div>
+            <div class="perm-step-desc">
+              default · acceptEdits · plan · bypassPermissions ·
+              不同用户/session 可设置不同模式
+            </div>
+          </div>
+          <div class="perm-step-action">
+            <span class="perm-action-allow">→ 直接 allow</span><br>
+            <span class="perm-action-deny">或 → deny</span>
+          </div>
+        </div>
+
+        <div class="perm-step allow">
+          <div class="perm-step-num">4</div>
+          <div class="perm-step-content">
+            <div class="perm-step-name" style="color: var(--accent-green);">Allow Rules · 静态白名单</div>
+            <div class="perm-step-desc">
+              来自 allowedTools 配置 · 如 ['Read', 'Glob', 'Grep'] · 命中即放行
+            </div>
+          </div>
+          <div class="perm-step-action">
+            <span class="perm-action-allow">→ allow</span>
+          </div>
+        </div>
+
+        <div class="perm-step">
+          <div class="perm-step-num">5</div>
+          <div class="perm-step-content">
+            <div class="perm-step-name" style="color: var(--claude-warm);">canUseTool · 运行时审批</div>
+            <div class="perm-step-desc">
+              交互式回调 · masterBot 现有的 IM 审批卡片在此层 ·
+              <strong style="color: var(--claude-warm);">支持 approve with changes</strong>（修改入参后放行）
+            </div>
+          </div>
+          <div class="perm-step-action">
+            <span class="perm-action-allow">→ allow</span> /
+            <span class="perm-action-deny">deny</span> /<br>
+            <span style="color: var(--claude-warm);">→ approve+modify</span>
+          </div>
+        </div>
+
+      </div>
+    </div>
+
+    <p class="fig-caption">
+      <strong>Lethal Trifecta 检测：</strong>当一次 session 同时启用「私密数据访问」+「不可信内容暴露」+「外部通信」三类工具时，
+      会强制触发第 5 层 HitL——这是 prompt injection 攻击最危险的组合。
+      在第 1 层 Hook 中实现该检测，<strong style="color: var(--claude-warm);">早于</strong>所有其他规则评估。
+    </p>
+  </section>
+
+  <!-- ═══ FIGURE 7: SEQUENCE DIAGRAM ═══ -->
+  <section class="fig" id="fig7">
+    <span class="fig-num">FIGURE 07 · End-to-End Sequence</span>
+    <h2 class="fig-title">端到端请求时序图</h2>
+    <p class="fig-subtitle">
+      展示一个真实场景：用户在 Telegram 发送「帮我看看今天的邮件」，
+      系统调用 secretary 子 agent 委派给 email-handler，全程触发 Hook、Permission、Memory、OTel 的协同。
+      <strong style="color: var(--claude-warm);">橙色实心 = 请求</strong>，
+      <strong style="color: var(--accent-green);">绿色虚线 = 响应</strong>，
+      <strong style="color: var(--accent-amber);">黄色 = 内部决策</strong>，
+      <strong style="color: var(--accent-purple);">紫色 = 子 agent 自处理</strong>。
+    </p>
+
+    <div class="fig-canvas">
+      <div class="seq-diagram">
+
+        <!-- Lifelines header -->
+        <div class="seq-actors">
+          <div class="seq-actor user">👤 User</div>
+          <div class="seq-actor channel">Telegram</div>
+          <div class="seq-actor gateway">Gateway</div>
+          <div class="seq-actor router">Router</div>
+          <div class="seq-actor agent">ClaudeAgent</div>
+          <div class="seq-actor hooks">Hooks</div>
+          <div class="seq-actor sub1">Secretary</div>
+          <div class="seq-actor sub2">Email</div>
+          <div class="seq-actor mcp">MCP Gmail</div>
+          <div class="seq-actor db">Memory+OTel</div>
+        </div>
+
+        <div class="seq-body">
+          <!-- 8 个生命线 -->
+          <div class="seq-lines">
+            <div class="seq-line"></div><div class="seq-line"></div><div class="seq-line"></div>
+            <div class="seq-line"></div><div class="seq-line"></div><div class="seq-line"></div>
+            <div class="seq-line"></div><div class="seq-line"></div><div class="seq-line"></div>
+            <div class="seq-line"></div>
+          </div>
+
+          <!-- 消息流 -->
+          <div class="seq-msg" data-label="User → Telegram">
+            <span class="seq-num">1</span>"帮我看看今天的邮件"
+          </div>
+          <div class="seq-msg" data-label="Telegram → Gateway">
+            <span class="seq-num">2</span>POST /api/chat/stream (AG-UI)
+          </div>
+          <div class="seq-msg" data-label="Gateway → Router">
+            <span class="seq-num">3</span>route(config)
+          </div>
+          <div class="seq-note" data-label="@ Router">provider=anthropic ✓<br>featureFlag.enabled ✓</div>
+          <div class="seq-msg" data-label="Router → ClaudeAgent">
+            <span class="seq-num">4</span>execute(input)
+          </div>
+          <div class="seq-msg" data-label="ClaudeAgent → Hooks">
+            <span class="seq-num">5</span>SessionStart
+          </div>
+          <div class="seq-msg" data-label="Hooks → Memory+OTel">
+            <span class="seq-num">6</span>load preferences + memory
+          </div>
+          <div class="seq-msg back" data-label="Memory+OTel → Hooks">
+            <span class="seq-num">7</span>user.locale=zh, top-3 facts
+          </div>
+          <div class="seq-msg" data-label="Hooks → Memory+OTel">
+            <span class="seq-num">8</span>otel.startRootSpan
+          </div>
+          <div class="seq-msg" data-label="ClaudeAgent → Secretary">
+            <span class="seq-num">9</span>invoke (Task tool)
+          </div>
+          <div class="seq-msg" data-label="Secretary → Hooks">
+            <span class="seq-num">10</span>PreToolUse (gmail__list)
+          </div>
+          <div class="seq-note" data-label="@ Hooks">Layer 4: in allowedTools<br>→ allow ✓</div>
+          <div class="seq-msg back" data-label="Hooks → Secretary">
+            <span class="seq-num">11</span>✓ allow
+          </div>
+          <div class="seq-msg" data-label="Secretary → MCP Gmail">
+            <span class="seq-num">12</span>gmail__list(today)
+          </div>
+          <div class="seq-msg back" data-label="MCP Gmail → Secretary">
+            <span class="seq-num">13</span>[50 emails, structured]
+          </div>
+          <div class="seq-msg" data-label="Secretary → Email">
+            <span class="seq-num">14</span>invoke email (analyze + summarize)
+          </div>
+          <div class="seq-self" data-label="@ Email">
+            <span class="seq-num">15</span>在隔离 context 中处理<br>(主线看不到 50 封原文)
+          </div>
+          <div class="seq-msg back" data-label="Email → Secretary">
+            <span class="seq-num">16</span>摘要: 3 重要 + 5 待回 + 42 一般
+          </div>
+          <div class="seq-msg back" data-label="Secretary → ClaudeAgent">
+            <span class="seq-num">17</span>final 结构化摘要 (200字)
+          </div>
+          <div class="seq-msg" data-label="ClaudeAgent → Hooks">
+            <span class="seq-num">18</span>SessionEnd
+          </div>
+          <div class="seq-msg" data-label="Hooks → Memory+OTel">
+            <span class="seq-num">19</span>extract & persist facts<br>"今天有3封紧急邮件"
+          </div>
+          <div class="seq-msg" data-label="Hooks → Memory+OTel">
+            <span class="seq-num">20</span>otel.endRootSpan · cost=$0.024
+          </div>
+          <div class="seq-msg back" data-label="ClaudeAgent → Router">
+            <span class="seq-num">21</span>AgentEvent stream
+          </div>
+          <div class="seq-msg back" data-label="Router → Gateway">
+            <span class="seq-num">22</span>SSE events
+          </div>
+          <div class="seq-msg back" data-label="Gateway → Telegram">
+            <span class="seq-num">23</span>AG-UI events
+          </div>
+          <div class="seq-msg back" data-label="Telegram → User">
+            <span class="seq-num">24</span>渲染卡片 + 总结
+          </div>
+        </div>
+
+      </div>
+    </div>
+
+    <p class="fig-caption">
+      <strong>关键观察：</strong>
+      <strong style="color: var(--claude-warm);">主 agent 始终未直接接触 50 封邮件原文</strong>——
+      Email Subagent 在隔离 context 中处理后只返回 200 字摘要，主线 token 消耗节省 95% 以上。
+      Hook 在请求生命周期的每个关键节点自动介入，无需主流程显式调用。
+    </p>
+  </section>
+
+  <!-- ═══ FIGURE 8: PHASE TIMELINE ═══ -->
+  <section class="fig" id="fig8">
+    <span class="fig-num">FIGURE 08 · Migration Roadmap</span>
+    <h2 class="fig-title">Phase 演进路线</h2>
+    <p class="fig-subtitle">
+      9 个 Phase 的渐进式迁移路径，总周期约 14 周。每个 Phase 都<strong style="color: var(--claude-warm);">独立可回滚</strong>、
+      <strong style="color: var(--claude-warm);">独立可灰度</strong>、<strong style="color: var(--claude-warm);">独立交付价值</strong>。
+      重点：Phase 1（可观测性）必须先行，没有 trace 就没法做后续的 A/B 对比。
+    </p>
+
+    <div class="fig-canvas">
+      <div class="phase-timeline">
+
+        <div class="phase-item">
+          <div class="phase-marker">
+            <div class="phase-circle" style="border-color: var(--text-muted); color: var(--text-muted);">P0</div>
+          </div>
+          <div class="phase-content">
+            <div class="phase-header">
+              <span class="phase-name">准备工作</span>
+              <span class="phase-duration">1 week</span>
+              <span class="phase-issue">#issue-1 ~ #issue-3</span>
+            </div>
+            <div class="phase-deliverables">
+              立项决策 ADR · SDK 依赖添加 · docs/migration 目录建立 · <strong>交付：</strong>跑通官方 quickstart
+            </div>
+          </div>
+        </div>
+
+        <div class="phase-item">
+          <div class="phase-marker">
+            <div class="phase-circle" style="border-color: var(--accent-cyan); color: var(--accent-cyan);">P1</div>
+          </div>
+          <div class="phase-content">
+            <div class="phase-header">
+              <span class="phase-name">可观测性先行</span>
+              <span class="phase-duration">1 week</span>
+              <span class="phase-issue">#issue-4 ~ #issue-7</span>
+            </div>
+            <div class="phase-deliverables">
+              引入 OTel + 替换 SpanRecorder + 部署 Langfuse · <strong>交付：</strong>所有现有功能在 Langfuse 上有完整 trace
+            </div>
+          </div>
+        </div>
+
+        <div class="phase-item">
+          <div class="phase-marker">
+            <div class="phase-circle" style="border-color: var(--claude-orange);">P2</div>
+          </div>
+          <div class="phase-content">
+            <div class="phase-header">
+              <span class="phase-name">抽象层 + Hooks 重构</span>
+              <span class="phase-duration">2 weeks</span>
+              <span class="phase-issue">#issue-8 ~ #issue-16</span>
+            </div>
+            <div class="phase-deliverables">
+              IAgent 接口 · AgentRouter · Legacy 引擎重命名 · sandbox/IM/memory/PII <strong>全部 hookify</strong> ·
+              <strong>交付：</strong>测试 100% 通过、内部架构对齐 SDK
+            </div>
+          </div>
+        </div>
+
+        <div class="phase-item">
+          <div class="phase-marker">
+            <div class="phase-circle" style="border-color: var(--accent-rose); color: var(--accent-rose);">P3</div>
+          </div>
+          <div class="phase-content">
+            <div class="phase-header">
+              <span class="phase-name">★ ClaudeManagedAgent 上线</span>
+              <span class="phase-duration">2 weeks</span>
+              <span class="phase-issue">#issue-17 ~ #issue-22</span>
+            </div>
+            <div class="phase-deliverables">
+              ClaudeManagedAgent 实现 · SDK MCP Wrapper · 灰度切换开关 · capability eval 套件 ·
+              <strong style="color: var(--claude-warm);">里程碑：</strong>5% 流量走 SDK，效果指标可对比
+            </div>
+          </div>
+        </div>
+
+        <div class="phase-item">
+          <div class="phase-marker">
+            <div class="phase-circle" style="border-color: var(--accent-purple); color: var(--accent-purple);">P4</div>
+          </div>
+          <div class="phase-content">
+            <div class="phase-header">
+              <span class="phase-name">Skills + Subagents 升级</span>
+              <span class="phase-duration">2 weeks</span>
+              <span class="phase-issue">#issue-23 ~ #issue-27</span>
+            </div>
+            <div class="phase-deliverables">
+              Progressive Disclosure 改造 · 4+ Subagent 定义 · SOUL.md 迁移 ·
+              <strong>预期：</strong>主 agent 平均 input tokens 减少 ≥30%
+            </div>
+          </div>
+        </div>
+
+        <div class="phase-item">
+          <div class="phase-marker">
+            <div class="phase-circle" style="border-color: var(--accent-amber); color: var(--accent-amber);">P5</div>
+          </div>
+          <div class="phase-content">
+            <div class="phase-header">
+              <span class="phase-name">Session 高级特性</span>
+              <span class="phase-duration">1 week</span>
+              <span class="phase-issue">#issue-28 ~ #issue-32</span>
+            </div>
+            <div class="phase-deliverables">
+              数据库 schema 变更 · fork / resume / checkpoint 端点 · Web UI rewind 按钮
+            </div>
+          </div>
+        </div>
+
+        <div class="phase-item">
+          <div class="phase-marker">
+            <div class="phase-circle" style="border-color: var(--accent-green); color: var(--accent-green);">P6</div>
+          </div>
+          <div class="phase-content">
+            <div class="phase-header">
+              <span class="phase-name">Memory 四层重构</span>
+              <span class="phase-duration">2 weeks</span>
+              <span class="phase-issue">#issue-33 ~ #issue-37</span>
+            </div>
+            <div class="phase-deliverables">
+              MemoryRouter 抽象 · pgvector 升级 · Procedural Memory · active compression · HitL 写入门
+            </div>
+          </div>
+        </div>
+
+        <div class="phase-item">
+          <div class="phase-marker">
+            <div class="phase-circle" style="border-color: var(--accent-blue); color: var(--accent-blue);">P7</div>
+          </div>
+          <div class="phase-content">
+            <div class="phase-header">
+              <span class="phase-name">Multi-Channel 个人化</span>
+              <span class="phase-duration">2 weeks</span>
+              <span class="phase-issue">#issue-38 ~ #issue-41</span>
+            </div>
+            <div class="phase-deliverables">
+              Telegram · iMessage · IChannel 抽象 · 个人化技能 (calendar/email/note sync)
+            </div>
+          </div>
+        </div>
+
+        <div class="phase-item">
+          <div class="phase-marker">
+            <div class="phase-circle" style="border-color: var(--accent-cyan); color: var(--accent-cyan);">P8</div>
+          </div>
+          <div class="phase-content">
+            <div class="phase-header">
+              <span class="phase-name">前端升级</span>
+              <span class="phase-duration">1 week</span>
+              <span class="phase-issue">#issue-42 ~ #issue-43</span>
+            </div>
+            <div class="phase-deliverables">
+              AG-UI 协议替换 assistant-runtime · CopilotKit 集成评估
+            </div>
+          </div>
+        </div>
+
+        <div class="phase-item">
+          <div class="phase-marker">
+            <div class="phase-circle" style="border-color: var(--claude-warm);">P9</div>
+          </div>
+          <div class="phase-content">
+            <div class="phase-header">
+              <span class="phase-name">评估体系</span>
+              <span class="phase-duration">持续</span>
+              <span class="phase-issue">#issue-44 ~ #issue-47</span>
+            </div>
+            <div class="phase-deliverables">
+              promptfoo 集成 · GitHub Actions eval · Langfuse Datasets · LLM-as-judge
+            </div>
+          </div>
+        </div>
+
+      </div>
+    </div>
+
+    <p class="fig-caption">
+      <strong>关键依赖：</strong>P1 → P2 → P3 是必走链路（先看见，再抽象，再切换）。P4-P9 大部分可并行推进。
+      <strong>风险预警：</strong>P3 是技术风险最高的一步——务必从 5% 流量起步、Langfuse 实时对比指标后再放量。
+    </p>
+  </section>
+
+  <!-- ═══ FOOTER ═══ -->
+  <footer>
+    <p>masterBot Architecture Diagram Set · v1.0 · 2026.05.08</p>
+    <p style="margin-top: 8px;">补充于「<a href="#">masterBot 优化报告</a>」&nbsp;·&nbsp; 配合阅读效果最佳</p>
+  </footer>
+
+</div>
+
+</body>
+</html>
