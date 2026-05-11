@@ -221,6 +221,8 @@ export class LocalSkillSource implements SkillSource {
                                 .map(([k]) => k),
                         },
                     },
+                    tier: skill.metadata.tier,
+                    category: skill.metadata.category,
                 });
             }
         }

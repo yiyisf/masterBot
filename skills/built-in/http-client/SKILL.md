@@ -3,6 +3,8 @@ name: http-client
 version: 1.0.0
 description: HTTP 请求技能，支持发送各种 HTTP 请求
 author: CMaster Team
+tier: core
+category: web
 ---
 
 # HTTP Client Skill

@@ -1,13 +1,14 @@
 /**
- * Task 3: createMasterBotMcpServer
+ * Phase 3/4: createMasterBotMcpServer
  * 将现有 SKILL.md 技能包装成 SDK 的 in-process MCP Server。
- * 使用 createSdkMcpServer + tool()，保护所有 SKILL.md 技能投资。
+ * Phase 4 新增 tierFilter 参数，支持只向主 Agent 暴露 core 层技能，
+ * 其余 extended/experimental 技能保留给专家 Subagent 使用。
  */
 
 import { createSdkMcpServer, tool } from '@anthropic-ai/claude-agent-sdk';
 import { z } from 'zod/v4';
 import type { ISkillRegistry } from './registry.js';
-import type { Logger, MemoryAccess } from '../types.js';
+import type { Logger, MemoryAccess, SkillTier } from '../types.js';
 
 /**
  * 将 ToolDefinition.parameters JSON Schema 转换为 Zod schema（简化版）。
@@ -48,8 +49,11 @@ function jsonSchemaToZod(schema: Record<string, unknown>): Record<string, z.ZodT
 }
 
 /**
- * 创建包装了 masterBot 所有 SKILL.md 技能的 in-process MCP Server 配置。
+ * 创建包装了 masterBot SKILL.md 技能的 in-process MCP Server 配置。
  * 返回值可直接放入 `query({ options: { mcpServers: { masterbot: <返回值> } } })`。
+ *
+ * @param tierFilter 若指定，只包装匹配 tier 的技能（缺省 tier 视为 'extended'）。
+ *   主 Agent 传 ['core']，子 Agent 或全量传 undefined。
  */
 export async function createMasterBotMcpServer(
     skillRegistry: ISkillRegistry,
@@ -60,8 +64,14 @@ export async function createMasterBotMcpServer(
         memory: MemoryAccess;
     },
     logger: Logger,
+    tierFilter?: SkillTier[],
 ) {
-    const toolDefs = await skillRegistry.getToolDefinitions();
+    const allToolDefs = await skillRegistry.getToolDefinitions();
+
+    // Phase 4: 按 tier 过滤，缺省 tier 的工具视为 'extended'
+    const toolDefs = tierFilter
+        ? allToolDefs.filter(def => tierFilter.includes(def.tier ?? 'extended'))
+        : allToolDefs;
 
     const sdkTools = toolDefs.map(def => {
         const fnDef = def.function;
@@ -99,7 +109,8 @@ export async function createMasterBotMcpServer(
         );
     });
 
-    logger.info?.(`[sdk-mcp-wrapper] 包装了 ${sdkTools.length} 个 SKILL.md 技能为 MCP Server`);
+    const tierLabel = tierFilter ? tierFilter.join('+') : 'all';
+    logger.info?.(`[sdk-mcp-wrapper] 包装了 ${sdkTools.length}/${allToolDefs.length} 个技能 (tier=${tierLabel})`);
 
     return createSdkMcpServer({
         name: 'masterbot-skills',

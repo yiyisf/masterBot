@@ -58,6 +58,10 @@ export interface ToolDefinition {
         description: string;
         parameters: Record<string, unknown>;
     };
+    /** Phase 4: 来自 SKILL.md 的层级标注，用于按需过滤 */
+    tier?: SkillTier;
+    /** Phase 4: 来自 SKILL.md 的功能分类 */
+    category?: SkillCategory;
 }
 
 export interface LLMAdapter {
@@ -79,6 +83,12 @@ export interface LLMConfig {
 
 // ============ Skill Types ============
 
+/** Phase 4: 技能加载层级，用于按需注入 agent 上下文，减少 input tokens */
+export type SkillTier = 'core' | 'extended' | 'experimental';
+
+/** 技能功能分类 */
+export type SkillCategory = 'execution' | 'file' | 'web' | 'data' | 'communication' | 'ai' | 'enterprise';
+
 export interface SkillMetadata {
     name: string;
     version: string;
@@ -87,6 +97,10 @@ export interface SkillMetadata {
     dependencies?: Record<string, string>;
     loadError?: string;              // 加载失败原因
     status?: 'active' | 'degraded'; // 可用性状态
+    /** Phase 4: 加载层级（缺省视为 extended） */
+    tier?: SkillTier;
+    /** Phase 4: 功能分类 */
+    category?: SkillCategory;
 }
 
 export interface SkillAction {

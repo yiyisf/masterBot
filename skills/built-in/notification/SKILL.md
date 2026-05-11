@@ -2,7 +2,8 @@
 name: notification
 version: 1.0.0
 description: 发送通知到各种渠道，包括钉钉、飞书、企业微信和邮件。
-author: CMaster Team
+tier: extended
+category: communication
 dependencies:
   nodemailer: "^6.9.0"
 ---

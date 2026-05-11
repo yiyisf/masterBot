@@ -1,7 +1,9 @@
 /**
- * Task 1: ClaudeManagedAgent
+ * Phase 3/4: ClaudeManagedAgent
  * 包装 Claude Agent SDK 的 query()，实现 IAgent 接口。
- * Anthropic provider 通过此类享受 SDK 的 caching / compaction / subagent 能力。
+ * Phase 4 新增：
+ *   - 主 Agent 只注入 core tier 技能（减少 input tokens）
+ *   - 通过 options.agents 注入 4 个部门专家 Subagent
  */
 
 import { query } from '@anthropic-ai/claude-agent-sdk';
@@ -9,6 +11,7 @@ import type { IAgent, AgentInput, AgentEvent, AgentCapabilities } from './types.
 import { translateSdkStream } from './event-translator.js';
 import { buildSdkHooks } from './sdk-hook-adapter.js';
 import { createMasterBotMcpServer } from '../../skills/sdk-mcp-wrapper.js';
+import { buildSubagentDefs } from './subagents.js';
 import type { HookRegistry } from '../hooks/registry.js';
 import type { ISkillRegistry } from '../../skills/registry.js';
 import type { Logger, MemoryAccess } from '../../types.js';
@@ -42,13 +45,19 @@ export class ClaudeManagedAgent implements IAgent {
         // 构建 SDK hook 配置，桥接 globalHookRegistry
         const hooks = buildSdkHooks(this.opts.hookRegistry, ctx);
 
-        // 构建 in-process MCP Server（包装所有 SKILL.md 技能）
         const memory = this.opts.memoryFactory?.(input.sessionId) ?? makeFallbackMemory();
-        const masterbotMcp = await createMasterBotMcpServer(
+        const mcpCtx = { sessionId: input.sessionId, userId: input.userId, tenantId: input.tenantId, memory };
+
+        // Phase 4: 主 Agent 只注入 core tier 技能，减少无关工具的 token 消耗
+        const coreMcp = await createMasterBotMcpServer(
             this.opts.skillRegistry,
-            { sessionId: input.sessionId, userId: input.userId, tenantId: input.tenantId, memory },
+            mcpCtx,
             this.opts.logger,
+            ['core'],
         );
+
+        // Phase 4: 部门专家 Subagent 定义（HR / 财务 / IT / 工程）
+        const agents = buildSubagentDefs();
 
         // 将上层 AbortSignal 桥接为 SDK 所需的 AbortController
         const abortController = new AbortController();
@@ -66,11 +75,12 @@ export class ClaudeManagedAgent implements IAgent {
                 thinking: { type: 'adaptive' },
                 abortController,
                 hooks,
+                agents,
                 mcpServers: {
-                    'masterbot-skills': masterbotMcp,
+                    'masterbot-skills': coreMcp,
                 },
                 env: {
-                    CLAUDE_AGENT_SDK_CLIENT_APP: 'masterbot/3.0.0',
+                    CLAUDE_AGENT_SDK_CLIENT_APP: 'masterbot/4.0.0',
                 },
             },
         });

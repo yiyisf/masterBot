@@ -2,7 +2,8 @@
 name: conductor-workflow
 version: 1.0.0
 description: 基于自然语言生成、分析和修改 Conductor OSS v3.21.20 标准工作流定义 JSON，用于企业编排引擎
-author: CMaster Bot
+tier: experimental
+category: enterprise
 ---
 
 ## Actions

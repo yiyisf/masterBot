@@ -37,6 +37,8 @@ export async function parseSkillMd(filePath: string): Promise<ParsedSkillMd> {
         description: frontmatter.description || '',
         author: frontmatter.author,
         dependencies: frontmatter.dependencies,
+        tier: frontmatter.tier,
+        category: frontmatter.category,
     };
 
     // 解析 markdown 中的 actions
