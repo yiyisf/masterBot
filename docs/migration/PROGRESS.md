@@ -1,6 +1,6 @@
 # masterBot v3 重构进度追踪
 
-最后更新：2026-05-11（Phase 3 完成）
+最后更新：2026-05-11（Phase 3 完成 + Review 修复）
 
 ---
 
@@ -12,7 +12,7 @@
 | **P1** | 可观测性先行 | ✅ 完成 | `v3-p1-observability` | - | 2026-05-10 |
 | **P2** | Hooks 重构 | ✅ 完成 | `v3-p2-hooks` | - | 2026-05-10 |
 | P2.5 | Identity & Policy | ⬜ TODO | - | - | - |
-| **P3** | ClaudeManagedAgent 上线 | ✅ 完成 | `v3-p3-claude-managed` | - | 2026-05-11 |
+| **P3** | ClaudeManagedAgent 上线 | ✅ 完成 | `v3-p3-claude-managed` | #35 | 2026-05-11 |
 | P4 | Skills + Subagents 升级 | ⬜ TODO | - | - | - |
 | P5 | Session 高级特性 | ⬜ TODO | - | - | - |
 | P6 | Memory 四层 + 租户隔离 | ⬜ TODO | - | - | - |
@@ -135,3 +135,76 @@
 | Hook 抛异常时 continue 而非 abort | 横切关注点失败不应中断主 Agent 流程 |
 | PII / Retry 为 stub | 避免引入大依赖（presidio/stateMachine），接口已稳定供 Phase 4/6 实现 |
 | EnvFeatureFlagService 读环境变量 | 无需数据库，Phase 8 Admin Console 替换时接口不变 |
+
+---
+
+## Phase 3 详细进度（已完成）
+
+### 任务清单
+
+- [x] 任务 1：`src/core/agent/claude-managed.ts`（ClaudeManagedAgent implements IAgent）
+  - [x] 调用 SDK `query()` 作为 AsyncGenerator
+  - [x] `thinking: { type: 'adaptive' }` 开启自适应思考
+  - [x] `abortController` 从 `AgentInput.abortSignal` 桥接（Review 后修复）
+  - [x] `persistSession` 不显式开启，避免 `~/.claude/projects/` 磁盘堆积
+- [x] 任务 2：`src/core/agent/sdk-hook-adapter.ts`（buildSdkHooks）
+  - [x] 12 个 SDK hook 事件桥接到 HookRegistry
+  - [x] `PreToolUse` 中止时返回 `permissionDecision: 'deny'`
+  - [x] `PermissionRequest.resolve` 补充 no-op 回调（Review 后修复）
+- [x] 任务 3：`src/skills/sdk-mcp-wrapper.ts`（createMasterBotMcpServer）
+  - [x] JSON Schema → Zod shape 转换（string/number/boolean/array/object）
+  - [x] 改用 `zod/v4` 与 SDK 对齐（Review 后修复）
+  - [x] `z.record(z.string(), z.unknown())` 适配 v4 两参数签名（Review 后修复）
+  - [x] 所有 SKILL.md 技能包装为 in-process MCP Server
+- [x] 任务 4：`src/core/agent/event-translator.ts`（translateSdkStream）
+  - [x] SDKMessage → AgentEvent 翻译层
+  - [x] 多 block（thinking+text）改为 generator yield*，消除内容丢失（Review 后修复）
+- [x] 任务 5：`src/core/agent/agent-event-adapter.ts`（agentEventToExecutionStep）
+  - [x] AgentEvent → ExecutionStep 适配，前端 SSE 格式零改动
+- [x] 任务 6：`src/config/feature-flag.ts`（EnvFeatureFlagService）
+  - [x] djb2 hash 确定性分流，默认灰度 5%
+  - [x] 环境变量 `CLAUDE_MANAGED_AGENT_ROLLOUT_PERCENT` 控制比例
+- [x] 任务 7：`src/core/agent/router.ts` 扩展 AgentRouter
+  - [x] `claudeFactory` 注入 ClaudeManagedAgent
+  - [x] `forceLegacy` 强制走 Legacy（调试/回滚用）
+- [x] 任务 8：`src/index.ts` + `src/gateway/server.ts` 接入
+  - [x] index.ts 构造 agentRouter 并注入 GatewayServer
+  - [x] server.ts `/api/chat/stream` 优先走 agentRouter，fallback Legacy
+  - [x] `abortSignal` + `forceLegacy` 正确透传（Review 后修复）
+- [x] 任务 9：`scripts/ab-compare.ts`（A/B 对比脚本）
+- [x] 任务 10：`docs/migration/sdk-vs-legacy-comparison.md`（灰度放量决策模板）
+- [x] 任务 11：`tests/evals/capability/`（3 个 YAML 评测集）
+  - [x] `basic-conversation.yaml`（10 个基础对话用例）
+  - [x] `tool-calling.yaml`（7 个工具调用用例）
+  - [x] `multi-turn.yaml`（5 个多轮对话用例）
+- [x] 任务 12：`web/src/app/settings/page.tsx` 添加 Agent 路由面板
+
+### 完成标准验证
+
+- [x] TypeScript 零错误（`npx tsc --noEmit`）
+- [x] 158 个测试全部通过（+0 个 Phase 3 新增，Phase 2 已含 hooks 测试）
+- [x] ClaudeManagedAgent 实现 IAgent 接口完整（execute / resume / fork / checkpoint / capabilities）
+- [x] AgentRouter 灰度路由逻辑覆盖：forceLegacy / provider ≠ anthropic / feature flag 未开启 → Legacy
+- [x] SSE 格式兼容：前端 ExecutionStep 结构未变，零前端改动
+- [x] Review P0/P1 问题全部修复（commit 82c43b7）
+
+### Review 修复记录（commit 82c43b7）
+
+| 级别 | 问题 | 修复方案 |
+|------|------|---------|
+| P0 | `translateAssistant` 只取第一个 content block，thinking+text 消息丢失 text | 改为 `translateAssistantBlocks` async generator，每个 block 单独 yield |
+| P0 | `AgentInput` 缺少 `abortSignal`，客户端断连后 SDK query 无法取消 | 添加 `abortSignal?: AbortSignal`，ClaudeManagedAgent 桥接为 SDK `abortController`，Legacy 直接透传 |
+| P1 | `PermissionRequest` 事件缺少 `resolve` 回调，hitl-hook 调用时运行时崩溃 | 补充 no-op `resolve`，实际决策通过 `SyncHookJSONOutput` 返回值传递 |
+| P1 | `sdk-mcp-wrapper.ts` 用 zod v3，SDK 期望 zod v4，运行时 schema 验证可能异常 | 改用 `zod/v4` import；`z.record()` 补充 key type 参数适配 v4 API |
+| P2 | `server.ts` agentRouter 路径未读取 `forceLegacy` 字段，A/B 脚本无法强制 Legacy | `request.body` 中读取并透传 `forceLegacy` |
+
+### 设计决策
+
+| 决策 | 原因 |
+|------|------|
+| SDK query() 不设 `persistSession: false` | 默认行为即不写磁盘，Phase 5 再评估 session 持久化策略 |
+| thinking: adaptive 而非 extended | adaptive 让模型自行决定是否思考，不强制增加成本 |
+| in-process MCP Server 而非外部 MCP | 减少网络跳跃，SKILL.md 投资得到保护，Phase 4 再评估外部 MCP 需求 |
+| AgentEvent → ExecutionStep 中间层 | 解耦 SDK 消息格式与前端 SSE 协议，SDK 升级时只需改适配层 |
+| 灰度默认 5% | SDK 路径未经生产验证，5% 足够收集指标同时控制风险 |
+| hitl HiTL PermissionRequest 为 no-op | SDK hook 是同步返回值模型，异步 IM 审批流程推迟到 Phase 7 IM 一等公民阶段实现 |
