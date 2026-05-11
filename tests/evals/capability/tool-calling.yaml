@@ -1,0 +1,46 @@
+# 工具调用能力评测用例
+# 目的: 验证 Agent 能正确识别并调用工具
+# 注意: 这些测试需要 ANTHROPIC_API_KEY + 工具可用
+
+cases:
+  - id: shell-ls
+    prompt: "请列出当前目录下的文件，用 shell 工具。"
+    expect_tool_called: shell
+    expect_not_empty: true
+    tags: [tool-use, shell]
+
+  - id: shell-echo
+    prompt: "用 shell 运行 echo 'hello world'，输出结果是什么？"
+    expect_tool_called: shell
+    expect_contains_any: ["hello world", "hello", "world"]
+    tags: [tool-use, shell]
+
+  - id: multi-step-calculation
+    prompt: "用 shell 计算 2 的 10 次方，并告诉我结果。"
+    expect_tool_called: shell
+    expect_contains: ["1024"]
+    tags: [tool-use, shell, math]
+
+  - id: file-read
+    prompt: "读取 package.json 文件，告诉我项目名称（name 字段）。"
+    expect_tool_called_any: [shell, file_manager]
+    expect_not_empty: true
+    tags: [tool-use, file]
+
+  - id: sequential-tools
+    prompt: "先创建一个临时文件 /tmp/test_masterbot.txt 内容为 'hello'，然后读取它并告诉我内容。"
+    expect_tool_called: shell
+    expect_contains: ["hello"]
+    tags: [tool-use, sequential, shell]
+
+  - id: tool-selection
+    prompt: "我想知道当前时间是几点，请帮我用 shell 命令查询。"
+    expect_tool_called: shell
+    expect_not_empty: true
+    tags: [tool-use, shell]
+
+  - id: error-recovery
+    prompt: "尝试运行一个不存在的命令 nonexistent_command_xyz，如果失败了请告诉我错误信息。"
+    expect_tool_called: shell
+    expect_not_empty: true
+    tags: [tool-use, error-handling, shell]

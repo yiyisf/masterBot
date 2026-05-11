@@ -16,6 +16,8 @@ export interface AgentInput {
     forceLegacy?: boolean;
     /** 从指定 checkpoint 恢复 */
     resumeFrom?: string;
+    /** 客户端断连时的取消信号，传递给 SDK/Agent */
+    abortSignal?: AbortSignal;
 }
 
 export interface AgentEvent {

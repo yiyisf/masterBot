@@ -497,6 +497,7 @@ export default function SettingsPage() {
                 <Tabs defaultValue="config">
                     <TabsList className="mb-4">
                         <TabsTrigger value="config">系统配置</TabsTrigger>
+                        <TabsTrigger value="agent-routing">Agent 路由</TabsTrigger>
                         <TabsTrigger value="usage">
                             <BarChart2 className="w-3.5 h-3.5 mr-1.5" />
                             用量统计
@@ -1096,6 +1097,69 @@ export default function SettingsPage() {
                             </CardContent>
                         </Card>
 
+                    </TabsContent>
+
+                    {/* Phase 3: Agent 路由配置（仅管理员可见） */}
+                    <TabsContent value="agent-routing" className="space-y-8 mt-0">
+                        <Card>
+                            <CardHeader>
+                                <CardTitle className="text-base">Claude Managed Agent 灰度</CardTitle>
+                                <CardDescription>
+                                    控制 Anthropic provider 请求路由到 Claude Agent SDK 的流量比例。
+                                    0% = 全走 Legacy，100% = 全走 SDK。需重启服务生效。
+                                </CardDescription>
+                            </CardHeader>
+                            <CardContent className="space-y-4">
+                                <div className="rounded-md border p-4 bg-amber-50 dark:bg-amber-950 text-sm text-amber-800 dark:text-amber-200">
+                                    ⚠️ 仅管理员可见。修改此项需重启后端服务，请在非业务高峰期操作。
+                                </div>
+                                <div className="space-y-2">
+                                    <label className="text-sm font-medium">灰度百分比</label>
+                                    <p className="text-xs text-muted-foreground">
+                                        当前通过环境变量 <code className="bg-muted px-1 rounded">CLAUDE_MANAGED_AGENT_ROLLOUT_PERCENT</code> 控制（默认 5%）。
+                                        Phase 8 Admin Console 将支持实时调整。
+                                    </p>
+                                    <div className="grid grid-cols-3 gap-2 text-xs">
+                                        <div className="rounded border p-2 text-center">
+                                            <div className="font-mono font-bold text-lg">
+                                                {typeof process !== "undefined" ? "服务端" : "—"}
+                                            </div>
+                                            <div className="text-muted-foreground">当前值（重启后读取）</div>
+                                        </div>
+                                        <div className="rounded border p-2 text-center bg-muted">
+                                            <div className="font-mono font-bold text-lg">5%</div>
+                                            <div className="text-muted-foreground">默认灰度</div>
+                                        </div>
+                                        <div className="rounded border p-2 text-center">
+                                            <div className="font-mono font-bold text-lg">100%</div>
+                                            <div className="text-muted-foreground">全量 SDK</div>
+                                        </div>
+                                    </div>
+                                </div>
+                                <div className="space-y-1">
+                                    <label className="text-sm font-medium">强制使用路径</label>
+                                    <div className="flex gap-2">
+                                        <button
+                                            className="px-3 py-1 text-xs rounded border hover:bg-muted"
+                                            onClick={() => {
+                                                // 提示用户设置环境变量
+                                                alert("请在 .env 文件中设置：\nCLAUDE_MANAGED_AGENT_ROLLOUT_PERCENT=0\n然后重启服务。");
+                                            }}
+                                        >
+                                            强制 Legacy (0%)
+                                        </button>
+                                        <button
+                                            className="px-3 py-1 text-xs rounded border hover:bg-muted"
+                                            onClick={() => {
+                                                alert("请在 .env 文件中设置：\nCLAUDE_MANAGED_AGENT_ROLLOUT_PERCENT=100\n然后重启服务。");
+                                            }}
+                                        >
+                                            强制 SDK (100%)
+                                        </button>
+                                    </div>
+                                </div>
+                            </CardContent>
+                        </Card>
                     </TabsContent>
                 </Tabs>
             </div>

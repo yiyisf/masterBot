@@ -1,6 +1,11 @@
 import 'dotenv/config';
 import { initOtel } from './observability/otel.js';
 import { setupDefaultHooks } from './core/hooks/setup.js';
+import { globalHookRegistry } from './core/hooks/registry.js';
+import { LegacySelfHostedAgent } from './core/agent/legacy.js';
+import { ClaudeManagedAgent } from './core/agent/claude-managed.js';
+import { AgentRouter } from './core/agent/router.js';
+import { createDefaultFeatureFlagService } from './config/feature-flag.js';
 import { loadConfig } from './config.js';
 import { createLogger } from './utils/logger.js';
 import { llmFactory } from './llm/index.js';
@@ -184,6 +189,41 @@ async function main() {
         agentPool,
     });
 
+    // Phase 3: 构建 AgentRouter（ClaudeManagedAgent + LegacySelfHostedAgent 双引擎）
+    const featureFlags = createDefaultFeatureFlagService();
+    const agentRouter = new AgentRouter({
+        legacyFactory: () => new LegacySelfHostedAgent({
+            llm: () => {
+                const provider = config.models.default;
+                const llmConfig = config.models.providers[provider];
+                return llmFactory.getAdapter(provider, llmConfig);
+            },
+            skillRegistry,
+            logger,
+            maxIterations: config.agent?.maxIterations ?? 10,
+            maxContextTokens: config.agent?.maxContextTokens,
+            longTermMemory,
+            memoryRouter,
+            skillConfig: { sandbox: config.skills.shell?.sandbox },
+            skillGenerator,
+            orchestrator,
+            knowledgeGraph,
+            sessionStore,
+            memoryFactory: (sessionId) => sessionManager.getSession(sessionId),
+        }),
+        claudeFactory: () => new ClaudeManagedAgent({
+            hookRegistry: globalHookRegistry,
+            skillRegistry,
+            logger,
+            memoryFactory: (sessionId) => sessionManager.getSession(sessionId),
+            defaultModel: config.models.providers['anthropic']?.model ?? 'claude-sonnet-4-6',
+            maxTurns: 50,
+        }),
+        featureFlags,
+        logger,
+    });
+    logger.info(`[Phase 3] AgentRouter 已初始化（灰度: ${process.env['CLAUDE_MANAGED_AGENT_ROLLOUT_PERCENT'] ?? '5'}%）`);
+
     const scheduler = new SchedulerService(logger);
 
     // Initialize self-improvement engine
@@ -218,6 +258,7 @@ async function main() {
     // Start gateway server
     const server = new GatewayServer({
         agent,
+        agentRouter,
         sessionManager,
         logger,
         config,
