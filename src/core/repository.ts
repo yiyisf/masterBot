@@ -254,16 +254,14 @@ export class HistoryRepository {
      * 若 newSessionId 行不存在则先插入。
      */
     recordFork(parentSessionId: string, newSessionId: string, title?: string): void {
-        const existing = db.prepare('SELECT id FROM sessions WHERE id = ?').get(newSessionId);
-        if (!existing) {
-            db.prepare(
-                'INSERT INTO sessions (id, parent_session_id, title) VALUES (?, ?, ?)'
-            ).run(newSessionId, parentSessionId, title ?? `Fork of ${parentSessionId.slice(0, 8)}`);
-        } else {
-            db.prepare(
-                'UPDATE sessions SET parent_session_id = ? WHERE id = ?'
-            ).run(parentSessionId, newSessionId);
-        }
+        const defaultTitle = title ?? `Fork of ${parentSessionId.slice(0, 8)}`;
+        // INSERT OR IGNORE + UPDATE 为原子 upsert，避免并发 fork 时的 SELECT→INSERT 竞争
+        db.prepare(
+            'INSERT OR IGNORE INTO sessions (id, parent_session_id, title) VALUES (?, ?, ?)'
+        ).run(newSessionId, parentSessionId, defaultTitle);
+        db.prepare(
+            'UPDATE sessions SET parent_session_id = ? WHERE id = ? AND parent_session_id IS NULL'
+        ).run(parentSessionId, newSessionId);
     }
 
     /**

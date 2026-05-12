@@ -136,8 +136,12 @@ export class ClaudeManagedAgent implements IAgent {
         this.opts.logger.info?.(`[ClaudeManagedAgent] fork session=${sessionId}`);
         const result = await forkSession(sessionId);
         const newSessionId = result.sessionId;
-        // 通知上层记录父子关系（server.ts 注入 onFork 回调将写 sessions 表）
-        this.opts.onFork?.(sessionId, newSessionId);
+        // onFork 失败不能回滚 SDK 侧分叉，故只记录告警，仍返回新 sessionId
+        try {
+            this.opts.onFork?.(sessionId, newSessionId);
+        } catch (err) {
+            this.opts.logger.warn?.(`[ClaudeManagedAgent] onFork callback failed (DB record lost): ${(err as Error).message}`);
+        }
         this.opts.logger.info?.(`[ClaudeManagedAgent] fork ok: ${sessionId} → ${newSessionId}`);
         return newSessionId;
     }
@@ -170,12 +174,17 @@ export class ClaudeManagedAgent implements IAgent {
                     timestamp: new Date().toISOString(),
                     metadata: '{}',
                 }));
-        } catch {
-            // SDK 消息读取失败时从 DB 读取
+        } catch (sdkErr) {
+            // SDK 读取失败，fallback 到 DB
+            this.opts.logger.warn?.(`[ClaudeManagedAgent] getSessionMessages failed, falling back to DB: ${(sdkErr as Error).message}`);
             if (this.opts.historyRepository) {
                 const dbMsgs = this.opts.historyRepository.getMessages(sessionId, { limit: 500 });
                 messages = dbMsgs as Message[];
             }
+        }
+
+        if (messages.length === 0) {
+            this.opts.logger.warn?.(`[ClaudeManagedAgent] checkpoint for session=${sessionId} has 0 messages (SDK unavailable and no historyRepository?)`);
         }
 
         const cpId = this.opts.checkpointManager.save(sessionId, messages, label);

@@ -6,8 +6,6 @@
 
 import type { IAgent, AgentInput, AgentEvent, AgentCapabilities } from './types.js';
 import type { Logger } from '../../types.js';
-import type { CheckpointManager } from '../checkpoint-manager.js';
-import { historyRepository } from '../repository.js';
 
 // ─── Feature Flag Service ─────────────────────────────────────────────────────
 
@@ -43,14 +41,12 @@ export interface AgentRouterOptions {
     claudeFactory?: AgentFactory;
     featureFlags?: IFeatureFlagService;
     logger: Logger;
-    /** Phase 5: 当 agent 不支持 checkpoint 时的 fallback */
-    checkpointManager?: CheckpointManager;
 }
 
 // ─── AgentRouter ──────────────────────────────────────────────────────────────
 
 export class AgentRouter implements IAgent {
-    private readonly opts: Required<Omit<AgentRouterOptions, 'claudeFactory' | 'checkpointManager'>> & { claudeFactory?: AgentFactory; checkpointManager?: CheckpointManager };
+    private readonly opts: Required<Omit<AgentRouterOptions, 'claudeFactory'>> & { claudeFactory?: AgentFactory };
     private readonly legacyAgent: IAgent;
     private claudeAgent?: IAgent;
 
@@ -60,7 +56,6 @@ export class AgentRouter implements IAgent {
             claudeFactory: options.claudeFactory,
             featureFlags: options.featureFlags ?? new EnvFeatureFlagService(),
             logger: options.logger,
-            checkpointManager: options.checkpointManager,
         };
         this.legacyAgent = options.legacyFactory();
         if (options.claudeFactory) {
