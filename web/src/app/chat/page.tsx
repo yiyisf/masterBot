@@ -21,6 +21,7 @@ import "@assistant-ui/react-ui/styles/markdown.css";
 import { CustomAssistantMessage, CustomUserMessage, CustomUserEditComposer } from "@/components/chat/messages";
 import { ThreadHydrator, PromptAutoSender } from "@/components/chat/thread-utils";
 import { CheckpointPanel } from "@/components/chat/checkpoint-panel";
+import { ForkButton } from "@/components/chat/fork-button";
 
 function ChatContent() {
     const searchParams = useSearchParams();
@@ -55,9 +56,10 @@ function ChatSession({ sessionId }: { sessionId?: string }) {
                     historyLoaded={!sessionId || historyLoaded}
                 />
 
-                {/* 检查点工具栏（仅有 sessionId 时显示） */}
+                {/* 会话工具栏（仅有 sessionId 时显示） */}
                 {sessionId && (
-                    <div className="flex justify-end px-3 py-1 border-b shrink-0">
+                    <div className="flex justify-end gap-1 px-3 py-1 border-b shrink-0">
+                        <ForkButton sessionId={sessionId} />
                         <CheckpointPanel sessionId={sessionId} />
                     </div>
                 )}

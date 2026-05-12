@@ -358,6 +358,14 @@ export function initDatabase(): DatabaseSync {
         }
     }
 
+    // Auto-migration: Phase 5 — sessions 表新增 parent_session_id（fork 溯源）
+    {
+        const sessionColumns = db.prepare('PRAGMA table_info(sessions)').all() as Array<{ name: string }>;
+        if (!sessionColumns.some(c => c.name === 'parent_session_id')) {
+            db.prepare('ALTER TABLE sessions ADD COLUMN parent_session_id TEXT REFERENCES sessions(id)').run();
+        }
+    }
+
     // Auto-migration: messages 表新增 metadata 列（存储 workflow_generated 等步骤数据）
     {
         const msgColumns = db.prepare('PRAGMA table_info(messages)').all() as Array<{ name: string }>;

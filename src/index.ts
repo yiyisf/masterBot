@@ -28,6 +28,7 @@ import { initMemoryRouter } from './memory/memory-router.js';
 import { SoulLoader } from './core/soul-loader.js';
 import { AgentPool, SessionEventStore, CredentialVault } from './core/harness/agent-pool.js';
 import { CheckpointManager } from './core/checkpoint-manager.js';
+import { historyRepository } from './core/repository.js';
 
 async function main() {
     console.log(`
@@ -189,6 +190,10 @@ async function main() {
         agentPool,
     });
 
+    // Phase 5: 检查点管理器（先于 agentRouter 初始化，供 ClaudeManagedAgent 使用）
+    const checkpointManagerForAgent = new CheckpointManager(db, logger);
+    checkpointManagerForAgent.initialize();
+
     // Phase 3: 构建 AgentRouter（ClaudeManagedAgent + LegacySelfHostedAgent 双引擎）
     const featureFlags = createDefaultFeatureFlagService();
     const agentRouter = new AgentRouter({
@@ -218,6 +223,10 @@ async function main() {
             memoryFactory: (sessionId) => sessionManager.getSession(sessionId),
             defaultModel: config.models.providers['anthropic']?.model ?? 'claude-sonnet-4-6',
             maxTurns: 50,
+            // Phase 5: fork/checkpoint 支持
+            checkpointManager: checkpointManagerForAgent,
+            historyRepository,
+            onFork: (parentId, newId) => historyRepository.recordFork(parentId, newId),
         }),
         featureFlags,
         logger,
@@ -251,9 +260,8 @@ async function main() {
         }
     }
 
-    // T2-4: 初始化检查点管理器
-    const checkpointManager = new CheckpointManager(db, logger);
-    checkpointManager.initialize();
+    // Phase 5: checkpointManager 已在 agentRouter 初始化前创建，此处复用同一实例
+    const checkpointManager = checkpointManagerForAgent;
 
     // Start gateway server
     const server = new GatewayServer({

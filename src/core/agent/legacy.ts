@@ -81,7 +81,7 @@ export class LegacySelfHostedAgent implements IAgent {
         throw new Error('LegacySelfHostedAgent does not support fork');
     }
 
-    async checkpoint(_sessionId: string): Promise<string> {
+    async checkpoint(_sessionId: string, _label?: string): Promise<string> {
         throw new Error('LegacySelfHostedAgent does not support checkpoint');
     }
 

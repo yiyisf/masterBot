@@ -37,6 +37,7 @@ export interface IAgent {
     execute(input: AgentInput): AsyncGenerator<AgentEvent>;
     resume(sessionId: string): AsyncGenerator<AgentEvent>;
     fork(sessionId: string): Promise<string>;
-    checkpoint(sessionId: string): Promise<string>;
+    /** label 为可选标注，用于区分不同检查点 */
+    checkpoint(sessionId: string, label?: string): Promise<string>;
     capabilities(): AgentCapabilities;
 }

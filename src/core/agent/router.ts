@@ -6,6 +6,8 @@
 
 import type { IAgent, AgentInput, AgentEvent, AgentCapabilities } from './types.js';
 import type { Logger } from '../../types.js';
+import type { CheckpointManager } from '../checkpoint-manager.js';
+import { historyRepository } from '../repository.js';
 
 // ─── Feature Flag Service ─────────────────────────────────────────────────────
 
@@ -41,12 +43,14 @@ export interface AgentRouterOptions {
     claudeFactory?: AgentFactory;
     featureFlags?: IFeatureFlagService;
     logger: Logger;
+    /** Phase 5: 当 agent 不支持 checkpoint 时的 fallback */
+    checkpointManager?: CheckpointManager;
 }
 
 // ─── AgentRouter ──────────────────────────────────────────────────────────────
 
 export class AgentRouter implements IAgent {
-    private readonly opts: Required<Omit<AgentRouterOptions, 'claudeFactory'>> & { claudeFactory?: AgentFactory };
+    private readonly opts: Required<Omit<AgentRouterOptions, 'claudeFactory' | 'checkpointManager'>> & { claudeFactory?: AgentFactory; checkpointManager?: CheckpointManager };
     private readonly legacyAgent: IAgent;
     private claudeAgent?: IAgent;
 
@@ -56,6 +60,7 @@ export class AgentRouter implements IAgent {
             claudeFactory: options.claudeFactory,
             featureFlags: options.featureFlags ?? new EnvFeatureFlagService(),
             logger: options.logger,
+            checkpointManager: options.checkpointManager,
         };
         this.legacyAgent = options.legacyFactory();
         if (options.claudeFactory) {
@@ -94,14 +99,27 @@ export class AgentRouter implements IAgent {
     }
 
     async fork(sessionId: string): Promise<string> {
-        return this.legacyAgent.fork(sessionId);
+        // Phase 5: 优先走 ClaudeManagedAgent（SDK forkSession），fallback legacy
+        const agent = this.claudeAgent ?? this.legacyAgent;
+        return agent.fork(sessionId);
     }
 
-    async checkpoint(sessionId: string): Promise<string> {
-        return this.legacyAgent.checkpoint(sessionId);
+    async checkpoint(sessionId: string, label?: string): Promise<string> {
+        // Phase 5: 优先走 ClaudeManagedAgent，fallback legacy
+        const agent = this.claudeAgent ?? this.legacyAgent;
+        return agent.checkpoint(sessionId, label);
     }
 
     capabilities(): AgentCapabilities {
-        return this.legacyAgent.capabilities();
+        // Phase 5: 合并两个 agent 的能力声明（取最大值）
+        const legacy = this.legacyAgent.capabilities();
+        const managed = this.claudeAgent?.capabilities();
+        if (!managed) return legacy;
+        return {
+            supportsStreaming: legacy.supportsStreaming || managed.supportsStreaming,
+            supportsFork: legacy.supportsFork || managed.supportsFork,
+            supportsCheckpoint: legacy.supportsCheckpoint || managed.supportsCheckpoint,
+            maxContextTokens: Math.max(legacy.maxContextTokens, managed.maxContextTokens),
+        };
     }
 }

@@ -1,14 +1,18 @@
 /**
- * Phase 3/4: ClaudeManagedAgent
+ * Phase 3/4/5: ClaudeManagedAgent
  * 包装 Claude Agent SDK 的 query()，实现 IAgent 接口。
  * Phase 4 新增：
  *   - 主 Agent 只注入 core tier 技能（减少 input tokens）
  *   - Extended/experimental 技能通过独立 MCP 服务器暴露给子 Agent
  *   - 主 Agent 用 disallowedTools 过滤 extended 工具，子 Agent 通过 mcpServers 引用获取
  *   - 通过 options.agents 注入 4 个部门专家 Subagent
+ * Phase 5 新增：
+ *   - fork()：调用 SDK forkSession()，在 sessions 表记录父子关系
+ *   - checkpoint()：将当前消息历史快照存入 CheckpointManager
+ *   - capabilities() 更新：supportsFork / supportsCheckpoint = true
  */
 
-import { query } from '@anthropic-ai/claude-agent-sdk';
+import { query, forkSession, getSessionMessages } from '@anthropic-ai/claude-agent-sdk';
 import type { IAgent, AgentInput, AgentEvent, AgentCapabilities } from './types.js';
 import { translateSdkStream } from './event-translator.js';
 import { buildSdkHooks } from './sdk-hook-adapter.js';
@@ -16,7 +20,9 @@ import { createMasterBotMcpServer } from '../../skills/sdk-mcp-wrapper.js';
 import { buildSubagentDefs } from './subagents.js';
 import type { HookRegistry } from '../hooks/registry.js';
 import type { ISkillRegistry } from '../../skills/registry.js';
-import type { Logger, MemoryAccess } from '../../types.js';
+import type { Logger, MemoryAccess, Message } from '../../types.js';
+import type { CheckpointManager } from '../checkpoint-manager.js';
+import type { HistoryRepository } from '../repository.js';
 
 // 子 Agent 定义只需计算一次（静态结构，不含运行时状态）
 const SUBAGENT_DEFS = buildSubagentDefs();
@@ -31,6 +37,12 @@ export interface ClaudeManagedAgentOptions {
     defaultModel?: string;
     /** 最大对话轮次 */
     maxTurns?: number;
+    /** Phase 5: checkpoint 存储，可选（缺省时 checkpoint() 退化为 no-op） */
+    checkpointManager?: CheckpointManager;
+    /** Phase 5: 会话历史仓库，用于 fork/checkpoint 读取消息 */
+    historyRepository?: HistoryRepository;
+    /** Phase 5: fork 后在 sessions 表记录父子关系的回调 */
+    onFork?: (parentSessionId: string, newSessionId: string) => void;
 }
 
 export class ClaudeManagedAgent implements IAgent {
@@ -116,19 +128,66 @@ export class ClaudeManagedAgent implements IAgent {
         throw new Error(`ClaudeManagedAgent.resume: use execute({ resumeFrom: "${sessionId}" }) instead`);
     }
 
-    async fork(_sessionId: string): Promise<string> {
-        throw new Error('ClaudeManagedAgent.fork: Phase 5 will implement this via SDK forkSession');
+    /**
+     * Phase 5: 分叉会话——基于 SDK forkSession() 创建对话分支。
+     * 返回新会话的 UUID，可直接用于后续 execute({ sessionId: newId })。
+     */
+    async fork(sessionId: string): Promise<string> {
+        this.opts.logger.info?.(`[ClaudeManagedAgent] fork session=${sessionId}`);
+        const result = await forkSession(sessionId);
+        const newSessionId = result.sessionId;
+        // 通知上层记录父子关系（server.ts 注入 onFork 回调将写 sessions 表）
+        this.opts.onFork?.(sessionId, newSessionId);
+        this.opts.logger.info?.(`[ClaudeManagedAgent] fork ok: ${sessionId} → ${newSessionId}`);
+        return newSessionId;
     }
 
-    async checkpoint(_sessionId: string): Promise<string> {
-        throw new Error('ClaudeManagedAgent.checkpoint: Phase 5 will implement via SDK sessionId persistence');
+    /**
+     * Phase 5: 创建检查点——将当前消息历史快照存入 CheckpointManager。
+     * 优先从 SDK getSessionMessages() 读取；fallback 读 DB 消息。
+     * 返回检查点 ID。
+     */
+    async checkpoint(sessionId: string, label?: string): Promise<string> {
+        if (!this.opts.checkpointManager) {
+            throw new Error('[ClaudeManagedAgent] checkpoint requires checkpointManager to be provided');
+        }
+        this.opts.logger.info?.(`[ClaudeManagedAgent] checkpoint session=${sessionId}`);
+
+        let messages: Message[] = [];
+
+        // 尝试从 SDK JSONL 读取最新消息（更准确）
+        try {
+            const sdkMsgs = await getSessionMessages(sessionId);
+            messages = sdkMsgs
+                .filter(m => m.role === 'user' || m.role === 'assistant')
+                .map(m => ({
+                    id: m.uuid ?? '',
+                    sessionId,
+                    role: m.role as 'user' | 'assistant',
+                    content: typeof m.message === 'string'
+                        ? m.message
+                        : (m.message as { content?: unknown })?.content?.toString() ?? '',
+                    timestamp: new Date().toISOString(),
+                    metadata: '{}',
+                }));
+        } catch {
+            // SDK 消息读取失败时从 DB 读取
+            if (this.opts.historyRepository) {
+                const dbMsgs = this.opts.historyRepository.getMessages(sessionId, { limit: 500 });
+                messages = dbMsgs as Message[];
+            }
+        }
+
+        const cpId = this.opts.checkpointManager.save(sessionId, messages, label);
+        this.opts.logger.info?.(`[ClaudeManagedAgent] checkpoint ok: ${cpId} (${messages.length} messages)`);
+        return cpId;
     }
 
     capabilities(): AgentCapabilities {
         return {
             supportsStreaming: true,
-            supportsFork: false,       // Phase 5
-            supportsCheckpoint: false, // Phase 5
+            supportsFork: true,        // Phase 5 ✅
+            supportsCheckpoint: true,  // Phase 5 ✅
             maxContextTokens: 200_000,
         };
     }
