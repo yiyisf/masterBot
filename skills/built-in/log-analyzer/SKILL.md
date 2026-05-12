@@ -3,6 +3,8 @@ name: log-analyzer
 version: 1.0.0
 description: 内部日志平台分析技能。从内部日志系统（ELK/自研平台）拉取日志，使用 LLM 进行异常聚类和根因分析。适合 AIOps 告警分诊场景。
 author: CMaster Bot
+tier: extended
+category: data
 ---
 
 # log-analyzer

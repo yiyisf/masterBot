@@ -3,6 +3,8 @@ name: shell
 version: 1.0.0
 description: Shell 命令执行技能，支持在系统终端运行命令
 author: CMaster Team
+tier: core
+category: execution
 ---
 
 # Shell Skill

@@ -3,6 +3,8 @@ name: im-bot
 version: 1.0.0
 description: IM 机器人主动发送消息技能，支持向飞书等 IM 平台主动推送文本消息和通知卡片
 author: CMaster
+tier: extended
+category: communication
 ---
 
 # im-bot

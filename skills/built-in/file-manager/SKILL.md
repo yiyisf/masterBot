@@ -3,6 +3,8 @@ name: file-manager
 version: 1.0.0
 description: 文件管理技能，支持文件读写、目录操作和搜索
 author: CMaster Team
+tier: core
+category: file
 dependencies:
   glob: "^11.0.0"
 ---

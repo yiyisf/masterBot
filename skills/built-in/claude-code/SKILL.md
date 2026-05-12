@@ -3,6 +3,8 @@ name: claude-code
 version: 1.0.0
 description: 调用本地 Claude Code CLI 执行编码任务（代码分析、审查、生成等）
 author: CMaster Team
+tier: experimental
+category: ai
 ---
 
 # Claude Code Skill
