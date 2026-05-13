@@ -41,6 +41,8 @@
     "test": "vitest",
     "test:run": "vitest run",
     "lint": "eslint src --ext .ts",
+    "migrate:phase6": "tsx scripts/migrate-memory-to-phase6.ts",
+    "migrate:phase6:dry": "tsx scripts/migrate-memory-to-phase6.ts --dry-run",
     "setup": "bash scripts/install.sh || powershell -ExecutionPolicy Bypass -File scripts/install.ps1",
     "prepublishOnly": "npm run build",
     "version": "npm run build",
