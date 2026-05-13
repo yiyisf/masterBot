@@ -21,6 +21,7 @@ import {
     PLAN_TOOL_DEF,
     MEMORY_REMEMBER_TOOL,
     MEMORY_RECALL_TOOL,
+    MEMORY_CONSOLIDATE_TOOL,
     DAG_CREATE_TASK_TOOL,
     DAG_GET_STATUS_TOOL,
     DAG_EXECUTE_TOOL,
@@ -238,6 +239,10 @@ export class Agent {
         const builtinTools = [PLAN_TOOL_DEF, DAG_CREATE_TASK_TOOL, DAG_GET_STATUS_TOOL, DAG_EXECUTE_TOOL, SKILL_GENERATE_TOOL, DELEGATE_AGENT_TOOL, KNOWLEDGE_SEARCH_TOOL];
         if (this.longTermMemory) {
             builtinTools.push(MEMORY_REMEMBER_TOOL, MEMORY_RECALL_TOOL);
+        }
+        // memory_consolidate: 当 memoryRouter（含 L2 Episodic）可用时暴露
+        if (this.memoryRouter) {
+            builtinTools.push(MEMORY_CONSOLIDATE_TOOL);
         }
         // Gap 5: session_recall 仅当 sessionStore 已注入时暴露
         if (this.sessionStore) {
