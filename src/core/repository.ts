@@ -249,6 +249,31 @@ export class HistoryRepository {
     }
 
     /**
+     * Phase 5: 记录 fork 关系
+     * 在 sessions 表中为新会话写入 parent_session_id。
+     * 若 newSessionId 行不存在则先插入。
+     */
+    recordFork(parentSessionId: string, newSessionId: string, title?: string): void {
+        const defaultTitle = title ?? `Fork of ${parentSessionId.slice(0, 8)}`;
+        // INSERT OR IGNORE + UPDATE 为原子 upsert，避免并发 fork 时的 SELECT→INSERT 竞争
+        db.prepare(
+            'INSERT OR IGNORE INTO sessions (id, parent_session_id, title) VALUES (?, ?, ?)'
+        ).run(newSessionId, parentSessionId, defaultTitle);
+        db.prepare(
+            'UPDATE sessions SET parent_session_id = ? WHERE id = ? AND parent_session_id IS NULL'
+        ).run(parentSessionId, newSessionId);
+    }
+
+    /**
+     * Phase 5: 获取会话的所有 fork 子会话。
+     */
+    getForks(sessionId: string): Array<{ id: string; title: string; createdAt: string }> {
+        return db.prepare(
+            'SELECT id, title, created_at as createdAt FROM sessions WHERE parent_session_id = ? ORDER BY created_at DESC'
+        ).all(sessionId) as Array<{ id: string; title: string; createdAt: string }>;
+    }
+
+    /**
      * 保存消息反馈（点赞/点踩）
      */
     saveFeedback(messageId: string, sessionId: string, rating: 'positive' | 'negative'): string {

@@ -622,6 +622,7 @@ export class GatewayServer {
                     createdAt: s.created_at,
                     is_pinned: Boolean(s.is_pinned),
                     preview: preview || undefined,
+                    parentSessionId: s.parent_session_id ?? undefined,
                 };
             });
         });
@@ -685,6 +686,36 @@ export class GatewayServer {
                 return { success: true };
             } catch (error: any) {
                 this.logger.error(`Update title error: ${error.message}`);
+                reply.status(500);
+                return { error: error.message };
+            }
+        });
+
+        // Phase 5: Fork session — 创建对话分支
+        this.app.post<{ Params: { id: string }; Body: { title?: string } }>('/api/sessions/:id/fork', async (request, reply) => {
+            const { id } = request.params;
+            const { title } = request.body ?? {};
+            try {
+                if (!this.agentRouter) { reply.status(503); return { error: 'AgentRouter not available' }; }
+                const newSessionId = await this.agentRouter.fork(id);
+                // 若提供了自定义标题则更新
+                if (title) {
+                    historyRepository.updateSessionTitle(newSessionId, title);
+                }
+                const forks = historyRepository.getForks(id);
+                return { sessionId: newSessionId, parentSessionId: id, forks };
+            } catch (error: any) {
+                this.logger.error(`Fork session error: ${error.message}`);
+                reply.status(500);
+                return { error: error.message };
+            }
+        });
+
+        // Phase 5: 获取会话的所有 fork 子会话
+        this.app.get<{ Params: { id: string } }>('/api/sessions/:id/forks', async (request, reply) => {
+            try {
+                return { forks: historyRepository.getForks(request.params.id) };
+            } catch (error: any) {
                 reply.status(500);
                 return { error: error.message };
             }
@@ -1538,17 +1569,21 @@ export class GatewayServer {
             const { id: sessionId } = request.params;
             const { label } = request.body ?? {};
             try {
-                // 从 repository 获取当前消息历史
-                const { historyRepository } = await import('../core/repository.js');
-                const msgs = historyRepository.getMessages(sessionId);
+                // Phase 5: 优先使用 agentRouter.checkpoint()（ClaudeManagedAgent 会尝试从 SDK JSONL 读取）
+                if (this.agentRouter) {
+                    const cpId = await this.agentRouter.checkpoint(sessionId, label);
+                    const list = this.checkpointManager.list(sessionId);
+                    const cp = list.find(c => c.id === cpId);
+                    return { id: cpId, messageCount: cp?.messageCount ?? 0 };
+                }
 
-                // 防止超大快照（限 10MB）
+                // Fallback: 从 repository 获取当前消息历史（legacy agent 路径）
+                const msgs = historyRepository.getMessages(sessionId);
                 const json = JSON.stringify(msgs);
                 if (json.length > 10 * 1024 * 1024) {
                     reply.status(413);
                     return { error: `消息历史过大（${(json.length / 1024 / 1024).toFixed(1)} MB），超出检查点 10 MB 限制` };
                 }
-
                 const cpId = this.checkpointManager.save(sessionId, msgs as any[], label);
                 return { id: cpId, messageCount: msgs.length };
             } catch (err: any) {

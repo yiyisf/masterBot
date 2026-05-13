@@ -94,14 +94,27 @@ export class AgentRouter implements IAgent {
     }
 
     async fork(sessionId: string): Promise<string> {
-        return this.legacyAgent.fork(sessionId);
+        // Phase 5: 优先走 ClaudeManagedAgent（SDK forkSession），fallback legacy
+        const agent = this.claudeAgent ?? this.legacyAgent;
+        return agent.fork(sessionId);
     }
 
-    async checkpoint(sessionId: string): Promise<string> {
-        return this.legacyAgent.checkpoint(sessionId);
+    async checkpoint(sessionId: string, label?: string): Promise<string> {
+        // Phase 5: 优先走 ClaudeManagedAgent，fallback legacy
+        const agent = this.claudeAgent ?? this.legacyAgent;
+        return agent.checkpoint(sessionId, label);
     }
 
     capabilities(): AgentCapabilities {
-        return this.legacyAgent.capabilities();
+        // Phase 5: 合并两个 agent 的能力声明（取最大值）
+        const legacy = this.legacyAgent.capabilities();
+        const managed = this.claudeAgent?.capabilities();
+        if (!managed) return legacy;
+        return {
+            supportsStreaming: legacy.supportsStreaming || managed.supportsStreaming,
+            supportsFork: legacy.supportsFork || managed.supportsFork,
+            supportsCheckpoint: legacy.supportsCheckpoint || managed.supportsCheckpoint,
+            maxContextTokens: Math.max(legacy.maxContextTokens, managed.maxContextTokens),
+        };
     }
 }
