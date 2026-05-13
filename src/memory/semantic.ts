@@ -45,10 +45,10 @@ export class SemanticMemoryStore {
             this.logger.debug(`[semantic] confidence ${fact.confidence} < 0.85, skip`);
             return;
         }
-        // Skip if already approved
+        // Skip if already approved OR pending (prevent duplicate pending for same subject+predicate)
         const existing = this.db.prepare(`
             SELECT id FROM semantic_facts
-            WHERE tenant_id = ? AND subject = ? AND predicate = ? AND status = 'approved'
+            WHERE tenant_id = ? AND subject = ? AND predicate = ? AND status IN ('approved', 'pending')
         `).get(fact.tenantId, fact.subject, fact.predicate);
         if (existing) return;
 
@@ -86,15 +86,20 @@ export class SemanticMemoryStore {
         return rows.map(r => this.rowToFact(r));
     }
 
-    /** 审批事实（approve / reject）*/
-    async review(factId: string, decision: 'approve' | 'reject', reviewer: string): Promise<void> {
+    /** 审批事实（approve / reject）— 强制 tenant_id 隔离 */
+    async review(factId: string, decision: 'approve' | 'reject', reviewer: string, tenantId: string): Promise<boolean> {
         const status = decision === 'approve' ? 'approved' : 'rejected';
-        this.db.prepare(`
+        const result = this.db.prepare(`
             UPDATE semantic_facts
             SET status = ?, reviewed_by = ?, reviewed_at = ?
-            WHERE id = ?
-        `).run(status, reviewer, Date.now(), factId);
-        this.logger.info(`[semantic] Fact ${factId} ${status} by ${reviewer}`);
+            WHERE id = ? AND tenant_id = ? AND status = 'pending'
+        `).run(status, reviewer, Date.now(), factId, tenantId);
+        if (Number(result.changes) === 0) {
+            this.logger.warn(`[semantic] review: fact ${factId} not found or not pending for tenant ${tenantId}`);
+            return false;
+        }
+        this.logger.info(`[semantic] Fact ${factId} ${status} by ${reviewer} (tenant: ${tenantId})`);
+        return true;
     }
 
     /** 所有 tenant facts（管理员视角） */

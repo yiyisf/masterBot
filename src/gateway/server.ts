@@ -1567,29 +1567,33 @@ export class GatewayServer {
         // GET  /api/semantic-facts/pending?tenantId=...   — 待审批事实列表
         this.app.get<{ Querystring: { tenantId?: string } }>('/api/semantic-facts/pending', async (request, reply) => {
             if (!this.semanticStore) { reply.status(503); return { error: 'Semantic store not available' }; }
-            const tenantId = request.query.tenantId ?? 'default';
+            const tenantId = request.query.tenantId;
+            if (!tenantId) { reply.status(400); return { error: 'tenantId query parameter is required' }; }
             return { facts: await this.semanticStore.pendingFacts(tenantId) };
         });
 
         // POST /api/semantic-facts/:id/review             — 审批决策
         this.app.post<{
             Params: { id: string };
-            Body: { decision: 'approve' | 'reject'; reviewer?: string };
+            Body: { decision: 'approve' | 'reject'; reviewer?: string; tenantId: string };
         }>('/api/semantic-facts/:id/review', async (request, reply) => {
             if (!this.semanticStore) { reply.status(503); return { error: 'Semantic store not available' }; }
             const { id } = request.params;
-            const { decision, reviewer = 'anonymous' } = request.body;
+            const { decision, reviewer = 'anonymous', tenantId } = request.body;
+            if (!tenantId) { reply.status(400); return { error: 'tenantId is required' }; }
             if (decision !== 'approve' && decision !== 'reject') {
                 reply.status(400); return { error: 'decision must be approve or reject' };
             }
-            await this.semanticStore.review(id, decision, reviewer);
+            const ok = await this.semanticStore.review(id, decision, reviewer, tenantId);
+            if (!ok) { reply.status(404); return { error: 'Fact not found or not pending for this tenant' }; }
             return { ok: true, id, decision };
         });
 
         // GET  /api/semantic-facts?tenantId=...           — 所有事实（管理员视角）
         this.app.get<{ Querystring: { tenantId?: string } }>('/api/semantic-facts', async (request, reply) => {
             if (!this.semanticStore) { reply.status(503); return { error: 'Semantic store not available' }; }
-            const tenantId = request.query.tenantId ?? 'default';
+            const tenantId = request.query.tenantId;
+            if (!tenantId) { reply.status(400); return { error: 'tenantId query parameter is required' }; }
             return { facts: this.semanticStore.allByTenant(tenantId) };
         });
 

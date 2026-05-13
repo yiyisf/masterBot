@@ -21,8 +21,8 @@ export type { UnifiedMemoryResult };
 
 export class MemoryRouter implements IMemoryRouter {
     constructor(
-        /** Legacy long-term (kept for backward compat) */
-        private longTerm: LongTermMemory,
+        /** Legacy long-term (kept for backward compat, optional when Phase 6 stores are used) */
+        private longTerm: LongTermMemory | undefined,
         /** Legacy knowledge graph */
         private knowledgeGraph: KnowledgeGraph,
         private shortTermManager: SessionMemoryManager,
@@ -56,8 +56,8 @@ export class MemoryRouter implements IMemoryRouter {
         return this.semantic?.pendingFacts(tenantId) ?? [];
     }
 
-    async reviewFact(factId: string, decision: 'approve' | 'reject', reviewer: string): Promise<void> {
-        await this.semantic?.review(factId, decision, reviewer);
+    async reviewFact(factId: string, decision: 'approve' | 'reject', reviewer: string, tenantId: string): Promise<boolean> {
+        return this.semantic?.review(factId, decision, reviewer, tenantId) ?? false;
     }
 
     // ── L4 Procedural ────────────────────────────────────────────────────────
@@ -85,7 +85,9 @@ export class MemoryRouter implements IMemoryRouter {
             this.episodic
                 ? withTimeout(this.episodic.search(query, 4, opts.tenantId))
                 : Promise.resolve(null),
-            withTimeout(this.longTerm.search(query, limit)),
+            this.longTerm
+                ? withTimeout(this.longTerm.search(query, limit))
+                : Promise.resolve(null),
             withTimeout(this.knowledgeGraph.search(query, { depth: 1, limit: 5 })),
         ]);
 
@@ -127,7 +129,7 @@ export class MemoryRouter implements IMemoryRouter {
 export let memoryRouter: MemoryRouter | undefined;
 
 export function initMemoryRouter(
-    longTerm: LongTermMemory,
+    longTerm: LongTermMemory | undefined,
     knowledgeGraph: KnowledgeGraph,
     shortTermManager: SessionMemoryManager,
     episodic?: EpisodicMemoryStore,

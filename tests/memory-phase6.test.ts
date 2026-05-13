@@ -150,7 +150,8 @@ describe('SemanticMemoryStore', () => {
             confidence: 0.95,
         });
         const [fact] = await store.pendingFacts('tenant-A');
-        await store.review(fact.id, 'approve', 'admin');
+        const ok = await store.review(fact.id, 'approve', 'admin', 'tenant-A');
+        expect(ok).toBe(true);
 
         const results = await store.search('张三', 'tenant-A');
         expect(results.length).toBeGreaterThan(0);
@@ -166,10 +167,30 @@ describe('SemanticMemoryStore', () => {
             confidence: 0.9,
         });
         const [fact] = await store.pendingFacts('tenant-A');
-        await store.review(fact.id, 'reject', 'admin');
+        const ok = await store.review(fact.id, 'reject', 'admin', 'tenant-A');
+        expect(ok).toBe(true);
 
         const results = await store.search('李四', 'tenant-A');
         expect(results).toHaveLength(0);
+    });
+
+    it('review 跨租户攻击：tenant-B 无法审批 tenant-A 的事实', async () => {
+        await store.upsert({
+            tenantId: 'tenant-A',
+            subject: 'Alice',
+            predicate: '角色',
+            object: '管理员',
+            confidence: 0.95,
+        });
+        const [fact] = await store.pendingFacts('tenant-A');
+        // tenant-B 尝试审批 tenant-A 的事实
+        const ok = await store.review(fact.id, 'approve', 'attacker', 'tenant-B');
+        expect(ok).toBe(false);
+
+        // 事实仍然是 pending 状态
+        const pending = await store.pendingFacts('tenant-A');
+        expect(pending).toHaveLength(1);
+        expect(pending[0].status).toBe('pending');
     });
 
     it('租户隔离：tenant-B 看不到 tenant-A 的 pending facts', async () => {
@@ -187,7 +208,7 @@ describe('SemanticMemoryStore', () => {
     it('已 approved 的 subject+predicate 不重复创建 pending', async () => {
         await store.upsert({ tenantId: 'T', subject: 'A', predicate: 'B', object: 'C', confidence: 0.9 });
         const [f] = await store.pendingFacts('T');
-        await store.review(f.id, 'approve', 'admin');
+        await store.review(f.id, 'approve', 'admin', 'T');
 
         // 再次 upsert 同一 subject+predicate
         await store.upsert({ tenantId: 'T', subject: 'A', predicate: 'B', object: 'D', confidence: 0.95 });
@@ -215,7 +236,7 @@ describe('MemoryRouter (Phase 6)', () => {
         expect(typeof router.searchSemantic).toBe('function');
         expect(typeof router.upsertSemanticFact).toBe('function');
         expect(typeof router.pendingFacts).toBe('function');
-        expect(typeof router.reviewFact).toBe('function');
+        expect(typeof router.reviewFact).toBe('function'); // (factId, decision, reviewer, tenantId) => Promise<boolean>
         expect(typeof router.loadAgentRules).toBe('function');
         expect(typeof router.query).toBe('function');
     });

@@ -73,7 +73,7 @@ export interface IMemoryRouter {
     searchSemantic(entity: string, tenantId: string): Promise<SemanticFact[]>;
     upsertSemanticFact(fact: Omit<SemanticFact, 'id' | 'createdAt' | 'status'>): Promise<void>;
     pendingFacts(tenantId: string): Promise<SemanticFact[]>;
-    reviewFact(factId: string, decision: 'approve' | 'reject', reviewer: string): Promise<void>;
+    reviewFact(factId: string, decision: 'approve' | 'reject', reviewer: string, tenantId: string): Promise<boolean>;
 
     // L4 Procedural
     loadAgentRules(scope: string, tenantId: string): Promise<string>;

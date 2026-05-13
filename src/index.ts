@@ -118,10 +118,8 @@ async function main() {
     await proceduralMemory.initialize();
     logger.info('[memory] Phase 6 four-layer memory stores initialized');
 
-    // Phase 21: 初始化统一内存路由器（注入 Phase 6 四层存储）
-    if (longTermMemory) {
-        initMemoryRouter(longTermMemory, knowledgeGraph, sessionManager, episodicStore, semanticStore, proceduralMemory);
-    }
+    // Phase 21: 初始化统一内存路由器（Phase 6 四层存储独立于 longTerm 是否启用）
+    initMemoryRouter(longTermMemory, knowledgeGraph, sessionManager, episodicStore, semanticStore, proceduralMemory);
     const { memoryRouter } = await import('./memory/memory-router.js');
 
     // Phase 24: SessionEventStore — Session 持久层（Meta-Harness Brain/Hands/Session 解耦）
@@ -309,6 +307,16 @@ async function main() {
     });
     scheduler.start();
     logger.info('Scheduler started');
+
+    // Phase 6: 每天凌晨 2 点清理过期 episodic 记忆（90 天 TTL）
+    setInterval(() => {
+        try {
+            const deleted = episodicStore.purgeExpired();
+            if (deleted > 0) logger.info(`[episodic] Purged ${deleted} expired memories`);
+        } catch (err) {
+            logger.warn(`[episodic] purgeExpired failed: ${(err as Error).message}`);
+        }
+    }, 24 * 60 * 60 * 1000); // every 24 hours
 
     // Graceful shutdown
     const shutdown = async () => {

@@ -77,9 +77,11 @@ export class EpisodicMemoryStore {
     async search(query: string, k: number, tenantId: string): Promise<EpisodicMemory[]> {
         const now = Date.now();
 
+        // Try FTS5 first; fall back to LIKE when FTS is unavailable or returns no results.
+        // FTS5 with unicode61 may not tokenize CJK characters, so LIKE fallback improves recall.
+        let ftsRows: any[] | null = null;
         try {
-            // FTS5 subquery — keep tenant isolation and TTL filter in outer query
-            const rows = this.db.prepare(`
+            ftsRows = this.db.prepare(`
                 SELECT e.*
                 FROM episodic_memories e
                 WHERE e.id IN (
@@ -91,20 +93,24 @@ export class EpisodicMemoryStore {
                 ORDER BY e.created_at DESC
                 LIMIT ?
             `).all(query, tenantId, now, k) as any[];
-            if (rows.length > 0) return rows.map(r => this.rowToEpisodic(r));
-            throw new Error('no fts results, try like');
         } catch {
-            // Fallback to LIKE
-            const rows = this.db.prepare(`
-                SELECT * FROM episodic_memories
-                WHERE tenant_id = ?
-                  AND expires_at > ?
-                  AND content LIKE ?
-                ORDER BY created_at DESC
-                LIMIT ?
-            `).all(tenantId, now, `%${query}%`, k) as any[];
-            return rows.map(r => this.rowToEpisodic(r));
+            // FTS5 unavailable — proceed to LIKE
         }
+
+        if (ftsRows && ftsRows.length > 0) {
+            return ftsRows.map(r => this.rowToEpisodic(r));
+        }
+
+        // LIKE fallback: FTS unavailable or returned 0 (e.g., CJK tokenizer miss)
+        const rows = this.db.prepare(`
+            SELECT * FROM episodic_memories
+            WHERE tenant_id = ?
+              AND expires_at > ?
+              AND content LIKE ?
+            ORDER BY created_at DESC
+            LIMIT ?
+        `).all(tenantId, now, `%${query}%`, k) as any[];
+        return rows.map(r => this.rowToEpisodic(r));
     }
 
     /** 删除过期记忆（cron 调用） */
