@@ -92,10 +92,10 @@ export async function* handleBuiltinToolCall(
         let resultStr: string;
         let toolOutput: unknown;
         if (memoryRouter) {
-            const unified = await memoryRouter.query(query, { sessionId: context.sessionId, limit: recallLimit ?? 8 });
+            const unified = await memoryRouter.query(query, { sessionId: context.sessionId, tenantId: (context as any).tenantId ?? 'default', limit: recallLimit ?? 8 });
             toolOutput = unified;
             resultStr = unified.length > 0
-                ? unified.map((m: any) => `[${m.source}] ${m.content}`).join('\n')
+                ? unified.map((m: any) => `[${m.layer ?? m.source}] ${m.content}`).join('\n')
                 : 'No relevant memories found.';
         } else {
             const memories = await longTermMemory.search(query, recallLimit ?? 5);

@@ -11,7 +11,8 @@ import { createLogger } from './utils/logger.js';
 import { llmFactory } from './llm/index.js';
 import { SkillRegistry, SkillLoader, McpSkillSource } from './skills/index.js';
 import { Agent } from './core/index.js';
-import { SessionMemoryManager, LongTermMemory } from './memory/index.js';
+import { SessionMemoryManager, LongTermMemory, EpisodicMemoryStore, SemanticMemoryStore } from './memory/index.js';
+import { ProceduralMemory } from './memory/procedural.js';
 import { GatewayServer } from './gateway/index.js';
 import { db } from './core/database.js';
 import fs from 'fs';
@@ -106,9 +107,20 @@ async function main() {
     const orchestrator = new MultiAgentOrchestrator(logger);
     const skillGenerator = new SkillGenerator(getLlm(), logger);
 
-    // Phase 21: 初始化统一内存路由器
+    // Phase 6: 初始化四层记忆存储
+    const episodicStore = new EpisodicMemoryStore(db, logger);
+    episodicStore.initialize();
+
+    const semanticStore = new SemanticMemoryStore(db, logger);
+    semanticStore.initialize();
+
+    const proceduralMemory = new ProceduralMemory(process.cwd(), logger);
+    await proceduralMemory.initialize();
+    logger.info('[memory] Phase 6 four-layer memory stores initialized');
+
+    // Phase 21: 初始化统一内存路由器（注入 Phase 6 四层存储）
     if (longTermMemory) {
-        initMemoryRouter(longTermMemory, knowledgeGraph, sessionManager);
+        initMemoryRouter(longTermMemory, knowledgeGraph, sessionManager, episodicStore, semanticStore, proceduralMemory);
     }
     const { memoryRouter } = await import('./memory/memory-router.js');
 
@@ -280,6 +292,8 @@ async function main() {
         agentPool,
         longTermMemory,
         checkpointManager,
+        semanticStore,
+        episodicStore,
     });
 
     await server.start(config.server.port, config.server.host);

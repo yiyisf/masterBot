@@ -358,6 +358,40 @@ export function initDatabase(): DatabaseSync {
         }
     }
 
+    // Auto-migration: Phase 6 — episodic_memories 和 semantic_facts 表（四层记忆架构）
+    db.exec(`
+        CREATE TABLE IF NOT EXISTS episodic_memories (
+            id TEXT PRIMARY KEY,
+            tenant_id TEXT NOT NULL,
+            session_id TEXT NOT NULL,
+            content TEXT NOT NULL,
+            category TEXT NOT NULL DEFAULT 'general',
+            topic TEXT NOT NULL DEFAULT '',
+            expires_at INTEGER NOT NULL,
+            created_at INTEGER NOT NULL,
+            metadata TEXT DEFAULT '{}'
+        );
+        CREATE INDEX IF NOT EXISTS idx_episodic_tenant ON episodic_memories(tenant_id);
+        CREATE INDEX IF NOT EXISTS idx_episodic_expires ON episodic_memories(expires_at);
+    `);
+    db.exec(`
+        CREATE TABLE IF NOT EXISTS semantic_facts (
+            id TEXT PRIMARY KEY,
+            tenant_id TEXT NOT NULL,
+            subject TEXT NOT NULL,
+            predicate TEXT NOT NULL,
+            object TEXT NOT NULL,
+            confidence REAL NOT NULL DEFAULT 0,
+            status TEXT NOT NULL DEFAULT 'pending',
+            reviewed_by TEXT,
+            reviewed_at INTEGER,
+            source_session_id TEXT,
+            created_at INTEGER NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_sf_tenant ON semantic_facts(tenant_id);
+        CREATE INDEX IF NOT EXISTS idx_sf_status ON semantic_facts(status);
+    `);
+
     // Auto-migration: Phase 5 — sessions 表新增 parent_session_id（fork 溯源）
     {
         const sessionColumns = db.prepare('PRAGMA table_info(sessions)').all() as Array<{ name: string }>;
