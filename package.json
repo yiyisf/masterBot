@@ -60,6 +60,7 @@
   "dependencies": {
     "@anthropic-ai/claude-agent-sdk": "0.2.138",
     "@anthropic-ai/sdk": "^0.30.0",
+    "@duckdb/node-api": "^1.5.2-r.1",
     "@fastify/cors": "^10.0.2",
     "@fastify/static": "^9.0.0",
     "@fastify/websocket": "^11.0.2",
