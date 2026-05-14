@@ -292,7 +292,7 @@ export class GatewayServer {
                         forceLegacy: (request.body as unknown as Record<string, unknown>).forceLegacy === true,
                         abortSignal: abortController.signal,
                     }))
-                    : this.agent.run(userInput, { sessionId, userId, memory, history, abortSignal: abortController.signal, attachments });
+                    : this.agent.run(userInput, { sessionId, userId, tenantId: 'default', memory, history, abortSignal: abortController.signal, attachments });
 
                 for await (const step of stepStream) {
                     if (step.type === 'answer') {
@@ -377,7 +377,7 @@ export class GatewayServer {
                         const memory = this.sessionManager.getSession(sessionId);
                         const history = historyRepository.getMessages(sessionId);
 
-                        for await (const step of this.agent.run(userMessage, { sessionId, memory, history })) {
+                        for await (const step of this.agent.run(userMessage, { sessionId, tenantId: 'default', memory, history })) {
                             socket.send(JSON.stringify(step));
                         }
 

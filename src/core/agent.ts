@@ -111,6 +111,7 @@ export class Agent {
         context: {
             sessionId: string;
             userId?: string;
+            tenantId?: string;
             memory: MemoryAccess;
             history?: Message[];
             abortSignal?: AbortSignal;

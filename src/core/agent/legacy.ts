@@ -59,6 +59,7 @@ export class LegacySelfHostedAgent implements IAgent {
         const gen = this.agent.run(input.message, {
             sessionId: input.sessionId,
             userId: input.userId,
+            tenantId: input.tenantId,
             memory,
             abortSignal: input.abortSignal,
         });
