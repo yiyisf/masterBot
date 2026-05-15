@@ -26,6 +26,7 @@ import { AgentGateway } from '../core/agent-gateway.js';
 import type { AgentPool } from '../core/harness/agent-pool.js';
 import { auditRepository } from '../core/audit-repository.js';
 import { ImGateway, FeishuAdapter, imUserRegistry, imSessionMapper } from './im-gateway.js';
+import { ChannelRouter, FeishuChannel, DingTalkChannel } from '../channels/index.js';
 import type { AgentRouter } from '../core/agent/router.js';
 import { adaptAgentEvents } from '../core/agent/agent-event-adapter.js';
 
@@ -49,6 +50,7 @@ export class GatewayServer {
     private selfImprovementEngine?: SelfImprovementEngine;
     private agentGateway: AgentGateway;
     private imGateway?: ImGateway;
+    private channelRouter?: ChannelRouter;
     private agentPool?: AgentPool;
     private longTermMemory?: import('../memory/long-term.js').LongTermMemory;
     private checkpointManager?: import('../core/checkpoint-manager.js').CheckpointManager;
@@ -112,6 +114,29 @@ export class GatewayServer {
                 });
                 options.logger.info('[im-gateway] Feishu adapter initialized');
             }
+        }
+
+        // Phase 7: ChannelRouter — 多渠道统一分发器
+        const baseUrl = `http://${options.config.server.host}:${options.config.server.port}`;
+        this.channelRouter = new ChannelRouter({
+            logger: options.logger,
+            defaultRole: options.config.im?.defaultRole ?? 'user',
+            cardActionBaseUrl: baseUrl,
+            runAgent: async (prompt, sessionId) => {
+                const memory = options.sessionManager.getSession(sessionId);
+                const { answer } = await options.agent.execute(prompt, { sessionId, memory });
+                return answer ?? '';
+            },
+        });
+
+        if (options.config.im?.feishu?.appId) {
+            this.channelRouter.register(new FeishuChannel(options.config.im.feishu, options.logger));
+            options.logger.info('[channel-router] FeishuChannel registered');
+        }
+
+        if (options.config.im?.dingtalk?.appKey) {
+            this.channelRouter.register(new DingTalkChannel(options.config.im.dingtalk, options.logger));
+            options.logger.info('[channel-router] DingTalkChannel registered');
         }
 
         this.app = Fastify({
@@ -1953,6 +1978,47 @@ export class GatewayServer {
             }
         );
 
+        // ===== CHANNEL ROUTER API (Phase 7) =====
+        // POST /api/channels/:channel/inbound — 各渠道入站事件（统一端点）
+        this.app.post<{ Params: { channel: string }; Body: unknown }>(
+            '/api/channels/:channel/inbound',
+            { config: { rawBody: true } },
+            async (request, reply) => {
+                if (!this.channelRouter) { reply.status(503); return { error: 'ChannelRouter not initialized' }; }
+                const rawBody = (request as any).rawBody ?? JSON.stringify(request.body);
+                const headers: Record<string, string> = {};
+                for (const [k, v] of Object.entries(request.headers)) {
+                    if (typeof v === 'string') headers[k] = v;
+                }
+                const result = await this.channelRouter.handleInbound(request.params.channel, rawBody, headers) as any;
+                if (result?.code === 401) { reply.status(401); return { error: result.error }; }
+                if (result?.code === 400) { reply.status(400); return { error: result.error }; }
+                if (result?.code === 404) { reply.status(404); return { error: result.error }; }
+                return result;
+            },
+        );
+
+        // POST /api/channels/:channel/card-action — HitL 审批卡片 callback
+        this.app.post<{ Params: { channel: string }; Body: unknown }>(
+            '/api/channels/:channel/card-action',
+            async (request) => {
+                if (!this.channelRouter) return { toast: { type: 'error', content: 'ChannelRouter not initialized' } };
+                return this.channelRouter.handleCardAction(request.params.channel, request.body);
+            },
+        );
+
+        // GET /api/channels/health — 所有渠道健康状态
+        this.app.get('/api/channels/health', async () => {
+            if (!this.channelRouter) return {};
+            return this.channelRouter.health();
+        });
+
+        // GET /api/channels — 已注册渠道列表
+        this.app.get('/api/channels', async () => {
+            if (!this.channelRouter) return [];
+            return this.channelRouter.listChannels().map(name => ({ name }));
+        });
+
         // ===== AGENT GATEWAY =====
         this.agentGateway.registerRoutes(this.app);
 
@@ -2084,6 +2150,7 @@ export class GatewayServer {
     }
 
     async stop(): Promise<void> {
+        this.channelRouter?.destroy();
         await this.app.close();
         this.logger.info('Server stopped');
     }

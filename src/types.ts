@@ -348,6 +348,12 @@ export interface Config {
             verificationToken: string;
             encryptKey: string;
         };
+        dingtalk?: {
+            appKey: string;
+            appSecret: string;
+            signingSecret: string;
+            corpId?: string;
+        };
         defaultRole?: string;
         hitlTimeoutMinutes?: number;
     };
