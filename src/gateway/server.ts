@@ -52,6 +52,8 @@ export class GatewayServer {
     private agentPool?: AgentPool;
     private longTermMemory?: import('../memory/long-term.js').LongTermMemory;
     private checkpointManager?: import('../core/checkpoint-manager.js').CheckpointManager;
+    private semanticStore?: import('../memory/semantic.js').SemanticMemoryStore;
+    private episodicStore?: import('../memory/episodic.js').EpisodicMemoryStore;
 
     constructor(options: {
         agent: Agent;
@@ -69,6 +71,8 @@ export class GatewayServer {
         agentPool?: AgentPool;
         longTermMemory?: import('../memory/long-term.js').LongTermMemory;
         checkpointManager?: import('../core/checkpoint-manager.js').CheckpointManager;
+        semanticStore?: import('../memory/semantic.js').SemanticMemoryStore;
+        episodicStore?: import('../memory/episodic.js').EpisodicMemoryStore;
     }) {
         this.agent = options.agent;
         this.agentRouter = options.agentRouter;
@@ -86,6 +90,8 @@ export class GatewayServer {
         this.agentPool = options.agentPool;
         this.longTermMemory = options.longTermMemory;
         this.checkpointManager = options.checkpointManager;
+        this.semanticStore = options.semanticStore;
+        this.episodicStore = options.episodicStore;
 
         // Initialize IM Gateway if enabled
         if (options.config.im?.enabled && options.config.im.platform === 'feishu') {
@@ -1554,6 +1560,41 @@ export class GatewayServer {
             } catch (err: any) {
                 reply.status(500); return { error: err.message };
             }
+        });
+
+        // ===== PHASE 6: SEMANTIC FACTS (HitL) =====
+
+        // GET  /api/semantic-facts/pending?tenantId=...   — 待审批事实列表
+        this.app.get<{ Querystring: { tenantId?: string } }>('/api/semantic-facts/pending', async (request, reply) => {
+            if (!this.semanticStore) { reply.status(503); return { error: 'Semantic store not available' }; }
+            const tenantId = request.query.tenantId;
+            if (!tenantId) { reply.status(400); return { error: 'tenantId query parameter is required' }; }
+            return { facts: await this.semanticStore.pendingFacts(tenantId) };
+        });
+
+        // POST /api/semantic-facts/:id/review             — 审批决策
+        this.app.post<{
+            Params: { id: string };
+            Body: { decision: 'approve' | 'reject'; reviewer?: string; tenantId: string };
+        }>('/api/semantic-facts/:id/review', async (request, reply) => {
+            if (!this.semanticStore) { reply.status(503); return { error: 'Semantic store not available' }; }
+            const { id } = request.params;
+            const { decision, reviewer = 'anonymous', tenantId } = request.body;
+            if (!tenantId) { reply.status(400); return { error: 'tenantId is required' }; }
+            if (decision !== 'approve' && decision !== 'reject') {
+                reply.status(400); return { error: 'decision must be approve or reject' };
+            }
+            const ok = await this.semanticStore.review(id, decision, reviewer, tenantId);
+            if (!ok) { reply.status(404); return { error: 'Fact not found or not pending for this tenant' }; }
+            return { ok: true, id, decision };
+        });
+
+        // GET  /api/semantic-facts?tenantId=...           — 所有事实（管理员视角）
+        this.app.get<{ Querystring: { tenantId?: string } }>('/api/semantic-facts', async (request, reply) => {
+            if (!this.semanticStore) { reply.status(503); return { error: 'Semantic store not available' }; }
+            const tenantId = request.query.tenantId;
+            if (!tenantId) { reply.status(400); return { error: 'tenantId query parameter is required' }; }
+            return { facts: this.semanticStore.allByTenant(tenantId) };
         });
 
         // ===== CHECKPOINTS (T2-4) =====

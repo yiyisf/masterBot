@@ -11,7 +11,8 @@ import { createLogger } from './utils/logger.js';
 import { llmFactory } from './llm/index.js';
 import { SkillRegistry, SkillLoader, McpSkillSource } from './skills/index.js';
 import { Agent } from './core/index.js';
-import { SessionMemoryManager, LongTermMemory } from './memory/index.js';
+import { SessionMemoryManager, LongTermMemory, EpisodicMemoryStore, SemanticMemoryStore } from './memory/index.js';
+import { ProceduralMemory } from './memory/procedural.js';
 import { GatewayServer } from './gateway/index.js';
 import { db } from './core/database.js';
 import fs from 'fs';
@@ -106,10 +107,19 @@ async function main() {
     const orchestrator = new MultiAgentOrchestrator(logger);
     const skillGenerator = new SkillGenerator(getLlm(), logger);
 
-    // Phase 21: 初始化统一内存路由器
-    if (longTermMemory) {
-        initMemoryRouter(longTermMemory, knowledgeGraph, sessionManager);
-    }
+    // Phase 6: 初始化四层记忆存储
+    const episodicStore = new EpisodicMemoryStore(db, logger);
+    episodicStore.initialize();
+
+    const semanticStore = new SemanticMemoryStore(db, logger);
+    semanticStore.initialize();
+
+    const proceduralMemory = new ProceduralMemory(process.cwd(), logger);
+    await proceduralMemory.initialize();
+    logger.info('[memory] Phase 6 four-layer memory stores initialized');
+
+    // Phase 21: 初始化统一内存路由器（Phase 6 四层存储独立于 longTerm 是否启用）
+    initMemoryRouter(longTermMemory, knowledgeGraph, sessionManager, episodicStore, semanticStore, proceduralMemory);
     const { memoryRouter } = await import('./memory/memory-router.js');
 
     // Phase 24: SessionEventStore — Session 持久层（Meta-Harness Brain/Hands/Session 解耦）
@@ -280,6 +290,8 @@ async function main() {
         agentPool,
         longTermMemory,
         checkpointManager,
+        semanticStore,
+        episodicStore,
     });
 
     await server.start(config.server.port, config.server.host);
@@ -295,6 +307,16 @@ async function main() {
     });
     scheduler.start();
     logger.info('Scheduler started');
+
+    // Phase 6: 每天凌晨 2 点清理过期 episodic 记忆（90 天 TTL）
+    setInterval(() => {
+        try {
+            const deleted = episodicStore.purgeExpired();
+            if (deleted > 0) logger.info(`[episodic] Purged ${deleted} expired memories`);
+        } catch (err) {
+            logger.warn(`[episodic] purgeExpired failed: ${(err as Error).message}`);
+        }
+    }, 24 * 60 * 60 * 1000); // every 24 hours
 
     // Graceful shutdown
     const shutdown = async () => {
