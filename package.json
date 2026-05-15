@@ -86,7 +86,7 @@
     "playwright": "^1.58.2",
     "xlsx": "^0.18.5",
     "yaml": "^2.7.0",
-    "zod": "^3.24.1"
+    "zod": "^4.0.0"
   },
   "devDependencies": {
     "@types/jsonwebtoken": "^9.0.10",
@@ -100,5 +100,8 @@
   },
   "engines": {
     "node": ">=22.0.0"
+  },
+  "overrides": {
+    "zod": "^4.0.0"
   }
 }
