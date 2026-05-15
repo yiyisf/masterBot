@@ -6,7 +6,7 @@
  */
 
 import { createSdkMcpServer, tool } from '@anthropic-ai/claude-agent-sdk';
-import { z } from 'zod/v4';
+import { z } from 'zod';
 import type { ISkillRegistry } from './registry.js';
 import type { Logger, MemoryAccess, SkillTier } from '../types.js';
 
