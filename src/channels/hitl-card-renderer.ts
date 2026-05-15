@@ -52,6 +52,7 @@ export class HitlCardRenderer {
             onTimeout();
         }, timeoutMs);
 
+        this.clear(req.interruptId); // 防止重复调用导致旧定时器泄漏
         this.pending.set(req.interruptId, {
             interruptId: req.interruptId,
             sessionId: req.sessionId,

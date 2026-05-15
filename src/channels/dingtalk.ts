@@ -59,7 +59,12 @@ export class DingTalkChannel implements IChannel {
             .update(content)
             .digest('base64');
 
-        return expected === decodeURIComponent(sign);
+        const decoded = decodeURIComponent(sign);
+        try {
+            return crypto.timingSafeEqual(Buffer.from(expected, 'base64'), Buffer.from(decoded, 'base64'));
+        } catch {
+            return false;
+        }
     }
 
     // ─── parseInboundMessage ─────────────────────────────────────────────────
@@ -191,12 +196,15 @@ export class DingTalkChannel implements IChannel {
 
         if (!res.ok) {
             const text = await res.text().catch(() => '');
-            this.logger.error(`[dingtalk] POST ${url} → ${res.status}: ${text.slice(0, 200)}`);
-        } else {
-            const data = await res.json().catch(() => ({})) as any;
-            if (data?.errcode && data.errcode !== 0) {
-                this.logger.warn(`[dingtalk] API error: ${data.errmsg} (${data.errcode})`);
-            }
+            const msg = `[dingtalk] POST ${url} → ${res.status}: ${text.slice(0, 200)}`;
+            this.logger.error(msg);
+            throw new Error(msg);
+        }
+        const data = await res.json().catch(() => ({})) as any;
+        if (data?.errcode && data.errcode !== 0) {
+            const msg = `[dingtalk] API error: ${data.errmsg} (${data.errcode})`;
+            this.logger.error(msg);
+            throw new Error(msg);
         }
     }
 

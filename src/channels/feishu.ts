@@ -57,7 +57,11 @@ export class FeishuChannel implements IChannel {
             .update(ts + nonce + key + rawBody)
             .digest('hex');
 
-        return expected === sig;
+        try {
+            return crypto.timingSafeEqual(Buffer.from(expected, 'hex'), Buffer.from(sig, 'hex'));
+        } catch {
+            return false;
+        }
     }
 
     // ─── parseInboundMessage ─────────────────────────────────────────────────
@@ -259,7 +263,9 @@ export class FeishuChannel implements IChannel {
 
         if (!res.ok) {
             const text = await res.text().catch(() => '');
-            this.logger.error(`[feishu] POST ${url} → ${res.status}: ${text.slice(0, 200)}`);
+            const msg = `[feishu] POST ${url} → ${res.status}: ${text.slice(0, 200)}`;
+            this.logger.error(msg);
+            throw new Error(msg);
         }
     }
 
