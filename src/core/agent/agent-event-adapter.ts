@@ -48,15 +48,23 @@ export function agentEventToExecutionStep(event: AgentEvent): ExecutionStep | nu
             };
 
         case 'state_update': {
-            if (data['subtype'] === 'result_success') {
-                const result = (data['result'] as string | undefined) ?? '';
-                return { ...base, type: 'answer', content: result };
+            const subtype = data['subtype'] as string | undefined;
+            if (subtype === 'result_success') {
+                return { ...base, type: 'answer', content: (data['result'] as string | undefined) ?? '' };
             }
-            return {
-                ...base,
-                type: 'meta',
-                content: JSON.stringify(data),
-            };
+            if (subtype === 'context_compressed') {
+                return {
+                    ...base,
+                    type: 'context_compressed' as any,
+                    content: (data['result'] as string | undefined) ?? '',
+                    droppedCount: data['droppedCount'] as number | undefined,
+                };
+            }
+            // 透传 plan/task_*/interrupt/grading/grade_result 等类型
+            if (subtype && subtype !== 'meta') {
+                return { ...base, type: subtype as any, content: (data['result'] as string | undefined) ?? '', ...(data as any) };
+            }
+            return { ...base, type: 'meta', content: (data['result'] as string | undefined) ?? JSON.stringify(data) };
         }
 
         case 'error':

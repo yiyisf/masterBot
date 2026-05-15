@@ -13,6 +13,8 @@ import { SkillRegistry, SkillLoader, McpSkillSource } from './skills/index.js';
 import { Agent } from './core/index.js';
 import { SessionMemoryManager, LongTermMemory, EpisodicMemoryStore, SemanticMemoryStore } from './memory/index.js';
 import { ProceduralMemory } from './memory/procedural.js';
+import { initDuckDB } from './persistence/duckdb-client.js';
+import { createEmbedderFromEnv } from './memory/embedder.js';
 import { GatewayServer } from './gateway/index.js';
 import { db } from './core/database.js';
 import fs from 'fs';
@@ -107,8 +109,19 @@ async function main() {
     const orchestrator = new MultiAgentOrchestrator(logger);
     const skillGenerator = new SkillGenerator(getLlm(), logger);
 
+    // Phase 6.5: 初始化 DuckDB VSS + Embedder（可选，失败不影响启动）
+    const embedder = createEmbedderFromEnv(logger);
+    const duckdbClient = embedder
+        ? await initDuckDB(path.join('data', 'vectors.duckdb'), logger, 1536)
+        : undefined;
+    if (duckdbClient?.isReady()) {
+        logger.info('[memory] DuckDB VSS initialized — vector semantic search enabled');
+    } else {
+        logger.info('[memory] DuckDB VSS disabled (OPENAI_API_KEY not set or DuckDB unavailable)');
+    }
+
     // Phase 6: 初始化四层记忆存储
-    const episodicStore = new EpisodicMemoryStore(db, logger);
+    const episodicStore = new EpisodicMemoryStore(db, logger, duckdbClient, embedder);
     episodicStore.initialize();
 
     const semanticStore = new SemanticMemoryStore(db, logger);

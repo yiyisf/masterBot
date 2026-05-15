@@ -247,6 +247,40 @@ export async function* handleBuiltinToolCall(
               ).join('\n');
         yield { type: 'observation', content: summary, toolName, timestamp: new Date() };
         messages.push({ role: 'tool', content: summary, toolCallId: toolCall.id });
+
+    } else if (toolName === 'memory_consolidate' && memoryRouter) {
+        const { key_facts, topic, category } = params as {
+            key_facts: string[];
+            topic?: string;
+            category?: string;
+        };
+        const tenantId = (context as any).tenantId;
+        if (!tenantId) throw new Error('[memory_consolidate] tenantId is required for memory isolation');
+
+        yield { type: 'thought', content: `将 ${key_facts.length} 条关键事实写入 L2 Episodic 记忆...`, timestamp: new Date() };
+
+        let saved = 0;
+        for (const fact of key_facts) {
+            try {
+                await memoryRouter.insertEpisodic({
+                    tenantId,
+                    sessionId: context.sessionId,
+                    content: fact,
+                    category: (category as any) ?? 'operational',
+                    topic: topic ?? '',
+                });
+                saved++;
+            } catch (err: any) {
+                logger.warn(`[memory_consolidate] Failed to save fact: ${err.message}`);
+            }
+        }
+
+        const resultStr = `已将 ${saved}/${key_facts.length} 条关键事实写入长期记忆（L2 Episodic）。` +
+            (topic ? ` 主题：${topic}` : '') +
+            '\n已释放当前上下文空间。';
+
+        yield { type: 'observation', content: resultStr, toolName, toolOutput: { saved, total: key_facts.length }, timestamp: new Date() };
+        messages.push({ role: 'tool', content: resultStr, toolCallId: toolCall.id });
     }
 }
 

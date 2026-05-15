@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
-import { MessageSquare, Calendar, Search, Brain, Trash2, Pin, PinOff } from "lucide-react";
+import { MessageSquare, Calendar, Search, Brain, Trash2, Pin, PinOff, CheckCircle2, XCircle, Clock, ShieldCheck } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -29,6 +29,12 @@ export default function MemoryPage() {
     const [memories, setMemories] = useState<any[]>([]);
     const [memoriesLoading, setMemoriesLoading] = useState(false);
     const [memoriesSearch, setMemoriesSearch] = useState("");
+
+    // HitL 语义事实审批（Phase 6.5）
+    const [pendingFacts, setPendingFacts] = useState<any[]>([]);
+    const [factsLoading, setFactsLoading] = useState(false);
+    const [reviewingId, setReviewingId] = useState<string | null>(null);
+    const TENANT_ID = "default";
 
     const loadSessions = () => {
         setHistoryLoading(true);
@@ -118,6 +124,36 @@ export default function MemoryPage() {
         }
     };
 
+    const loadPendingFacts = () => {
+        setFactsLoading(true);
+        fetchApi(`/api/semantic-facts/pending?tenantId=${TENANT_ID}`)
+            .then((data: any) => {
+                setPendingFacts(Array.isArray(data.facts) ? data.facts : []);
+                setFactsLoading(false);
+            })
+            .catch(err => {
+                console.error(err);
+                setFactsLoading(false);
+                toast.error("加载待审批事实失败");
+            });
+    };
+
+    const reviewFact = async (factId: string, decision: "approve" | "reject") => {
+        setReviewingId(factId);
+        try {
+            await fetchApi(`/api/semantic-facts/${factId}/review`, {
+                method: "POST",
+                body: JSON.stringify({ decision, reviewer: "admin", tenantId: TENANT_ID }),
+            });
+            toast.success(decision === "approve" ? "已批准" : "已拒绝");
+            setPendingFacts(prev => prev.filter(f => f.id !== factId));
+        } catch (err: any) {
+            toast.error(`审批失败: ${err.message}`);
+        } finally {
+            setReviewingId(null);
+        }
+    };
+
     const filteredHistory = history.filter(item =>
         item.title.toLowerCase().includes(historySearch.toLowerCase())
     );
@@ -142,6 +178,19 @@ export default function MemoryPage() {
                     >
                         <Brain className="w-3.5 h-3.5" />
                         长期记忆库
+                    </TabsTrigger>
+                    <TabsTrigger
+                        value="semantic-hitl"
+                        className="flex items-center gap-1.5"
+                        onClick={() => { if (pendingFacts.length === 0) loadPendingFacts(); }}
+                    >
+                        <ShieldCheck className="w-3.5 h-3.5" />
+                        语义事实审批
+                        {pendingFacts.length > 0 && (
+                            <span className="ml-1 bg-orange-500 text-white text-[10px] rounded-full px-1.5 py-0.5 leading-none">
+                                {pendingFacts.length}
+                            </span>
+                        )}
                     </TabsTrigger>
                 </TabsList>
 
@@ -313,6 +362,97 @@ export default function MemoryPage() {
                             <Brain className="w-12 h-12 mx-auto mb-4 opacity-20" />
                             <p>暂无长期记忆</p>
                             <p className="text-xs mt-1">当 AI 在对话中使用 memory_remember 工具时，记忆会自动存储到这里</p>
+                        </div>
+                    )}
+                </TabsContent>
+
+                {/* ─── Tab 3: HitL 语义事实审批 ─────────────────────────── */}
+                <TabsContent value="semantic-hitl" className="mt-4">
+                    <div className="flex items-center justify-between mb-4">
+                        <div>
+                            <p className="text-sm text-muted-foreground">
+                                AI 从对话中提取的候选语义事实（置信度 ≥ 0.85），需人工审批后才能进入知识库。
+                            </p>
+                        </div>
+                        <Button variant="outline" size="sm" onClick={loadPendingFacts} disabled={factsLoading}>
+                            刷新
+                        </Button>
+                    </div>
+
+                    {factsLoading ? (
+                        <div className="grid gap-3">
+                            {[1, 2, 3].map(i => (
+                                <div key={i} className="rounded-xl border bg-card p-4">
+                                    <Skeleton className="h-4 w-3/4 mb-2" />
+                                    <Skeleton className="h-3 w-1/2" />
+                                </div>
+                            ))}
+                        </div>
+                    ) : pendingFacts.length === 0 ? (
+                        <div className="py-20 text-center text-muted-foreground border-2 border-dashed rounded-xl">
+                            <CheckCircle2 className="w-12 h-12 mx-auto mb-4 opacity-20" />
+                            <p>暂无待审批事实</p>
+                            <p className="text-xs mt-1">当 AI 在对话中提取高置信度语义事实时，会自动出现在这里</p>
+                        </div>
+                    ) : (
+                        <div className="grid gap-3">
+                            {pendingFacts.map((fact: any) => (
+                                <Card key={fact.id} className="border-orange-200 dark:border-orange-900">
+                                    <CardContent className="pt-4 pb-4">
+                                        <div className="flex items-start justify-between gap-4">
+                                            <div className="flex-1 min-w-0">
+                                                {/* 三元组展示 */}
+                                                <div className="flex flex-wrap items-center gap-1.5 mb-2">
+                                                    <span className="font-semibold text-sm bg-blue-100 dark:bg-blue-900 text-blue-800 dark:text-blue-200 px-2 py-0.5 rounded">
+                                                        {fact.subject}
+                                                    </span>
+                                                    <span className="text-xs text-muted-foreground">{fact.predicate}</span>
+                                                    <span className="font-medium text-sm bg-green-100 dark:bg-green-900 text-green-800 dark:text-green-200 px-2 py-0.5 rounded truncate max-w-[200px]">
+                                                        {fact.object}
+                                                    </span>
+                                                </div>
+                                                {/* 元信息 */}
+                                                <div className="flex items-center gap-3 text-xs text-muted-foreground">
+                                                    <span className="flex items-center gap-1">
+                                                        <Clock className="w-3 h-3" />
+                                                        {new Date(fact.createdAt).toLocaleString("zh-CN")}
+                                                    </span>
+                                                    <span className="flex items-center gap-1">
+                                                        置信度：
+                                                        <span className={`font-medium ${fact.confidence >= 0.9 ? "text-green-600" : "text-orange-500"}`}>
+                                                            {(fact.confidence * 100).toFixed(0)}%
+                                                        </span>
+                                                    </span>
+                                                </div>
+                                            </div>
+
+                                            {/* 操作按钮 */}
+                                            <div className="flex items-center gap-2 flex-shrink-0">
+                                                <Button
+                                                    size="sm"
+                                                    variant="outline"
+                                                    className="border-green-500 text-green-600 hover:bg-green-50 dark:hover:bg-green-950"
+                                                    disabled={reviewingId === fact.id}
+                                                    onClick={() => reviewFact(fact.id, "approve")}
+                                                >
+                                                    <CheckCircle2 className="w-3.5 h-3.5 mr-1" />
+                                                    批准
+                                                </Button>
+                                                <Button
+                                                    size="sm"
+                                                    variant="outline"
+                                                    className="border-red-400 text-red-500 hover:bg-red-50 dark:hover:bg-red-950"
+                                                    disabled={reviewingId === fact.id}
+                                                    onClick={() => reviewFact(fact.id, "reject")}
+                                                >
+                                                    <XCircle className="w-3.5 h-3.5 mr-1" />
+                                                    拒绝
+                                                </Button>
+                                            </div>
+                                        </div>
+                                    </CardContent>
+                                </Card>
+                            ))}
                         </div>
                     )}
                 </TabsContent>

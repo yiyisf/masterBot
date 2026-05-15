@@ -163,11 +163,11 @@ export class ClaudeManagedAgent implements IAgent {
         try {
             const sdkMsgs = await getSessionMessages(sessionId);
             messages = sdkMsgs
-                .filter(m => m.role === 'user' || m.role === 'assistant')
+                .filter(m => m.type === 'user' || m.type === 'assistant')
                 .map(m => ({
                     id: m.uuid ?? '',
                     sessionId,
-                    role: m.role as 'user' | 'assistant',
+                    role: m.type as 'user' | 'assistant',
                     content: typeof m.message === 'string'
                         ? m.message
                         : (m.message as { content?: unknown })?.content?.toString() ?? '',
