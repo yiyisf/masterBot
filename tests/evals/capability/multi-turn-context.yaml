@@ -1,0 +1,298 @@
+# 多轮对话连贯性评测用例
+# 目的: 验证 Agent 在多轮对话中的记忆、上下文连贯性和话题切换能力
+
+cases:
+  # ─── 原有 5 条（从 multi-turn.yaml 迁移，id 加 mtc- 前缀以避免与 multi-turn.yaml 冲突）─
+
+  - id: mtc-memory-1
+    turns:
+      - user: "我叫张三，今年 30 岁。"
+        expect_not_empty: true
+      - user: "我叫什么名字？"
+        expect_contains: ["张三"]
+    tags: [multi-turn, memory]
+
+  - id: mtc-reference-1
+    turns:
+      - user: "现在有一个变量 x = 42。"
+        expect_not_empty: true
+      - user: "x 乘以 2 等于多少？"
+        expect_contains: ["84"]
+    tags: [multi-turn, reasoning]
+
+  - id: mtc-refinement
+    turns:
+      - user: "给我写一个简单的 Hello World Python 程序。"
+        expect_not_empty: true
+        expect_contains: ["print"]
+      - user: "修改上面的程序，让它打印 'Hello, masterBot!'。"
+        expect_contains: ["masterBot"]
+    tags: [multi-turn, code]
+
+  - id: mtc-math-chain
+    turns:
+      - user: "2 + 2 等于多少？"
+        expect_contains: ["4"]
+      - user: "再加上 6 是多少？"
+        expect_contains: ["10"]
+    tags: [multi-turn, math]
+
+  - id: mtc-topic-tracking
+    turns:
+      - user: "介绍一下 Python 这门编程语言。"
+        expect_not_empty: true
+      - user: "它的主要用途是什么？"
+        expect_contains_any: ["Python", "数据", "AI", "科学", "自动化"]
+    tags: [multi-turn, coherence]
+
+  # ─── 上下文追踪（8 条）────────────────────────────────────────────────────
+
+  - id: context-track-name
+    turns:
+      - user: "我的名字是李明，我在北京工作。"
+        expect_not_empty: true
+      - user: "我在哪里工作？"
+        expect_contains: ["北京"]
+      - user: "我叫什么？"
+        expect_contains: ["李明"]
+    tags: [multi-turn, context-tracking, memory]
+
+  - id: context-track-variable
+    turns:
+      - user: "假设 y = 100。"
+        expect_not_empty: true
+      - user: "y 的平方根是多少？（可以不精确）"
+        expect_contains_any: ["10", "十"]
+      - user: "y 加上 50 等于多少？"
+        expect_contains: ["150"]
+    tags: [multi-turn, context-tracking, math]
+
+  - id: context-track-preferences
+    turns:
+      - user: "我喜欢简洁的代码风格，不喜欢冗长的注释。"
+        expect_not_empty: true
+      - user: "帮我写一个简单的加法函数（记住我的偏好）。"
+        expect_not_empty: true
+        expect_contains_any: ["def", "function", "fn"]
+    tags: [multi-turn, context-tracking, preferences]
+
+  - id: context-track-list
+    turns:
+      - user: "我有三个任务：1) 写报告 2) 开会 3) 发邮件。"
+        expect_not_empty: true
+      - user: "我有几个任务？"
+        expect_contains_any: ["3", "三", "三个"]
+      - user: "第二个任务是什么？"
+        expect_contains: ["开会"]
+    tags: [multi-turn, context-tracking, list]
+
+  - id: context-track-code-refinement
+    turns:
+      - user: "写一个 JavaScript 函数，接受一个数组并返回其中的最大值。"
+        expect_not_empty: true
+        expect_contains_any: ["function", "=>", "Math.max"]
+      - user: "在上面的函数里加上输入验证（如果数组为空则抛出错误）。"
+        expect_not_empty: true
+        expect_contains_any: ["throw", "Error", "length"]
+    tags: [multi-turn, context-tracking, code]
+
+  - id: context-track-math-chain
+    turns:
+      - user: "3 的 3 次方是多少？"
+        expect_contains: ["27"]
+      - user: "把这个结果乘以 2。"
+        expect_contains: ["54"]
+      - user: "再减去 4。"
+        expect_contains: ["50"]
+    tags: [multi-turn, context-tracking, math]
+
+  - id: context-track-definition
+    turns:
+      - user: "在我们的对话中，'正方形'这个词特指边长为 5 的正方形。"
+        expect_not_empty: true
+      - user: "这个正方形的周长是多少？"
+        expect_contains_any: ["20", "二十"]
+      - user: "面积是多少？"
+        expect_contains_any: ["25", "二十五"]
+    tags: [multi-turn, context-tracking, reasoning]
+
+  - id: context-track-person
+    turns:
+      - user: "小红比小明大 3 岁，小明今年 25 岁。"
+        expect_not_empty: true
+      - user: "小红今年多少岁？"
+        expect_contains_any: ["28", "二十八"]
+    tags: [multi-turn, context-tracking, reasoning]
+
+  # ─── 信息累积（7 条）──────────────────────────────────────────────────────
+
+  - id: info-accumulate-ingredients
+    turns:
+      - user: "我有鸡蛋、面粉和牛奶。"
+        expect_not_empty: true
+      - user: "我又买了黄油和糖。"
+        expect_not_empty: true
+      - user: "我现在有哪些食材？"
+        expect_contains_any: ["鸡蛋", "面粉", "牛奶", "黄油", "糖"]
+    tags: [multi-turn, info-accumulation]
+
+  - id: info-accumulate-numbers
+    turns:
+      - user: "第一组数字是：1, 2, 3。"
+        expect_not_empty: true
+      - user: "第二组数字是：4, 5, 6。"
+        expect_not_empty: true
+      - user: "把所有数字加起来是多少？"
+        expect_contains_any: ["21", "二十一"]
+    tags: [multi-turn, info-accumulation, math]
+
+  - id: info-accumulate-requirements
+    turns:
+      - user: "系统需求：用户可以注册账号。"
+        expect_not_empty: true
+      - user: "补充需求：用户可以修改密码。"
+        expect_not_empty: true
+      - user: "补充需求：用户可以删除账号。"
+        expect_not_empty: true
+      - user: "目前有几个用户相关的需求？"
+        expect_contains_any: ["3", "三", "三个"]
+    tags: [multi-turn, info-accumulation]
+
+  - id: info-accumulate-shopping
+    turns:
+      - user: "我要买苹果，价格是 5 元/斤，买 2 斤。"
+        expect_not_empty: true
+      - user: "我还要买香蕉，价格是 3 元/斤，买 3 斤。"
+        expect_not_empty: true
+      - user: "我一共要花多少钱？"
+        expect_contains_any: ["19", "十九"]
+    tags: [multi-turn, info-accumulation, math]
+
+  - id: info-accumulate-code-steps
+    turns:
+      - user: "我们要实现一个 REST API。第一步：定义路由。"
+        expect_not_empty: true
+      - user: "第二步：实现控制器。"
+        expect_not_empty: true
+      - user: "第三步：添加中间件。"
+        expect_not_empty: true
+      - user: "总结一下我们要实现的 API 的步骤。"
+        expect_contains_any: ["路由", "控制器", "中间件"]
+    tags: [multi-turn, info-accumulation, code]
+
+  - id: info-accumulate-profile
+    turns:
+      - user: "我的名字是王芳。"
+        expect_not_empty: true
+      - user: "我是一名软件工程师。"
+        expect_not_empty: true
+      - user: "我有 5 年工作经验。"
+        expect_not_empty: true
+      - user: "总结一下我的个人信息。"
+        expect_contains_any: ["王芳", "工程师", "5年", "5 年"]
+    tags: [multi-turn, info-accumulation]
+
+  - id: info-accumulate-word-count
+    turns:
+      - user: "单词 A 出现了 3 次。"
+        expect_not_empty: true
+      - user: "单词 B 出现了 5 次。"
+        expect_not_empty: true
+      - user: "两个单词总共出现了几次？"
+        expect_contains_any: ["8", "八"]
+    tags: [multi-turn, info-accumulation, math]
+
+  # ─── 角色一致性（5 条）────────────────────────────────────────────────────
+
+  - id: role-consistency-teacher
+    turns:
+      - user: "接下来请你扮演一位小学数学老师，用简单易懂的语言回答问题。"
+        expect_not_empty: true
+      - user: "分数是什么？"
+        expect_not_empty: true
+        expect_min_length: 20
+      - user: "继续用老师的方式解释：什么是小数？"
+        expect_not_empty: true
+    tags: [multi-turn, role-consistency]
+
+  - id: role-consistency-format
+    turns:
+      - user: "从现在开始，请用中英文双语回答所有问题。"
+        expect_not_empty: true
+      - user: "天空是什么颜色？"
+        expect_contains_any: ["蓝", "blue", "Blue"]
+    tags: [multi-turn, role-consistency, format]
+
+  - id: role-consistency-expert
+    turns:
+      - user: "请扮演一名 Python 专家，以专业角度回答问题。"
+        expect_not_empty: true
+      - user: "为什么 Python 的 GIL 会影响多线程性能？"
+        expect_not_empty: true
+        expect_contains_any: ["GIL", "线程", "Python", "锁"]
+    tags: [multi-turn, role-consistency]
+
+  - id: role-consistency-language
+    turns:
+      - user: "Please respond only in English from now on."
+        expect_not_empty: true
+      - user: "What is machine learning?"
+        expect_not_empty: true
+        expect_min_length: 20
+    tags: [multi-turn, role-consistency, multilang]
+
+  - id: role-consistency-style
+    turns:
+      - user: "请以后所有回答都用简洁的一句话。"
+        expect_not_empty: true
+      - user: "什么是操作系统？"
+        expect_not_empty: true
+    tags: [multi-turn, role-consistency, format]
+
+  # ─── 话题切换（5 条）──────────────────────────────────────────────────────
+
+  - id: topic-switch-math-to-code
+    turns:
+      - user: "3 加 7 等于多少？"
+        expect_contains_any: ["10", "十"]
+      - user: "好的，现在切换话题，帮我写一个 TypeScript 的 Hello World 程序。"
+        expect_not_empty: true
+        expect_contains_any: ["console.log", "Hello"]
+    tags: [multi-turn, topic-switch]
+
+  - id: topic-switch-code-to-general
+    turns:
+      - user: "给我解释 Python 的装饰器。"
+        expect_not_empty: true
+        expect_contains_any: ["装饰器", "decorator", "@"]
+      - user: "换个话题，今天天气很好，你觉得春天有什么好处？"
+        expect_not_empty: true
+    tags: [multi-turn, topic-switch]
+
+  - id: topic-switch-return
+    turns:
+      - user: "x = 10。"
+        expect_not_empty: true
+      - user: "这是什么天气？太阳出来了。"
+        expect_not_empty: true
+      - user: "回到之前的数学，x 的平方是多少？"
+        expect_contains_any: ["100", "一百"]
+    tags: [multi-turn, topic-switch, context-tracking]
+
+  - id: topic-switch-language
+    turns:
+      - user: "Let's talk in English. What is REST API?"
+        expect_not_empty: true
+      - user: "现在我们用中文聊。什么是微服务？"
+        expect_not_empty: true
+        expect_contains_any: ["微服务", "服务", "架构"]
+    tags: [multi-turn, topic-switch, multilang]
+
+  - id: topic-switch-correction
+    turns:
+      - user: "我们来讨论 Java 语言。"
+        expect_not_empty: true
+      - user: "实际上我想讨论 JavaScript，不是 Java，请重新介绍。"
+        expect_not_empty: true
+        expect_contains_any: ["JavaScript", "JS"]
+    tags: [multi-turn, topic-switch, correction]

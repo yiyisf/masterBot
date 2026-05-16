@@ -11,6 +11,7 @@ import {
     BarChart2,
     LogOut,
     ChevronRight,
+    Rocket,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -22,6 +23,7 @@ const NAV_ITEMS = [
     { href: "/admin/rbac", label: "RBAC 配置", icon: Shield },
     { href: "/admin/audit", label: "审计查询", icon: ClipboardList },
     { href: "/admin/cost", label: "成本看板", icon: BarChart2 },
+    { href: "/admin/canary", label: "Canary 发布", icon: Rocket },
 ];
 
 export default function AdminLayout({ children }: { children: React.ReactNode }) {

@@ -500,6 +500,37 @@ export function initDatabase(): DatabaseSync {
         CREATE INDEX IF NOT EXISTS idx_admin_audit_created ON admin_audit_log(created_at);
     `);
 
+    // Phase 9: Evaluation Pyramid — canary_flags + canary_metrics
+    db.exec(`
+        CREATE TABLE IF NOT EXISTS canary_flags (
+            id TEXT PRIMARY KEY,
+            flag_name TEXT NOT NULL UNIQUE,
+            current_stage INTEGER NOT NULL DEFAULT 0,
+            stages TEXT NOT NULL DEFAULT '[5,25,50,100]',
+            stage_started_at TEXT NOT NULL DEFAULT (datetime('now')),
+            observe_hours INTEGER NOT NULL DEFAULT 24,
+            error_rate_threshold REAL NOT NULL DEFAULT 0.05,
+            auto_rollback INTEGER NOT NULL DEFAULT 1,
+            status TEXT NOT NULL DEFAULT 'running',
+            created_at TEXT NOT NULL DEFAULT (datetime('now')),
+            updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+        );
+        CREATE INDEX IF NOT EXISTS idx_canary_flags_status ON canary_flags(status);
+
+        CREATE TABLE IF NOT EXISTS canary_metrics (
+            id TEXT PRIMARY KEY,
+            flag_name TEXT NOT NULL,
+            stage INTEGER NOT NULL,
+            error_count INTEGER NOT NULL DEFAULT 0,
+            success_count INTEGER NOT NULL DEFAULT 0,
+            thumbs_up INTEGER NOT NULL DEFAULT 0,
+            thumbs_down INTEGER NOT NULL DEFAULT 0,
+            total_tokens INTEGER NOT NULL DEFAULT 0,
+            recorded_at TEXT NOT NULL DEFAULT (datetime('now'))
+        );
+        CREATE INDEX IF NOT EXISTS idx_canary_metrics_flag ON canary_metrics(flag_name, stage);
+    `);
+
     return db;
 }
 

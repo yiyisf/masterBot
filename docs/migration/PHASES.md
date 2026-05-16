@@ -52,38 +52,54 @@
 
 ---
 
-## Phase 5：Session 高级特性（1 周）
+## Phase 5：Session 高级特性（1 周）✅
 
-**分支**：`refactor-v3-p5-session`  
-**目标**：实现 session fork / resume / checkpoint（数据库 + API + Web UI）。
-
----
-
-## Phase 6：Memory 四层 + 租户隔离（2 周）
-
-**分支**：`refactor-v3-p6-memory`  
-**目标**：Working / Episodic / Semantic / Procedural 四层记忆架构，引入 PostgreSQL + pgvector。
+**分支**：`v3-p5-session` | **PR**：#37 | **合并**：2026-05-13  
+**目标**：实现 session fork / resume / checkpoint（数据库 + API + Web UI）。  
+**关键产出**：fork/checkpoint/resume 完整链路；sessions.parent_session_id 自动迁移；ForkButton + CheckpointPanel；18 个新测试。
 
 ---
 
-## Phase 7：企业 IM 一等公民（1 周）
+## Phase 6：Memory 四层 + 租户隔离（2 周）✅
 
-**分支**：`refactor-v3-p7-im`  
-**目标**：统一 `IChannel` 抽象，飞书/钉钉/Telegram/iMessage 全渠道 HitL 标准化。
-
----
-
-## Phase 8：Admin Console 基础（1 周）
-
-**分支**：`refactor-v3-p8-admin`  
-**目标**：企业管理后台：用户管理、权限配置、技能审核、审计报告。
+**分支**：`v3-p6-memory` | **PR**：#38 | **合并**：2026-05-15  
+**目标**：Working / Episodic / Semantic / Procedural 四层记忆架构，SQLite FTS5，tenant 强制隔离。  
+**关键产出**：IMemoryRouter 接口；L2 EpisodicMemoryStore（FTS5+TTL）；L3 SemanticMemoryStore（HitL 门）；L4 ProceduralMemory（fs.watch 热重载）；12 个新测试。  
+> 注：计划 PostgreSQL+pgvector，实际用 SQLite FTS5，避免新基础设施依赖。
 
 ---
 
-## Phase 9：评估金字塔（2 周）
+## Phase 6.5：DuckDB VSS + HitL 强化（增补 Phase）✅
 
-**分支**：`refactor-v3-p9-evals`  
-**目标**：引入 promptfoo，建立 capability eval 套件，GitHub Actions 自动运行。
+**分支**：`v3-p6.5-memory-supplement` | **PR**：#40 | **合并**：2026-05-15  
+**目标**：修复 Phase 6 review 问题，zod v4 全量升级，HitL 前端，Active Compression。  
+**关键产出**：zod v4 升级；Active Compression；tenantId 透传修复；9 个新测试。  
+> 注：PR #39 错误合入 master，已 revert 后通过 PR #40 正确合入 refactor/v3。
+
+---
+
+## Phase 7：企业 IM 一等公民（1 周）✅
+
+**分支**：`v3-p7-enterprise-im` | **PR**：#41 | **合并**：2026-05-15  
+**目标**：统一 `IChannel` 抽象，飞书/钉钉/WeCom/Teams 全渠道 HitL 标准化。  
+**关键产出**：IChannel 接口；FeishuChannel（AES 加密+缓存+三态）；DingTalkChannel（新增）；HitlCardRenderer；ChannelRouter；安全加固（timingSafeEqual）；24 个新测试。
+
+---
+
+## Phase 8：Admin Console 基础（1 周）✅
+
+**分支**：`v3-p8-admin-console` | **PR**：#42 | **合并**：2026-05-16  
+**目标**：IT/安全/财务团队专用管理后台，独立 X-Admin-Key 鉴权。  
+**关键产出**：AdminRepository；9 个 admin API 端点（全 403 保护）；5 个前端管理页面（概览/技能审批/RBAC/审计/成本）；web/src/lib/admin.ts 共享工具；17 个新测试。
+
+---
+
+## Phase 9：评估金字塔（持续 Phase）🔄
+
+**分支**：`worktree-refactor-v3-p9` | **PR**：#43（开放中）  
+**目标**：三层评估金字塔：Tier 1 Offline Eval + Tier 2 Shadow Traffic + Tier 3 Canary 发布。  
+**关键产出**：4 套 capability YAML（各 30 条）+ Golden Set（50 条）；ShadowTrafficService；CanaryService（渐进发布 5%→100%+自动回滚）；GitHub Actions eval CI；201 个新测试。  
+> 注：Phase 9 是「持续 Phase」，与后续所有 Phase 并行；每个 Phase 完成后需补充用例并检查 shadow traffic。
 
 ---
 
