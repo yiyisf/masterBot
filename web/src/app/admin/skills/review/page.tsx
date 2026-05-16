@@ -7,12 +7,7 @@ import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { CheckCircle2, XCircle, Clock, RefreshCw } from "lucide-react";
-
-const API_BASE = process.env.NEXT_PUBLIC_API_URL || "";
-const ADMIN_KEY_STORAGE = "cmaster_admin_key";
-function getAdminKey() {
-    return typeof window !== "undefined" ? localStorage.getItem(ADMIN_KEY_STORAGE) ?? "" : "";
-}
+import { adminFetch } from "@/lib/admin";
 
 interface SkillReview {
     id: string;
@@ -42,9 +37,7 @@ export default function SkillReviewPage() {
         setLoading(true);
         const qs = status && status !== "all" ? `?status=${status}` : "";
         try {
-            const res = await fetch(`${API_BASE}/api/admin/skills/review${qs}`, {
-                headers: { "X-Admin-Key": getAdminKey() },
-            });
+            const res = await adminFetch(`/api/admin/skills/review${qs}`);
             if (res.ok) setReviews(await res.json());
         } finally {
             setLoading(false);
@@ -56,9 +49,8 @@ export default function SkillReviewPage() {
     const decide = async (skillName: string, status: "approved" | "rejected") => {
         setProcessing(skillName);
         try {
-            const res = await fetch(`${API_BASE}/api/admin/skills/review/${encodeURIComponent(skillName)}`, {
+            const res = await adminFetch(`/api/admin/skills/review/${encodeURIComponent(skillName)}`, {
                 method: "POST",
-                headers: { "Content-Type": "application/json", "X-Admin-Key": getAdminKey() },
                 body: JSON.stringify({ status, notes: notes[skillName] }),
             });
             if (res.ok) {

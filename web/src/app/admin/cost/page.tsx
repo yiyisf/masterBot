@@ -5,12 +5,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { RefreshCw, TrendingUp, Cpu, Users } from "lucide-react";
-
-const API_BASE = process.env.NEXT_PUBLIC_API_URL || "";
-const ADMIN_KEY_STORAGE = "cmaster_admin_key";
-function getAdminKey() {
-    return typeof window !== "undefined" ? localStorage.getItem(ADMIN_KEY_STORAGE) ?? "" : "";
-}
+import { adminFetch } from "@/lib/admin";
 
 interface DailyRow { date: string; total_tokens: number; prompt_tokens: number; completion_tokens: number; calls: number }
 interface ModelRow { model: string; total_tokens: number; calls: number }
@@ -31,9 +26,7 @@ export default function CostPage() {
     const load = async () => {
         setLoading(true);
         try {
-            const res = await fetch(`${API_BASE}/api/admin/cost?days=${days}`, {
-                headers: { "X-Admin-Key": getAdminKey() },
-            });
+            const res = await adminFetch(`/api/admin/cost?days=${days}`);
             if (res.ok) setData(await res.json());
         } finally {
             setLoading(false);

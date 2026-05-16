@@ -17,126 +17,101 @@ export function registerAdminRoutes(
     const repo = new AdminRepository(db);
     const adminHook = createAdminHook(adminApiKeys, logger);
 
-    // All /api/admin/* routes require X-Admin-Key
-    app.addHook('onRequest', async (request, reply) => {
-        if (!request.url.startsWith('/api/admin')) return;
-        await new Promise<void>((resolve, reject) => {
-            adminHook(request, reply, (err?: unknown) => {
-                if (err) reject(err); else resolve();
-            });
+    // 使用 Fastify 插件封装，将 adminHook 作用域限制在 /api/admin/* 路由内，
+    // 避免全局 onRequest hook + URL 前缀判断的开销与 Promise 泄漏问题。
+    app.register(async (admin) => {
+        admin.addHook('onRequest', adminHook);
+
+        // ─── Overview ────────────────────────────────────────────────────────────
+
+        admin.get('/api/admin/stats', async () => {
+            return repo.getOverviewStats();
         });
-    });
 
-    // ─── Overview ──────────────────────────────────────────────────────────────
+        // ─── Skill Reviews ───────────────────────────────────────────────────────
+        // 注：skill_reviews 由 Phase 9.5 技能生命周期管理自动写入，此处仅提供审批 API
 
-    app.get('/api/admin/stats', async () => {
-        return repo.getOverviewStats();
-    });
+        admin.get<{ Querystring: { status?: string } }>('/api/admin/skills/review', async (request) => {
+            const { status } = request.query as { status?: string };
+            return repo.listSkillReviews(status as SkillReviewStatus | undefined);
+        });
 
-    // ─── Skill Reviews ─────────────────────────────────────────────────────────
+        admin.post<{
+            Params: { name: string };
+            Body: { status: SkillReviewStatus; notes?: string };
+        }>('/api/admin/skills/review/:name', async (request, reply) => {
+            const { name } = request.params;
+            const { status, notes } = request.body;
 
-    app.get<{ Querystring: { status?: string } }>('/api/admin/skills/review', async (request) => {
-        const { status } = request.query as { status?: string };
-        return repo.listSkillReviews(status as SkillReviewStatus | undefined);
-    });
+            if (!['approved', 'rejected'].includes(status)) {
+                reply.status(400); return { error: 'status must be approved or rejected' };
+            }
 
-    app.post<{
-        Params: { name: string };
-        Body: { status: SkillReviewStatus; notes?: string };
-    }>('/api/admin/skills/review/:name', async (request, reply) => {
-        const { name } = request.params;
-        const { status, notes } = request.body;
+            const adminId = getAdminId(request);
+            const updated = repo.updateSkillReview(name, status, adminId, notes);
+            if (!updated) { reply.status(404); return { error: 'skill not found' }; }
 
-        if (!['approved', 'rejected'].includes(status)) {
-            reply.status(400); return { error: 'status must be approved or rejected' };
-        }
+            repo.logAdminAction(adminId, `skill_review_${status}`, name, notes);
+            logger.info(`[admin] ${adminId} ${status} skill ${name}`);
+            return updated;
+        });
 
-        const adminId = getAdminId(request);
-        const updated = repo.updateSkillReview(name, status, adminId, notes);
-        if (!updated) { reply.status(404); return { error: 'skill not found' }; }
+        // ─── RBAC Rules ──────────────────────────────────────────────────────────
+        // 注：规则当前仅持久化存储，运行时执行层将在 Phase 9 接入 SkillRegistry。
 
-        repo.logAdminAction(adminId, `skill_review_${status}`, name, notes);
-        logger.info(`[admin] ${adminId} ${status} skill ${name}`);
-        return updated;
-    });
+        admin.get('/api/admin/rbac', async () => {
+            return repo.listRbacRules();
+        });
 
-    // ─── RBAC Rules ────────────────────────────────────────────────────────────
+        admin.post<{
+            Body: { subject: string; scope: string; effect: RbacEffect };
+        }>('/api/admin/rbac', async (request, reply) => {
+            const { subject, scope, effect } = request.body;
+            if (!subject || !scope || !['allow', 'deny'].includes(effect)) {
+                reply.status(400); return { error: 'subject, scope, effect(allow|deny) required' };
+            }
+            const adminId = getAdminId(request);
+            const rule = repo.createRbacRule(subject, scope, effect, adminId);
+            repo.logAdminAction(adminId, 'rbac_create', `${subject}:${scope}`, effect);
+            return rule;
+        });
 
-    app.get('/api/admin/rbac', async () => {
-        return repo.listRbacRules();
-    });
+        admin.delete<{ Params: { id: string } }>('/api/admin/rbac/:id', async (request, reply) => {
+            const { id } = request.params;
+            const adminId = getAdminId(request);
+            const ok = repo.deleteRbacRule(id);
+            if (!ok) { reply.status(404); return { error: 'rule not found' }; }
+            repo.logAdminAction(adminId, 'rbac_delete', id);
+            return { ok: true };
+        });
 
-    app.post<{
-        Body: { subject: string; scope: string; effect: RbacEffect };
-    }>('/api/admin/rbac', async (request, reply) => {
-        const { subject, scope, effect } = request.body;
-        if (!subject || !scope || !['allow', 'deny'].includes(effect)) {
-            reply.status(400); return { error: 'subject, scope, effect(allow|deny) required' };
-        }
-        const adminId = getAdminId(request);
-        const rule = repo.createRbacRule(subject, scope, effect, adminId);
-        repo.logAdminAction(adminId, 'rbac_create', `${subject}:${scope}`, effect);
-        return rule;
-    });
+        // ─── Audit Query ─────────────────────────────────────────────────────────
 
-    app.delete<{ Params: { id: string } }>('/api/admin/rbac/:id', async (request, reply) => {
-        const { id } = request.params;
-        const adminId = getAdminId(request);
-        const ok = repo.deleteRbacRule(id);
-        if (!ok) { reply.status(404); return { error: 'rule not found' }; }
-        repo.logAdminAction(adminId, 'rbac_delete', id);
-        return { ok: true };
-    });
+        admin.get<{
+            Querystring: { userId?: string; sessionId?: string; type?: string; status?: string; from?: string; to?: string; limit?: string; offset?: string };
+        }>('/api/admin/audit', async (request) => {
+            const { userId, sessionId, type, status, from, to, limit = '50', offset = '0' } = request.query as any;
+            const lim = Math.min(parseInt(limit, 10), 200);
+            const off = parseInt(offset, 10);
+            return repo.queryAuditRecords({ userId, sessionId, type, status, from, to, limit: lim, offset: off });
+        });
 
-    // ─── Audit Query ───────────────────────────────────────────────────────────
+        // ─── Cost Dashboard ──────────────────────────────────────────────────────
 
-    app.get<{
-        Querystring: { userId?: string; sessionId?: string; type?: string; status?: string; from?: string; to?: string; limit?: string; offset?: string };
-    }>('/api/admin/audit', async (request) => {
-        const { userId, sessionId, type, status, from, to, limit = '50', offset = '0' } = request.query as any;
-        const lim = Math.min(parseInt(limit, 10), 200);
-        const off = parseInt(offset, 10);
+        admin.get<{ Querystring: { days?: string } }>('/api/admin/cost', async (request) => {
+            const days = Math.min(parseInt((request.query as any).days ?? '30', 10), 90);
+            return {
+                daily: repo.getCostDaily(days),
+                byModel: repo.getCostByModel(days),
+                topUsers: repo.getCostTopUsers(days),
+            };
+        });
 
-        const conditions: string[] = [];
-        const params: unknown[] = [];
+        // ─── Admin Audit Log ─────────────────────────────────────────────────────
 
-        if (userId) { conditions.push('user_id = ?'); params.push(userId); }
-        if (sessionId) { conditions.push('session_id = ?'); params.push(sessionId); }
-        if (type) { conditions.push('type = ?'); params.push(type); }
-        if (status) { conditions.push('status = ?'); params.push(status); }
-        if (from) { conditions.push('started_at >= ?'); params.push(from); }
-        if (to) { conditions.push('started_at <= ?'); params.push(to); }
-
-        const where = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
-
-        try {
-            const rows = db.prepare(
-                `SELECT * FROM execution_records ${where} ORDER BY started_at DESC LIMIT ? OFFSET ?`
-            ).all(...(params as import('node:sqlite').SQLInputValue[]), lim, off);
-
-            const total = (db.prepare(
-                `SELECT COUNT(*) as c FROM execution_records ${where}`
-            ).get(...(params as import('node:sqlite').SQLInputValue[])) as any)?.c ?? 0;
-
-            return { rows, total, limit: lim, offset: off };
-        } catch { return { rows: [], total: 0, limit: lim, offset: off }; }
-    });
-
-    // ─── Cost Dashboard ────────────────────────────────────────────────────────
-
-    app.get<{ Querystring: { days?: string } }>('/api/admin/cost', async (request) => {
-        const days = Math.min(parseInt((request.query as any).days ?? '30', 10), 90);
-        return {
-            daily: repo.getCostDaily(days),
-            byModel: repo.getCostByModel(days),
-            topUsers: repo.getCostTopUsers(days),
-        };
-    });
-
-    // ─── Admin Audit Log ───────────────────────────────────────────────────────
-
-    app.get<{ Querystring: { limit?: string } }>('/api/admin/log', async (request) => {
-        const limit = Math.min(parseInt((request.query as any).limit ?? '50', 10), 200);
-        return repo.listAdminAuditLog(limit);
+        admin.get<{ Querystring: { limit?: string } }>('/api/admin/log', async (request) => {
+            const limit = Math.min(parseInt((request.query as any).limit ?? '50', 10), 200);
+            return repo.listAdminAuditLog(limit);
+        });
     });
 }

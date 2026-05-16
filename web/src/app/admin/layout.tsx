@@ -14,8 +14,7 @@ import {
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-
-const ADMIN_KEY_STORAGE = "cmaster_admin_key";
+import { ADMIN_KEY_STORAGE, API_BASE } from "@/lib/admin";
 
 const NAV_ITEMS = [
     { href: "/admin", label: "概览", icon: LayoutDashboard },
@@ -39,7 +38,7 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
     }, []);
 
     const handleLogin = async () => {
-        const res = await fetch("/api/admin/stats", {
+        const res = await fetch(`${API_BASE}/api/admin/stats`, {
             headers: { "X-Admin-Key": inputKey },
         });
         if (res.ok) {
@@ -135,8 +134,3 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
     );
 }
 
-/** Hook: 获取存储的 admin key 用于 API 调用 */
-export function useAdminKey(): string {
-    if (typeof window === "undefined") return "";
-    return localStorage.getItem(ADMIN_KEY_STORAGE) ?? "";
-}

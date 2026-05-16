@@ -7,12 +7,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Download, RefreshCw, Search } from "lucide-react";
-
-const API_BASE = process.env.NEXT_PUBLIC_API_URL || "";
-const ADMIN_KEY_STORAGE = "cmaster_admin_key";
-function getAdminKey() {
-    return typeof window !== "undefined" ? localStorage.getItem(ADMIN_KEY_STORAGE) ?? "" : "";
-}
+import { adminFetch, API_BASE } from "@/lib/admin";
 
 interface AuditRecord {
     id: string;
@@ -66,9 +61,7 @@ export default function AdminAuditPage() {
         setLoading(true);
         setPage(newPage);
         try {
-            const res = await fetch(`${API_BASE}/api/admin/audit?${buildQs(newPage * PAGE_SIZE)}`, {
-                headers: { "X-Admin-Key": getAdminKey() },
-            });
+            const res = await adminFetch(`/api/admin/audit?${buildQs(newPage * PAGE_SIZE)}`);
             if (res.ok) {
                 const data = await res.json();
                 setRecords(data.rows ?? []);

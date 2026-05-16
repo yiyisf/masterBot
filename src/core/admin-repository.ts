@@ -70,15 +70,17 @@ export class AdminRepository {
         reviewer: string,
         notes?: string,
     ): SkillReview | null {
-        this.db.prepare(`
+        const result = this.db.prepare(`
             UPDATE skill_reviews
             SET status = ?, reviewer = ?, review_notes = ?, updated_at = datetime('now')
             WHERE skill_name = ?
         `).run(status, reviewer, notes ?? null, skillName);
 
-        return (this.db.prepare(
+        if ((result as any).changes === 0) return null;
+
+        return this.db.prepare(
             'SELECT * FROM skill_reviews WHERE skill_name = ?'
-        ).get(skillName) as unknown as SkillReview | undefined) ?? null;
+        ).get(skillName) as unknown as SkillReview;
     }
 
     // ─── RBAC Rules ───────────────────────────────────────────────────────────
@@ -159,6 +161,46 @@ export class AdminRepository {
         return this.db.prepare(
             'SELECT * FROM admin_audit_log ORDER BY created_at DESC LIMIT ?'
         ).all(limit) as unknown as AdminAuditEntry[];
+    }
+
+    // ─── Audit Query ─────────────────────────────────────────────────────────
+
+    queryAuditRecords(opts: {
+        userId?: string;
+        sessionId?: string;
+        type?: string;
+        status?: string;
+        from?: string;
+        to?: string;
+        limit: number;
+        offset: number;
+    }): { rows: unknown[]; total: number; limit: number; offset: number } {
+        const { userId, sessionId, type, status, from, to, limit, offset } = opts;
+        const conditions: string[] = [];
+        const params: unknown[] = [];
+
+        if (userId) { conditions.push('user_id = ?'); params.push(userId); }
+        if (sessionId) { conditions.push('session_id = ?'); params.push(sessionId); }
+        if (type) { conditions.push('type = ?'); params.push(type); }
+        if (status) { conditions.push('status = ?'); params.push(status); }
+        if (from) { conditions.push('started_at >= ?'); params.push(from); }
+        if (to) { conditions.push('started_at <= ?'); params.push(to); }
+
+        const where = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
+
+        try {
+            const rows = this.db.prepare(
+                `SELECT * FROM execution_records ${where} ORDER BY started_at DESC LIMIT ? OFFSET ?`
+            ).all(...(params as import('node:sqlite').SQLInputValue[]), limit, offset);
+
+            const total = (this.db.prepare(
+                `SELECT COUNT(*) as c FROM execution_records ${where}`
+            ).get(...(params as import('node:sqlite').SQLInputValue[])) as any)?.c ?? 0;
+
+            return { rows, total, limit, offset };
+        } catch {
+            return { rows: [], total: 0, limit, offset };
+        }
     }
 
     // ─── Cost data ────────────────────────────────────────────────────────────

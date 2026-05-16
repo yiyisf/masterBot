@@ -5,14 +5,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Bot, CheckSquare, Clock, Coins, RefreshCw } from "lucide-react";
 import { Button } from "@/components/ui/button";
-
-const API_BASE = process.env.NEXT_PUBLIC_API_URL || "";
-const ADMIN_KEY_STORAGE = "cmaster_admin_key";
-
-function getAdminKey() {
-    if (typeof window === "undefined") return "";
-    return localStorage.getItem(ADMIN_KEY_STORAGE) ?? "";
-}
+import { adminFetch } from "@/lib/admin";
 
 interface Stats {
     agentCallsToday: number;
@@ -29,9 +22,7 @@ export default function AdminOverviewPage() {
     const load = async () => {
         setLoading(true);
         try {
-            const res = await fetch(`${API_BASE}/api/admin/stats`, {
-                headers: { "X-Admin-Key": getAdminKey() },
-            });
+            const res = await adminFetch("/api/admin/stats");
             if (res.ok) setStats(await res.json());
         } finally {
             setLoading(false);

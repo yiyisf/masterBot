@@ -7,12 +7,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Plus, Trash2, RefreshCw, Shield } from "lucide-react";
-
-const API_BASE = process.env.NEXT_PUBLIC_API_URL || "";
-const ADMIN_KEY_STORAGE = "cmaster_admin_key";
-function getAdminKey() {
-    return typeof window !== "undefined" ? localStorage.getItem(ADMIN_KEY_STORAGE) ?? "" : "";
-}
+import { adminFetch } from "@/lib/admin";
 
 interface RbacRule {
     id: string;
@@ -34,9 +29,7 @@ export default function RbacPage() {
     const load = async () => {
         setLoading(true);
         try {
-            const res = await fetch(`${API_BASE}/api/admin/rbac`, {
-                headers: { "X-Admin-Key": getAdminKey() },
-            });
+            const res = await adminFetch("/api/admin/rbac");
             if (res.ok) setRules(await res.json());
         } finally {
             setLoading(false);
@@ -49,9 +42,8 @@ export default function RbacPage() {
         if (!subject.trim() || !scope.trim()) return;
         setAdding(true);
         try {
-            const res = await fetch(`${API_BASE}/api/admin/rbac`, {
+            const res = await adminFetch("/api/admin/rbac", {
                 method: "POST",
-                headers: { "Content-Type": "application/json", "X-Admin-Key": getAdminKey() },
                 body: JSON.stringify({ subject: subject.trim(), scope: scope.trim(), effect }),
             });
             if (res.ok) {
@@ -67,10 +59,7 @@ export default function RbacPage() {
 
     const deleteRule = async (id: string) => {
         if (!confirm("确认删除此规则？")) return;
-        const res = await fetch(`${API_BASE}/api/admin/rbac/${id}`, {
-            method: "DELETE",
-            headers: { "X-Admin-Key": getAdminKey() },
-        });
+        const res = await adminFetch(`/api/admin/rbac/${id}`, { method: "DELETE" });
         if (res.ok) await load();
     };
 
