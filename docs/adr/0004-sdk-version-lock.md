@@ -1,6 +1,6 @@
 # ADR 0004: Claude Agent SDK 版本锁定策略
 
-**Status**: Accepted  
+**Status**: Superseded by [ADR-0006](0006-zod-v4-upgrade.md)（zod v4 升级已于 Phase 6.5 完成）  
 **Date**: 2026-05-10  
 **Deciders**: yiyisf  
 
@@ -46,9 +46,9 @@
 
 ## Action Items
 
-- [ ] Phase 2 引入 `IAgent` 接口时，一并升级 zod 3 → 4
-- [ ] 升级后更新本 ADR 状态为 `Superseded`，新建 ADR 0005 记录 zod 升级决策
-- [ ] CI 配置中临时添加 `--legacy-peer-deps`（见 `.github/workflows/ci.yml`）
+- [x] ~~Phase 2 引入 `IAgent` 接口时，一并升级 zod 3 → 4~~ → 推迟到 Phase 6.5 执行（见 ADR-0006）
+- [x] ~~升级后更新本 ADR 状态为 `Superseded`~~ → 已完成，见本文件头部 Status
+- [x] ~~CI 配置中临时添加 `--legacy-peer-deps`~~ → Phase 6.5 升级 zod v4 后已移除
 
 ---
 
