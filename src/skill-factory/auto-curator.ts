@@ -41,39 +41,40 @@ export class AutoCurator {
         const now = new Date().toISOString();
 
         for (const skill of skills) {
-            const ageMs = Date.now() - new Date(skill.created_at).getTime();
-            const ageDays = ageMs / (1000 * 60 * 60 * 24);
+            const ageDays = (Date.now() - new Date(skill.created_at).getTime()) / (1000 * 60 * 60 * 24);
             const usage = skill.usage_30d;
-
-            let newStatus = skill.curation_status;
+            let newCurationStatus = skill.curation_status;
+            let archive = false;
 
             if (usage > 100) {
-                newStatus = 'featured';
-                featured.push(skill.skill_name);
+                if (skill.curation_status !== 'featured') {
+                    newCurationStatus = 'featured';
+                    featured.push(skill.skill_name);
+                }
             } else if (usage < 5 && ageDays > 30) {
-                if (skill.curation_status === 'needs_improvement' && ageDays > 37) {
-                    // Already marked needs_improvement for >7 days → archive
-                    newStatus = 'archived';
-                    archived.push(skill.skill_name);
-                    this.db.prepare(
-                        `UPDATE skill_catalog SET state = 'deprecated', curation_status = 'archived', updated_at = ? WHERE skill_name = ?`
-                    ).run(now, skill.skill_name);
-                } else if (skill.curation_status !== 'needs_improvement') {
-                    newStatus = 'needs_improvement';
-                    needsImprovement.push(skill.skill_name);
-                } else {
+                if (skill.curation_status === 'needs_improvement') {
+                    // 已经标记 needs_improvement，且存在超过 37 天（至少有一次 curation 周期后仍低频）→ 归档
+                    if (ageDays > 37) {
+                        archive = true;
+                        archived.push(skill.skill_name);
+                    } else {
+                        needsImprovement.push(skill.skill_name);
+                    }
+                } else if (skill.curation_status !== 'archived') {
+                    newCurationStatus = 'needs_improvement';
                     needsImprovement.push(skill.skill_name);
                 }
             }
 
-            if (newStatus !== skill.curation_status) {
+            // 每个 skill 只执行一次 UPDATE，避免双写
+            if (archive) {
                 this.db.prepare(
-                    `UPDATE skill_catalog SET curation_status = ?, usage_30d = ?, updated_at = ? WHERE skill_name = ?`
-                ).run(newStatus, usage, now, skill.skill_name);
+                    `UPDATE skill_catalog SET state = 'deprecated', curation_status = 'archived', usage_30d = ?, updated_at = ? WHERE skill_name = ?`
+                ).run(usage, now, skill.skill_name);
             } else {
                 this.db.prepare(
-                    `UPDATE skill_catalog SET usage_30d = ?, updated_at = ? WHERE skill_name = ?`
-                ).run(usage, now, skill.skill_name);
+                    `UPDATE skill_catalog SET curation_status = ?, usage_30d = ?, updated_at = ? WHERE skill_name = ?`
+                ).run(newCurationStatus, usage, now, skill.skill_name);
             }
         }
 

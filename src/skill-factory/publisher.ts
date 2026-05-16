@@ -51,14 +51,18 @@ export class SkillPublisher {
         const author = authorMatch ? authorMatch[1].trim() : 'SkillFactory-2.0';
 
         this.db.prepare(
-            `INSERT OR REPLACE INTO skill_catalog
+            `INSERT INTO skill_catalog
              (id, skill_name, skill_path, description, category, author, version, state, curation_status, created_at, updated_at)
-             VALUES (
-               COALESCE((SELECT id FROM skill_catalog WHERE skill_name = ?), ?),
-               ?, ?, ?, ?, ?, ?, 'active', 'normal', ?, ?
-             )`
+             VALUES (?, ?, ?, ?, ?, ?, ?, 'active', 'normal', ?, ?)
+             ON CONFLICT(skill_name) DO UPDATE SET
+               skill_path = excluded.skill_path,
+               description = excluded.description,
+               category = excluded.category,
+               author = excluded.author,
+               version = excluded.version,
+               state = 'active',
+               updated_at = excluded.updated_at`
         ).run(
-            job.spec.name,
             catalogId,
             job.spec.name,
             targetDir,

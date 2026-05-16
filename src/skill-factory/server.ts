@@ -33,6 +33,16 @@ export class EnterpriseSkillFactory {
 
         // Re-run Stage 3b + 4a + 4b server-side
         const securityResult = await this.securityScanner.scan(jobData.generatedFiles.indexTs);
+
+        // 服务端安全扫描是强制门控：critical/high 直接拒绝，不进入评审队列
+        if (!securityResult.passed) {
+            const blocked = securityResult.findings
+                .filter(f => f.severity === 'critical' || f.severity === 'high')
+                .map(f => `[${f.severity}] ${f.message}`)
+                .join('; ');
+            throw new Error(`服务端安全扫描拒绝提交：${blocked}`);
+        }
+
         const sandboxResult = await this.sandboxTester.runTests(
             jobData.generatedFiles.indexTs,
             jobData.spec.testCases,

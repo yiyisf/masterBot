@@ -11,7 +11,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { CheckCircle2, XCircle, AlertCircle, Loader2, ChevronRight, ArrowLeft, Wand2 } from "lucide-react";
 import { toast } from "sonner";
-import { fetchApi } from "@/lib/api";
+import { adminFetch } from "@/lib/admin";
 
 type StepState = "idle" | "loading" | "success" | "error";
 
@@ -70,13 +70,13 @@ export default function SkillFactoryPage() {
         setStepState("loading");
         setStepError("");
         try {
-            const result: any = await fetchApi(`/api/admin/skill-factory/jobs/${currentJob.id}/run`, {
+            const result: any = await adminFetch(`/api/admin/skill-factory/jobs/${currentJob.id}/run`, {
                 method: "POST",
                 body: JSON.stringify({ stages }),
-            });
+            }).then(r => r.json());
             if (result.error) throw new Error(result.error);
 
-            const updated: Job = await fetchApi(`/api/admin/skill-factory/jobs/${currentJob.id}`);
+            const updated: Job = await adminFetch(`/api/admin/skill-factory/jobs/${currentJob.id}`).then(r => r.json());
             setJob(updated);
             setStepState("success");
             return updated;
@@ -92,10 +92,10 @@ export default function SkillFactoryPage() {
         setStepState("loading");
         setStepError("");
         try {
-            const newJob: Job = await fetchApi("/api/admin/skill-factory/jobs", {
+            const newJob: Job = await adminFetch("/api/admin/skill-factory/jobs", {
                 method: "POST",
                 body: JSON.stringify({ intent }),
-            });
+            }).then(r => r.json());
             const updated = await runPipeline(["1"], newJob);
             setEditedSpec(updated.spec ?? {});
             setCurrentStep(1);
@@ -174,7 +174,7 @@ export default function SkillFactoryPage() {
         if (!job) return;
         setStepState("loading");
         try {
-            const result: any = await fetchApi(`/api/admin/skill-factory/jobs/${job.id}/install`, { method: "POST", body: "{}" });
+            const result: any = await adminFetch(`/api/admin/skill-factory/jobs/${job.id}/install`, { method: "POST", body: "{}" }).then(r => r.json());
             if (result.error) throw new Error(result.error);
             setPublishPath(result.path);
             toast.success(`技能已安装为草稿: ${result.path}`);
@@ -190,7 +190,7 @@ export default function SkillFactoryPage() {
         if (!job) return;
         setStepState("loading");
         try {
-            const result: any = await fetchApi(`/api/admin/skill-factory/jobs/${job.id}/submit`, { method: "POST", body: "{}" });
+            const result: any = await adminFetch(`/api/admin/skill-factory/jobs/${job.id}/submit`, { method: "POST", body: "{}" }).then(r => r.json());
             if (result.error) throw new Error(result.error);
             toast.success(`已提交企业评审，reviewId: ${result.reviewId}`);
             setCurrentStep(4);

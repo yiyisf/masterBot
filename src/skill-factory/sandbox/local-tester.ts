@@ -8,15 +8,6 @@ import type { SkillSpec, SandboxTestResult } from '../types.js';
 
 const execFileAsync = promisify(execFile);
 
-function hasTsx(): boolean {
-    try {
-        execFile('tsx', ['--version'], { timeout: 5000 });
-        return true;
-    } catch {
-        return false;
-    }
-}
-
 async function checkTsx(): Promise<boolean> {
     try {
         await execFileAsync('tsx', ['--version'], { timeout: 5000 });
@@ -77,7 +68,7 @@ export class LocalSandboxTester {
         indexTs: string,
         testCases: SkillSpec['testCases'],
         _spec: SkillSpec,
-        options: { timeoutMs?: number; maxMemoryMb?: number } = {}
+        options: { timeoutMs?: number } = {}
     ): Promise<SandboxTestResult> {
         const timeoutMs = options.timeoutMs ?? 30000;
 

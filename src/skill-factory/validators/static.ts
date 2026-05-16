@@ -50,11 +50,6 @@ export class StaticValidator {
             }
         }
 
-        // index.ts — each spec action should have export function
-        const actionNames = Object.keys(spec.inputs).length > 0
-            ? [spec.name.replace(/-([a-z])/g, (_, c) => c.toUpperCase())]
-            : [];
-
         // Check export functions exist — look for any "export async function" or "export function"
         const exportCount = (files.indexTs.match(/export\s+(?:async\s+)?function\s+\w+/g) || []).length;
         if (exportCount === 0) {
