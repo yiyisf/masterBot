@@ -465,6 +465,41 @@ export function initDatabase(): DatabaseSync {
         insertTemplate.run(t.id, t.title, t.description, t.prompt, t.category);
     }
 
+    // Phase 8: Admin Console — skill_reviews + rbac_rules
+    db.exec(`
+        CREATE TABLE IF NOT EXISTS skill_reviews (
+            id TEXT PRIMARY KEY,
+            skill_name TEXT NOT NULL UNIQUE,
+            skill_path TEXT NOT NULL,
+            status TEXT NOT NULL DEFAULT 'pending',
+            review_notes TEXT,
+            reviewer TEXT,
+            created_at TEXT NOT NULL DEFAULT (datetime('now')),
+            updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+        );
+        CREATE INDEX IF NOT EXISTS idx_skill_reviews_status ON skill_reviews(status);
+
+        CREATE TABLE IF NOT EXISTS rbac_rules (
+            id TEXT PRIMARY KEY,
+            subject TEXT NOT NULL,
+            scope TEXT NOT NULL,
+            effect TEXT NOT NULL,
+            created_by TEXT,
+            created_at TEXT NOT NULL DEFAULT (datetime('now'))
+        );
+        CREATE INDEX IF NOT EXISTS idx_rbac_subject ON rbac_rules(subject);
+
+        CREATE TABLE IF NOT EXISTS admin_audit_log (
+            id TEXT PRIMARY KEY,
+            admin_id TEXT NOT NULL,
+            action TEXT NOT NULL,
+            target TEXT,
+            detail TEXT,
+            created_at TEXT NOT NULL DEFAULT (datetime('now'))
+        );
+        CREATE INDEX IF NOT EXISTS idx_admin_audit_created ON admin_audit_log(created_at);
+    `);
+
     return db;
 }
 

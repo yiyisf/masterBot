@@ -18,6 +18,7 @@ import { taskRepository } from '../core/task-repository.js';
 import { McpSkillSource } from '../skills/mcp-source.js';
 import { McpRegistryClient } from '../skills/mcp-registry.js';
 import { createAuthHook } from './auth.js';
+import { registerAdminRoutes } from './admin-router.js';
 import { db } from '../core/database.js';
 import { webhookRepository } from '../core/webhook-repository.js';
 import { RunbookEngine } from '../core/runbook-engine.js';
@@ -222,6 +223,13 @@ export class GatewayServer {
     private setupRoutes(): void {
         // Health check
         this.app.get('/health', async () => ({ status: 'ok', timestamp: new Date().toISOString() }));
+
+        // Admin Console routes (Phase 8)
+        const adminKeys = this.config.admin?.apiKeys ?? ['admin-changeme'];
+        if (adminKeys.includes('admin-changeme')) {
+            this.logger.warn('[admin] WARNING: using default admin key "admin-changeme" — set ADMIN_API_KEY env var before production use');
+        }
+        registerAdminRoutes(this.app, db, adminKeys, this.logger);
 
         // Chat API (non-streaming)
         this.app.post<{ Body: ChatRequest }>('/api/chat', async (request, reply) => {

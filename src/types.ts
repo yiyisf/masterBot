@@ -361,6 +361,10 @@ export interface Config {
         enabled: boolean;
         retentionDays: number;
     };
+    admin?: {
+        /** admin API 密钥列表，请求携带 X-Admin-Key header */
+        apiKeys: string[];
+    };
 }
 
 export interface McpServerConfig {
