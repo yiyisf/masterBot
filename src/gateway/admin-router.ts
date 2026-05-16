@@ -2,6 +2,7 @@ import type { FastifyInstance } from 'fastify';
 import type { DatabaseSync } from 'node:sqlite';
 import type { Logger } from '../types.js';
 import { AdminRepository, type SkillReviewStatus, type RbacEffect } from '../core/admin-repository.js';
+import { CanaryService } from '../eval/canary.js';
 import { createAdminHook } from './auth.js';
 
 function getAdminId(request: any): string {
@@ -15,6 +16,7 @@ export function registerAdminRoutes(
     logger: Logger,
 ): void {
     const repo = new AdminRepository(db);
+    const canary = new CanaryService(db, logger);
     const adminHook = createAdminHook(adminApiKeys, logger);
 
     // 使用 Fastify 插件封装，将 adminHook 作用域限制在 /api/admin/* 路由内，
@@ -112,6 +114,59 @@ export function registerAdminRoutes(
         admin.get<{ Querystring: { limit?: string } }>('/api/admin/log', async (request) => {
             const limit = Math.min(parseInt((request.query as any).limit ?? '50', 10), 200);
             return repo.listAdminAuditLog(limit);
+        });
+
+        // ─── Canary Flags (Phase 9) ──────────────────────────────────────────────
+
+        admin.get('/api/admin/canary', async () => {
+            return canary.listFlags();
+        });
+
+        admin.post<{
+            Body: {
+                flagName: string;
+                stages?: number[];
+                observeHours?: number;
+                errorRateThreshold?: number;
+            };
+        }>('/api/admin/canary', async (request, reply) => {
+            const { flagName, stages, observeHours, errorRateThreshold } = request.body;
+            if (!flagName || typeof flagName !== 'string') {
+                reply.status(400); return { error: 'flagName is required' };
+            }
+            const flag = canary.createFlag(flagName, {
+                stages,
+                observe_hours: observeHours,
+                error_rate_threshold: errorRateThreshold,
+            });
+            const adminId = getAdminId(request);
+            repo.logAdminAction(adminId, 'canary_create', flagName);
+            return flag;
+        });
+
+        admin.post<{ Params: { name: string } }>('/api/admin/canary/:name/promote', async (request, reply) => {
+            const { name } = request.params;
+            const flag = canary.promoteStage(name);
+            if (!flag) { reply.status(404); return { error: 'flag not found' }; }
+            const adminId = getAdminId(request);
+            repo.logAdminAction(adminId, 'canary_promote', name);
+            return flag;
+        });
+
+        admin.post<{ Params: { name: string } }>('/api/admin/canary/:name/rollback', async (request, reply) => {
+            const { name } = request.params;
+            const flag = canary.rollbackStage(name);
+            if (!flag) { reply.status(404); return { error: 'flag not found' }; }
+            const adminId = getAdminId(request);
+            repo.logAdminAction(adminId, 'canary_rollback', name);
+            return flag;
+        });
+
+        admin.get<{ Params: { name: string } }>('/api/admin/canary/:name/metrics', async (request, reply) => {
+            const { name } = request.params;
+            const flag = canary.getFlag(name);
+            if (!flag) { reply.status(404); return { error: 'flag not found' }; }
+            return canary.getMetrics(name);
         });
     });
 }

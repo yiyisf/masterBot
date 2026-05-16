@@ -1,0 +1,42 @@
+name: Eval Suite
+
+on:
+  push:
+    branches: [refactor/v3]
+  pull_request:
+    branches: [refactor/v3]
+
+jobs:
+  unit-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+      - run: npm ci
+      - run: npm run test:run
+
+  eval-suite:
+    runs-on: ubuntu-latest
+    needs: unit-tests
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+      - run: npm ci
+      - name: Run Eval Suite
+        run: npx vitest run tests/evals/eval-runner.test.ts
+      - name: Generate Eval Report
+        if: always()
+        run: npx tsx scripts/generate-eval-report.ts
+      - name: Upload eval results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: eval-results
+          path: eval-results/
+          retention-days: 30

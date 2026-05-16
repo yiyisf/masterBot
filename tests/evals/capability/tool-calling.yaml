@@ -3,6 +3,8 @@
 # 注意: 这些测试需要 ANTHROPIC_API_KEY + 工具可用
 
 cases:
+  # ─── 原有 7 条 ────────────────────────────────────────────────────────────
+
   - id: shell-ls
     prompt: "请列出当前目录下的文件，用 shell 工具。"
     expect_tool_called: shell
@@ -44,3 +46,147 @@ cases:
     expect_tool_called: shell
     expect_not_empty: true
     tags: [tool-use, error-handling, shell]
+
+  # ─── 工具选择（5 条）──────────────────────────────────────────────────────
+
+  - id: tool-select-shell-vs-file
+    prompt: "请告诉我 /tmp 目录是否存在，你会使用哪个工具？"
+    expect_not_empty: true
+    expect_contains_any: ["shell", "file", "存在", "工具"]
+    tags: [tool-use, tool-selection]
+
+  - id: tool-select-http
+    prompt: "我需要请求 https://httpbin.org/get，应该用哪个工具？请直接调用它。"
+    expect_not_empty: true
+    tags: [tool-use, tool-selection, http]
+
+  - id: tool-select-math-via-shell
+    prompt: "请用 shell 的 Python 命令计算斐波那契数列第 10 项。"
+    expect_tool_called: shell
+    expect_contains_any: ["55", "34"]
+    tags: [tool-use, tool-selection, shell, math]
+
+  - id: tool-select-env-var
+    prompt: "用 shell 查看 HOME 环境变量的值。"
+    expect_tool_called: shell
+    expect_not_empty: true
+    tags: [tool-use, tool-selection, shell]
+
+  - id: tool-select-file-size
+    prompt: "用工具查询 package.json 文件的大小（字节数）。"
+    expect_not_empty: true
+    tags: [tool-use, tool-selection, file]
+
+  # ─── 错误处理（5 条）──────────────────────────────────────────────────────
+
+  - id: error-handle-nonexist-file
+    prompt: "请读取 /nonexistent/path/file.txt，如果失败请说明原因。"
+    expect_not_empty: true
+    expect_not_contains: ["成功读取"]
+    tags: [tool-use, error-handling]
+
+  - id: error-handle-invalid-json
+    prompt: "用 shell 运行 `echo 'not json' | python3 -c \"import json,sys; json.load(sys.stdin)\"`，遇到错误请报告。"
+    expect_tool_called: shell
+    expect_not_empty: true
+    tags: [tool-use, error-handling, shell]
+
+  - id: error-handle-permission
+    prompt: "尝试用 shell 读取 /etc/shadow，如果没有权限请说明。"
+    expect_tool_called: shell
+    expect_not_empty: true
+    tags: [tool-use, error-handling, shell]
+
+  - id: error-handle-timeout
+    prompt: "如果一个 shell 命令超时了，你会怎么处理？请描述。"
+    expect_not_empty: true
+    tags: [tool-use, error-handling]
+
+  - id: error-handle-partial-result
+    prompt: "用 shell 运行 `ls /tmp` 并捕获输出，即使输出很长也请完整返回前 5 行。"
+    expect_tool_called: shell
+    expect_not_empty: true
+    tags: [tool-use, error-handling, shell]
+
+  # ─── 链式调用（5 条）──────────────────────────────────────────────────────
+
+  - id: chain-create-read-delete
+    prompt: "用 shell：1) 创建 /tmp/chain_test.txt 写入 'chain ok'；2) 读取它；3) 删除它；4) 告诉我文件内容。"
+    expect_tool_called: shell
+    expect_contains: ["chain ok"]
+    tags: [tool-use, chaining, shell]
+
+  - id: chain-count-lines
+    prompt: "用 shell 命令获取 package.json 的行数，然后告诉我结果。"
+    expect_tool_called: shell
+    expect_not_empty: true
+    tags: [tool-use, chaining, shell]
+
+  - id: chain-grep-and-count
+    prompt: "用 shell 在 package.json 中搜索 'dependencies' 关键词，并统计出现次数。"
+    expect_tool_called: shell
+    expect_not_empty: true
+    tags: [tool-use, chaining, shell]
+
+  - id: chain-multi-command
+    prompt: "用一条 shell 命令同时获取当前日期和当前目录，并返回两个信息。"
+    expect_tool_called: shell
+    expect_not_empty: true
+    tags: [tool-use, chaining, shell]
+
+  - id: chain-transform-data
+    prompt: "用 shell 命令读取 package.json 并用 Python 提取 name 字段的值。"
+    expect_tool_called: shell
+    expect_not_empty: true
+    tags: [tool-use, chaining, shell]
+
+  # ─── 条件调用（5 条）──────────────────────────────────────────────────────
+
+  - id: conditional-file-exists
+    prompt: "用 shell 检查 /tmp 目录是否存在，如果存在则列出其中的文件，如果不存在则说明。"
+    expect_tool_called: shell
+    expect_not_empty: true
+    tags: [tool-use, conditional, shell]
+
+  - id: conditional-os-check
+    prompt: "用 shell 检测当前操作系统类型（Linux/macOS/Windows），并告诉我。"
+    expect_tool_called: shell
+    expect_not_empty: true
+    tags: [tool-use, conditional, shell]
+
+  - id: conditional-env-check
+    prompt: "检查环境变量 NODE_ENV 是否设置，如果设置了告诉我值，如果没有设置则说 '未设置'。"
+    expect_not_empty: true
+    tags: [tool-use, conditional]
+
+  - id: conditional-file-readable
+    prompt: "用 shell 检查 README.md 是否存在且可读，并说明结果。"
+    expect_tool_called: shell
+    expect_not_empty: true
+    tags: [tool-use, conditional, shell]
+
+  - id: conditional-number-range
+    prompt: "用 shell 生成一个 1-100 的随机数，如果大于 50 输出 'big'，否则输出 'small'。"
+    expect_tool_called: shell
+    expect_contains_any: ["big", "small"]
+    tags: [tool-use, conditional, shell]
+
+  # ─── 输出解析（3 条）──────────────────────────────────────────────────────
+
+  - id: output-parse-json
+    prompt: "用 shell 运行 `echo '{\"status\": \"ok\", \"code\": 200}'` 并解析 status 字段的值告诉我。"
+    expect_tool_called: shell
+    expect_contains_any: ["ok", "200"]
+    tags: [tool-use, output-parsing, shell]
+
+  - id: output-parse-lines
+    prompt: "用 shell 运行 `printf 'line1\\nline2\\nline3'` 并告诉我总共有几行。"
+    expect_tool_called: shell
+    expect_contains_any: ["3", "三", "三行"]
+    tags: [tool-use, output-parsing, shell]
+
+  - id: output-parse-number
+    prompt: "用 shell 计算 `expr 15 \\* 7` 并告诉我结果是多少。"
+    expect_tool_called: shell
+    expect_contains: ["105"]
+    tags: [tool-use, output-parsing, shell]
