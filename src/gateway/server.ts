@@ -229,7 +229,7 @@ export class GatewayServer {
         if (adminKeys.includes('admin-changeme')) {
             this.logger.warn('[admin] WARNING: using default admin key "admin-changeme" — set ADMIN_API_KEY env var before production use');
         }
-        registerAdminRoutes(this.app, db, adminKeys, this.logger);
+        registerAdminRoutes(this.app, db, adminKeys, this.logger, this.agent.getLLMAdapter());
 
         // Chat API (non-streaming)
         this.app.post<{ Body: ChatRequest }>('/api/chat', async (request, reply) => {

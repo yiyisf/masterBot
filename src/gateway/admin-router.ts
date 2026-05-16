@@ -1,9 +1,11 @@
 import type { FastifyInstance } from 'fastify';
 import type { DatabaseSync } from 'node:sqlite';
-import type { Logger } from '../types.js';
+import type { LLMAdapter, Logger } from '../types.js';
 import { AdminRepository, type SkillReviewStatus, type RbacEffect } from '../core/admin-repository.js';
 import { CanaryService } from '../eval/canary.js';
 import { createAdminHook } from './auth.js';
+import { LocalSkillFactory } from '../skill-factory/client.js';
+import { EnterpriseSkillFactory } from '../skill-factory/server.js';
 
 function getAdminId(request: any): string {
     return (request.headers['x-admin-key'] as string).slice(0, 8) + '...';
@@ -14,10 +16,13 @@ export function registerAdminRoutes(
     db: DatabaseSync,
     adminApiKeys: string[],
     logger: Logger,
+    llm?: LLMAdapter,
 ): void {
     const repo = new AdminRepository(db);
     const canary = new CanaryService(db, logger);
     const adminHook = createAdminHook(adminApiKeys, logger);
+    const localFactory = llm ? new LocalSkillFactory(llm, logger, db) : null;
+    const enterpriseFactory = llm ? new EnterpriseSkillFactory(llm, logger, db) : null;
 
     // 使用 Fastify 插件封装，将 adminHook 作用域限制在 /api/admin/* 路由内，
     // 避免全局 onRequest hook + URL 前缀判断的开销与 Promise 泄漏问题。
@@ -168,5 +173,156 @@ export function registerAdminRoutes(
             if (!flag) { reply.status(404); return { error: 'flag not found' }; }
             return canary.getMetrics(name);
         });
+
+        // ─── Skill Factory 2.0 (Phase 9.5) ──────────────────────────────────────
+
+        function requireFactory(reply: any): LocalSkillFactory | null {
+            if (!localFactory) {
+                reply.status(503);
+                reply.send({ error: 'Skill Factory not available: LLM not configured' });
+                return null;
+            }
+            return localFactory;
+        }
+
+        admin.post<{ Body: { intent: string; createdBy?: string } }>(
+            '/api/admin/skill-factory/jobs',
+            async (request, reply) => {
+                const factory = requireFactory(reply);
+                if (!factory) return;
+                const { intent, createdBy } = request.body;
+                if (!intent) { reply.status(400); return { error: 'intent is required' }; }
+                const adminId = getAdminId(request);
+                const job = await factory.createJob(intent, createdBy ?? adminId);
+                return job;
+            }
+        );
+
+        admin.get<{ Querystring: { createdBy?: string } }>(
+            '/api/admin/skill-factory/jobs',
+            async (request) => {
+                const factory = localFactory;
+                if (!factory) return [];
+                const { createdBy } = request.query as { createdBy?: string };
+                return factory.listJobs(createdBy);
+            }
+        );
+
+        admin.get<{ Params: { id: string } }>(
+            '/api/admin/skill-factory/jobs/:id',
+            async (request, reply) => {
+                const factory = requireFactory(reply);
+                if (!factory) return;
+                const job = factory.getJob(request.params.id);
+                if (!job) { reply.status(404); return { error: 'job not found' }; }
+                return job;
+            }
+        );
+
+        admin.post<{ Params: { id: string }; Body: { stages?: string[] } }>(
+            '/api/admin/skill-factory/jobs/:id/run',
+            async (request, reply) => {
+                const factory = requireFactory(reply);
+                if (!factory) return;
+                const { id } = request.params;
+                const stages = (request.body?.stages ?? ['all']);
+                const runAll = stages.includes('all');
+
+                const results: Record<string, unknown> = {};
+                try {
+                    if (runAll || stages.includes('1')) {
+                        results.spec = await factory.runStage1(id);
+                    }
+                    if (runAll || stages.includes('2')) {
+                        results.files = await factory.runStage2(id);
+                    }
+                    if (runAll || stages.includes('3')) {
+                        results.validation = await factory.runStage3(id);
+                    }
+                    if (runAll || stages.includes('4')) {
+                        results.evaluation = await factory.runStage4(id);
+                    }
+                } catch (err: any) {
+                    reply.status(500);
+                    return { error: err.message, partial: results };
+                }
+                return { ok: true, results };
+            }
+        );
+
+        admin.post<{ Params: { id: string } }>(
+            '/api/admin/skill-factory/jobs/:id/install',
+            async (request, reply) => {
+                const factory = requireFactory(reply);
+                if (!factory) return;
+                try {
+                    const path = await factory.installAsDraft(request.params.id);
+                    return { ok: true, path };
+                } catch (err: any) {
+                    reply.status(400); return { error: err.message };
+                }
+            }
+        );
+
+        admin.post<{ Params: { id: string } }>(
+            '/api/admin/skill-factory/jobs/:id/submit',
+            async (request, reply) => {
+                const factory = requireFactory(reply);
+                if (!factory) return;
+                try {
+                    const reviewId = await factory.submitForReview(request.params.id);
+                    const adminId = getAdminId(request);
+                    repo.logAdminAction(adminId, 'skill_factory_submit', request.params.id);
+                    return { ok: true, reviewId };
+                } catch (err: any) {
+                    reply.status(400); return { error: err.message };
+                }
+            }
+        );
+
+        admin.post<{ Params: { id: string }; Body: { notes?: string } }>(
+            '/api/admin/skill-factory/reviews/:id/approve',
+            async (request, reply) => {
+                if (!enterpriseFactory) { reply.status(503); return { error: 'Enterprise factory not available' }; }
+                try {
+                    const adminId = getAdminId(request);
+                    await enterpriseFactory.approveAndPublish(request.params.id, request.body?.notes);
+                    repo.logAdminAction(adminId, 'skill_factory_approve', request.params.id);
+                    return { ok: true };
+                } catch (err: any) {
+                    reply.status(400); return { error: err.message };
+                }
+            }
+        );
+
+        admin.post<{ Params: { id: string }; Body: { reason: string } }>(
+            '/api/admin/skill-factory/reviews/:id/reject',
+            async (request, reply) => {
+                if (!enterpriseFactory) { reply.status(503); return { error: 'Enterprise factory not available' }; }
+                const { reason } = request.body;
+                if (!reason) { reply.status(400); return { error: 'reason is required' }; }
+                try {
+                    const adminId = getAdminId(request);
+                    await enterpriseFactory.reject(request.params.id, reason);
+                    repo.logAdminAction(adminId, 'skill_factory_reject', request.params.id, reason);
+                    return { ok: true };
+                } catch (err: any) {
+                    reply.status(400); return { error: err.message };
+                }
+            }
+        );
+
+        admin.get<{ Querystring: { state?: string; curation?: string } }>(
+            '/api/admin/skill-catalog',
+            async (request) => {
+                const { state, curation } = request.query as { state?: string; curation?: string };
+                let query = 'SELECT * FROM skill_catalog WHERE 1=1';
+                const params: string[] = [];
+                if (state) { query += ' AND state = ?'; params.push(state); }
+                if (curation) { query += ' AND curation_status = ?'; params.push(curation); }
+                query += ' ORDER BY updated_at DESC';
+                return db.prepare(query).all(...(params as unknown as import('node:sqlite').SQLInputValue[]));
+            }
+        );
     });
 }
