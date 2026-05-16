@@ -225,6 +225,18 @@ const data: SidebarData = {
         { title: "审计日志", url: "/audit" },
       ],
     },
+    {
+      title: "管理后台",
+      url: "/admin",
+      icon: BarChart2,
+      items: [
+        { title: "概览", url: "/admin" },
+        { title: "技能审批", url: "/admin/skills/review" },
+        { title: "RBAC 配置", url: "/admin/rbac" },
+        { title: "审计查询", url: "/admin/audit" },
+        { title: "成本看板", url: "/admin/cost" },
+      ],
+    },
   ],
   navSecondary: [
     {

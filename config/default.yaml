@@ -107,3 +107,7 @@ im:
 audit:
   enabled: true
   retentionDays: 90
+
+admin:
+  apiKeys:
+    - ${ADMIN_API_KEY:admin-changeme}

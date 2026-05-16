@@ -9,6 +9,19 @@ export interface AuthConfig {
     jwtSecret?: string;
 }
 
+/** Admin 专用认证 hook：检查 X-Admin-Key header */
+export function createAdminHook(adminApiKeys: string[], logger: Logger) {
+    return function adminHook(request: FastifyRequest, reply: FastifyReply, done: HookHandlerDoneFunction) {
+        const key = request.headers['x-admin-key'] as string | undefined;
+        if (!key || !adminApiKeys.includes(key)) {
+            logger.warn(`Admin auth failed from ${request.ip}: ${request.url}`);
+            reply.status(403).send({ error: 'Forbidden: admin access required' });
+            return;
+        }
+        done();
+    };
+}
+
 /**
  * Create a Fastify onRequest hook for authentication
  */
