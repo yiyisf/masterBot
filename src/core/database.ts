@@ -500,6 +500,46 @@ export function initDatabase(): DatabaseSync {
         CREATE INDEX IF NOT EXISTS idx_admin_audit_created ON admin_audit_log(created_at);
     `);
 
+    // Phase 9.5: Skill Factory 2.0
+    db.exec(`
+        CREATE TABLE IF NOT EXISTS skill_factory_jobs (
+            id TEXT PRIMARY KEY,
+            skill_name TEXT,
+            state TEXT NOT NULL DEFAULT 'drafting',
+            spec_json TEXT,
+            generated_files_json TEXT,
+            validation_json TEXT,
+            security_json TEXT,
+            sandbox_json TEXT,
+            judge_json TEXT,
+            install_path TEXT,
+            review_id TEXT,
+            created_by TEXT,
+            created_at TEXT NOT NULL DEFAULT (datetime('now')),
+            updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+            error TEXT
+        );
+        CREATE INDEX IF NOT EXISTS idx_sfj_state ON skill_factory_jobs(state);
+        CREATE INDEX IF NOT EXISTS idx_sfj_created_by ON skill_factory_jobs(created_by);
+
+        CREATE TABLE IF NOT EXISTS skill_catalog (
+            id TEXT PRIMARY KEY,
+            skill_name TEXT NOT NULL UNIQUE,
+            skill_path TEXT NOT NULL,
+            description TEXT,
+            category TEXT,
+            author TEXT,
+            version TEXT,
+            state TEXT NOT NULL DEFAULT 'active',
+            curation_status TEXT DEFAULT 'normal',
+            usage_30d INTEGER DEFAULT 0,
+            created_at TEXT NOT NULL DEFAULT (datetime('now')),
+            updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+        );
+        CREATE INDEX IF NOT EXISTS idx_sc_state ON skill_catalog(state);
+        CREATE INDEX IF NOT EXISTS idx_sc_curation ON skill_catalog(curation_status);
+    `);
+
     // Phase 9: Evaluation Pyramid — canary_flags + canary_metrics
     db.exec(`
         CREATE TABLE IF NOT EXISTS canary_flags (

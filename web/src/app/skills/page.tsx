@@ -10,6 +10,7 @@ import { Label } from "@/components/ui/label";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { Textarea } from "@/components/ui/textarea";
+import { useRouter } from "next/navigation";
 import { Puzzle, Box, Code, Server, Plus, Trash2, Terminal, Globe, Search, Download, ExternalLink, Loader2, Sparkles, Wand2, CheckCircle2, XCircle, AlertCircle, Wrench } from "lucide-react";
 import { toast } from "sonner";
 import { fetchApi } from "@/lib/api";
@@ -58,6 +59,7 @@ type SkillInfo = {
 };
 
 export default function SkillsPage() {
+    const router = useRouter();
     const [skills, setSkills] = useState<SkillInfo[]>([]);
     const [mcpConfigs, setMcpConfigs] = useState<McpServerConfig[]>([]);
     const [repairing, setRepairing] = useState<string | null>(null);
@@ -220,9 +222,15 @@ export default function SkillsPage() {
 
     return (
         <div className="h-full overflow-y-auto w-full max-w-5xl mx-auto p-6 space-y-8 pb-10">
-            <div>
-                <h1 className="text-3xl font-bold tracking-tight">Skill & MCP Management</h1>
-                <p className="text-muted-foreground mt-1">Configure capabilities and external MCP server connections.</p>
+            <div className="flex items-start justify-between">
+                <div>
+                    <h1 className="text-3xl font-bold tracking-tight">Skill & MCP Management</h1>
+                    <p className="text-muted-foreground mt-1">Configure capabilities and external MCP server connections.</p>
+                </div>
+                <Button onClick={() => router.push("/skills/factory")} className="gap-2 shrink-0">
+                    <Wand2 className="w-4 h-4" />
+                    创建技能
+                </Button>
             </div>
 
             <Tabs defaultValue="available">
