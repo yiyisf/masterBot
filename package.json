@@ -46,7 +46,8 @@
     "setup": "bash scripts/install.sh || powershell -ExecutionPolicy Bypass -File scripts/install.ps1",
     "prepublishOnly": "npm run build",
     "version": "npm run build",
-    "prepack": "npm run build"
+    "prepack": "npm run build",
+    "design:tokens": "node -e \"import('./design/index.ts').then(t => console.log('Design tokens loaded:', Object.keys(t)))\""
   },
   "keywords": [
     "ai",
