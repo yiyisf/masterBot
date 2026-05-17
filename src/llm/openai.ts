@@ -33,14 +33,21 @@ export class OpenAIAdapter implements LLMAdapter {
 
     constructor(config: LLMConfig) {
         this.config = config;
-        // Node.js 18+ 内置 fetch 不读取 https_proxy 环境变量，
-        // 当系统配置了代理时（常见于需要科学上网的环境），需手动注入 httpAgent
+        // Node.js 内置 fetch 不读取 https_proxy 环境变量。
+        // OpenAI SDK 内部使用 node-fetch，需注入 httpAgent。
+        // https-proxy-agent v7+ 作为直接实例传给 node-fetch 时会发生 TLS 握手失败，
+        // 必须包装成函数形式（node-fetch agent function API）。
         const proxyUrl = process.env.https_proxy || process.env.HTTPS_PROXY
             || process.env.http_proxy || process.env.HTTP_PROXY;
-        const httpAgent = proxyUrl ? new HttpsProxyAgent(proxyUrl) : undefined;
+        let httpAgent: import('http').Agent | undefined;
+        if (proxyUrl) {
+            const proxyAgentInstance = new HttpsProxyAgent(proxyUrl);
+            // 包装为函数，规避 https-proxy-agent@7+ 与 node-fetch 直连时的 TLS 兼容问题
+            httpAgent = (() => proxyAgentInstance) as unknown as import('http').Agent;
+        }
         this.client = new OpenAI({
             apiKey: config.apiKey,
-            baseURL: config.baseUrl,
+            baseURL: config.baseUrl || undefined,
             ...(httpAgent ? { httpAgent } : {}),
         });
     }

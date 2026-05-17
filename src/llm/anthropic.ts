@@ -1,4 +1,5 @@
 import Anthropic from '@anthropic-ai/sdk';
+import { HttpsProxyAgent } from 'https-proxy-agent';
 import type {
     LLMAdapter,
     Message,
@@ -19,9 +20,17 @@ export class AnthropicAdapter implements LLMAdapter {
 
     constructor(config: LLMConfig) {
         this.config = config;
+        const proxyUrl = process.env.https_proxy || process.env.HTTPS_PROXY
+            || process.env.http_proxy || process.env.HTTP_PROXY;
+        let httpAgent: import('http').Agent | undefined;
+        if (proxyUrl) {
+            const proxyAgentInstance = new HttpsProxyAgent(proxyUrl);
+            httpAgent = (() => proxyAgentInstance) as unknown as import('http').Agent;
+        }
         this.client = new Anthropic({
             apiKey: config.apiKey,
             baseURL: config.baseUrl || undefined,
+            ...(httpAgent ? { httpAgent } : {}),
         });
     }
 
