@@ -177,6 +177,7 @@ const data: SidebarData = {
       icon: MessageSquare,
       items: [
         { title: "对话界面", url: "/chat" },
+        { title: "历史记录", url: "/history" },
         { title: "定时任务", url: "/scheduled" },
       ],
     },
@@ -185,9 +186,10 @@ const data: SidebarData = {
       url: "/skills",
       icon: Puzzle,
       items: [
-        { title: "技能管理", url: "/skills" },
+        { title: "技能目录", url: "/skills" },
+        { title: "Skill Factory", url: "/skills/factory", badge: "NEW" },
         { title: "企业连接器", url: "/connectors" },
-        { title: "Prompt 模板库", url: "/prompts", badge: "NEW" },
+        { title: "Prompt 模板库", url: "/prompts" },
       ],
     },
     {
