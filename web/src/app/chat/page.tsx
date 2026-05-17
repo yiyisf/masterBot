@@ -8,7 +8,7 @@ import {
     SimpleTextAttachmentAdapter,
 } from "@assistant-ui/react";
 import { Thread } from "@assistant-ui/react-ui";
-import { MyRuntimeAdapter } from "@/lib/assistant-runtime";
+import { AguiRuntimeAdapter } from "@/lib/agui-adapter";
 import { allToolUIs, FallbackToolUI } from "@/components/tool-ui";
 import { SlashComposer } from "@/components/slash-composer";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -34,7 +34,7 @@ function ChatSession({ sessionId }: { sessionId?: string }) {
     const searchParams = useSearchParams();
     const initPrompt = searchParams.get("prompt");
 
-    const adapter = useMemo(() => new MyRuntimeAdapter(sessionId), [sessionId]);
+    const adapter = useMemo(() => new AguiRuntimeAdapter(sessionId), [sessionId]);
     const attachmentAdapter = useMemo(() => new CompositeAttachmentAdapter([
         new SimpleImageAttachmentAdapter(),
         new SimpleTextAttachmentAdapter(),

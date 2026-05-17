@@ -43,6 +43,7 @@ export interface AguiEvent {
   delta?: string;
   args?: Record<string, unknown>;
   result?: unknown;
+  duration?: number;
   state?: Record<string, unknown>;
   interruptId?: string;
   interruptReason?: string;
@@ -56,13 +57,15 @@ export interface AguiRunOptions {
   sessionId: string;
   history?: Array<{ role: string; content: string }>;
   attachments?: unknown[];
+  /** 多模态内容（图片等），传给后端 messageContent 字段 */
+  messageContent?: unknown[];
   abortSignal?: AbortSignal;
 }
 
 // ── Runtime ──────────────────────────────────────────────────────────────────
 
 export async function* runAgui(options: AguiRunOptions): AsyncGenerator<AguiEvent> {
-  const { message, sessionId, history, attachments, abortSignal } = options;
+  const { message, sessionId, history, attachments, messageContent, abortSignal } = options;
   let msgCounter = 0;
   const nextId = () => `msg-${++msgCounter}-${Date.now()}`;
 
@@ -70,13 +73,18 @@ export async function* runAgui(options: AguiRunOptions): AsyncGenerator<AguiEven
   let currentThinkingId: string | null = null;
   const toolCallIds: Map<string, string> = new Map(); // toolName → toolCallId
 
+  const requestBody: Record<string, unknown> = {
+    message,
+    sessionId,
+    history: history ?? [],
+    attachments: attachments ?? [],
+  };
+  if (messageContent && messageContent.length > 0) {
+    requestBody.messageContent = messageContent;
+  }
+
   try {
-    for await (const chunk of streamApi('/api/chat/stream', {
-      message,
-      sessionId,
-      history: history ?? [],
-      attachments: attachments ?? [],
-    }, abortSignal)) {
+    for await (const chunk of streamApi('/api/chat/stream', requestBody, abortSignal)) {
       const c = chunk as Record<string, unknown>;
 
       switch (c.type) {
@@ -112,10 +120,14 @@ export async function* runAgui(options: AguiRunOptions): AsyncGenerator<AguiEven
         }
 
         case 'observation': {
-          // Try to match back to a tool call
           const toolName = String(c.tool ?? '');
           const toolCallId = toolCallIds.get(toolName) ?? nextId();
-          yield { type: 'TOOL_CALL_END', toolCallId, result: c.content };
+          yield {
+            type: 'TOOL_CALL_END',
+            toolCallId,
+            result: c.content,
+            duration: c.duration as number | undefined,
+          };
           break;
         }
 
@@ -165,8 +177,8 @@ export async function* runAgui(options: AguiRunOptions): AsyncGenerator<AguiEven
         }
 
         default:
-          // Pass through unrecognised chunks as state updates
-          if (c.type && c.type !== 'meta') {
+          // 透传所有未识别 chunk（含 meta/suggestions/workflow_generated/grading/task_*/harness 子任务）
+          if (c.type) {
             yield { type: 'STATE_UPDATE', state: c as Record<string, unknown> };
           }
       }
