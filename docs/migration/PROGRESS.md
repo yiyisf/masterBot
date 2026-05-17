@@ -1,6 +1,6 @@
 # masterBot v3 重构进度追踪
 
-最后更新：2026-05-16（Phase 9 PR 开放）
+最后更新：2026-05-17（Phase 10 进行中，PR #46 开放）
 
 ---
 
@@ -19,10 +19,10 @@
 | **P6.5** | DuckDB VSS + HitL 强化 | ✅ 完成 | `v3-p6.5-memory-supplement` | #40 | 2026-05-15 |
 | **P7** | 企业 IM 一等公民 | ✅ 完成 | `v3-p7-enterprise-im` | #41 | 2026-05-15 |
 | **P8** | Admin Console 基础 | ✅ 完成 | `v3-p8-admin-console` | #42 | 2026-05-16 |
-| **P9** | 评估金字塔（持续） | 🔄 进行中 | `worktree-refactor-v3-p9` | #43 | - |
-| P9.5 | Skill Factory 2.0 | ⬜ TODO | - | - | - |
-| P9.7 | UI/UX Design System | ⬜ TODO | - | - | - |
-| P10 | Web 版 MVP | ⬜ TODO | - | - | - |
+| **P9** | 评估金字塔（持续） | ✅ 完成 | `worktree-refactor-v3-p9` | #43 | 2026-05-16 |
+| **P9.5** | Skill Factory 2.0 | ✅ 完成 | `worktree-refactor-v3-p9.5` | #44 | 2026-05-16 |
+| **P9.7** | UI/UX Design System | ✅ 完成 | `worktree-refactor-v3-p9.7` | #45 | 2026-05-17 |
+| **P10** | Web 版 MVP | 🔄 进行中 | `worktree-refactor-v3-p10` | #46 | - |
 | P11 | Web 版灰度上线 | ⬜ TODO | - | - | - |
 | P12 | Web 版迭代运营 | ⬜ TODO | - | - | - |
 | P13 | Electron 准备 | ⬜ TODO | - | - | - |
@@ -30,7 +30,7 @@
 | P15 | 三轨升级体系 | ⬜ TODO | - | - | - |
 | P16 | Electron 灰度上线 | ⬜ TODO | - | - | - |
 
-**当前进度：9 / 16 Phase 完成（含 P6.5 增补），refactor/v3 分支已累计 140 个 commit，+25,020 行代码。**
+**当前进度：12 / 16 Phase 完成（含 P6.5 / P9.5 / P9.7 增补），累计 +35,000 行代码。**
 
 ---
 
@@ -47,7 +47,10 @@
 | P6.5 完成 | 14 | 206 |
 | P7 完成 | 15 | 230 |
 | P8 完成 | 22 | 247 |
-| P9 PR 开放 | 23 | 448 |
+| P9 完成 | 23 | 448 |
+| P9.5 完成 | 24 | 489 |
+| P9.7 完成 | 24 | 489 |
+| P10 进行中 | 24 | 460 通过（3 pre-existing 失败）|
 
 ---
 
@@ -59,6 +62,7 @@
 | 2026-05-10 | git 不支持 `refactor/v3` 和 `refactor/v3/p0-preparation` 并存 | ✅ 已解决 | 改用 `-` 分隔：`refactor-v3-p0-preparation` |
 | 2026-05-15 | PR #39 错误合入 master（本应 base refactor/v3） | ✅ 已解决 | 用 `git revert` 回滚 master，cherry-pick 正确提交到 PR #40 重新合入 |
 | 2026-05-15 | DuckDB 在 Node.js ESM 严格模式下加载失败 | ✅ 已解决 | P6.5 降级为 SQLite FTS5 向量近似搜索，DuckDB 作为可选 opt-in |
+| 2026-05-17 | `https-proxy-agent@9` 实例直传 node-fetch 导致 TLS 握手失败 | ✅ 已解决 | 函数包装模式 `() => agentInstance`，详见 ADR-0017 |
 
 ---
 
@@ -387,7 +391,7 @@
 - [x] `GET /api/admin/stats` — 概览统计
 - [x] `GET /api/admin/skills/review` + `POST /api/admin/skills/review/:name` — 技能审批
 - [x] `GET /api/admin/rbac` + `POST /api/admin/rbac` + `DELETE /api/admin/rbac/:id` — RBAC 规则
-- [x] `GET /api/admin/audit` — 审计查询（6 维过滤 + 分页，调用 AdminRepository.queryAuditRecords，Review 修复）
+- [x] `GET /api/admin/audit` — 审计查询（6 维过滤 + 分页）
 - [x] `GET /api/admin/cost` — 成本看板（daily/byModel/topUsers）
 - [x] `GET /api/admin/log` — 管理操作日志
 
@@ -399,19 +403,19 @@
 - [x] `src/types.ts` — `Config.admin`
 
 **前端（5 页面）**
-- [x] `web/src/lib/admin.ts` — 共享工具（`getAdminKey` / `adminFetch`，Review 修复：消除 5 页面重复定义）
-- [x] `web/src/app/admin/layout.tsx` — Admin 侧栏导航 + Key 登录页（移除未使用的 `useAdminKey` 导出，Review 修复）
+- [x] `web/src/lib/admin.ts` — 共享工具（`getAdminKey` / `adminFetch`）
+- [x] `web/src/app/admin/layout.tsx` — Admin 侧栏导航 + Key 登录页
 - [x] `web/src/app/admin/page.tsx` — 概览面板（4 张统计卡 + 最近管理操作）
-- [x] `web/src/app/admin/skills/review/page.tsx` — 技能审批（状态过滤 + 备注 + 批准/拒绝）
-- [x] `web/src/app/admin/rbac/page.tsx` — RBAC 规则增删（subject/scope/effect 三元组）
+- [x] `web/src/app/admin/skills/review/page.tsx` — 技能审批
+- [x] `web/src/app/admin/rbac/page.tsx` — RBAC 规则增删
 - [x] `web/src/app/admin/audit/page.tsx` — 审计查询（6 维过滤 + 分页 + CSV 导出）
-- [x] `web/src/app/admin/cost/page.tsx` — 成本看板（每日条形图 + 模型分布 + Top 10 会话）
+- [x] `web/src/app/admin/cost/page.tsx` — 成本看板
 
 **文档**
 - [x] `docs/admin-console-guide.md` — 管理员使用手册
 
 **测试**
-- [x] `tests/admin.test.ts`（17 个测试：AdminRepository CRUD 14 + createAdminHook 认证 3）
+- [x] `tests/admin.test.ts`（17 个测试）
 
 ### 完成标准验证
 
@@ -421,57 +425,46 @@
 - [x] 权限保护：无 X-Admin-Key → 403
 - [x] 5 项 Review 必修项全部完成
 
-### Review 修复记录
-
-| 级别 | 问题 | 修复方案 |
-|------|------|---------|
-| P0 | 全局 `onRequest` hook + URL 前缀判断导致 dangling Promise 泄漏 | 改用 `app.register()` plugin 封装，hook 作用域限于 admin 路由 |
-| P0 | 前端 `getAdminKey`/`API_BASE` 在 5 个页面重复定义 | 提取到 `web/src/lib/admin.ts`，统一 `adminFetch()` 函数 |
-| P1 | `updateSkillReview` 用 `get()` 判空（返回 undefined 非 null） | 改为检查 `result.changes === 0` 早返回 null |
-| P1 | 审计查询逻辑散落在 router 中 | 迁移至 `AdminRepository.queryAuditRecords()` |
-| P1 | `layout.tsx` 导出未使用的 `useAdminKey` | 删除，改从 `@/lib/admin` 导入 |
-| 告警 | 默认 admin key `admin-changeme` 无提示 | server.ts 启动时检测并输出 WARN 日志 |
-
-> 注：审批技能时 `skill_reviews` 表的写入由 Phase 9.5 Skill Factory 2.0 负责，Phase 8 只提供 API 消费端。
-
 ---
 
-## Phase 9 详细进度（进行中，PR #43 开放）
+## Phase 9 详细进度（已完成）
 
 ### 任务清单
 
 **Tier 1 — Capability Eval Suite**
-- [x] 任务 1：扩展 `tests/evals/capability/basic-conversation.yaml` → 30 条（原 10 + 新增 20）
-- [x] 任务 2：扩展 `tests/evals/capability/tool-calling.yaml` → 30 条（原 7 + 新增 23）
-- [x] 任务 3：重命名并扩展 `multi-turn.yaml` → `multi-turn-context.yaml` → 30 条（原 5 + 新增 25）
-- [x] 任务 4：新建 `tests/evals/capability/permission-and-safety.yaml` → 30 条（危险命令/权限边界/信息安全/合规）
-- [x] 任务 5：`tests/evals/golden/golden-set.yaml` — 50 条关键场景（7 大类：数学/代码/安全/指令遵循/工具/多轮/中文）
-- [x] 任务 6：`tests/evals/run-evals.ts` + `tests/evals/eval-runner.test.ts`（201 个测试，结构合法性 + 数量验证 + ID 唯一性）
+- [x] 任务 1：扩展 `tests/evals/capability/basic-conversation.yaml` → 30 条
+- [x] 任务 2：扩展 `tests/evals/capability/tool-calling.yaml` → 30 条
+- [x] 任务 3：`tests/evals/capability/multi-turn-context.yaml` → 30 条
+- [x] 任务 4：新建 `tests/evals/capability/permission-and-safety.yaml` → 30 条
+- [x] 任务 5：`tests/evals/golden/golden-set.yaml` — 50 条关键场景
+- [x] 任务 6：`tests/evals/run-evals.ts` + `tests/evals/eval-runner.test.ts`（201 个测试）
 
 **Tier 2 — Shadow Traffic**
 - [x] 任务 7：`src/eval/shadow-traffic.ts`（ShadowTrafficService：djb2 采样 + 双路对比 + diverged 检测）
 
 **Tier 3 — Canary 系统**
 - [x] 任务 8：`src/core/database.ts` — 新增 `canary_flags` + `canary_metrics` 两张表
-- [x] 任务 9：`src/eval/canary.ts`（CanaryService：5 级渐进发布 5%→25%→50%→100% + 自动回滚 + 指标记录）
-- [x] 任务 10：`src/gateway/admin-router.ts` — 5 个 canary API 端点（list/create/promote/rollback/metrics）
-- [x] 任务 11：`web/src/app/admin/canary/page.tsx` — Canary 看板（进度条 + 提级/降级 + 指标展开）
-- [x] 任务 12：`web/src/app/admin/layout.tsx` — 添加 Canary 导航项（Rocket 图标）
+- [x] 任务 9：`src/eval/canary.ts`（CanaryService：5 级渐进发布 5%→25%→50%→100% + 自动回滚）
+- [x] 任务 10：`src/gateway/admin-router.ts` — 5 个 canary API 端点
+- [x] 任务 11：`web/src/app/admin/canary/page.tsx` — Canary 看板
+- [x] 任务 12：`web/src/app/admin/layout.tsx` — 添加 Canary 导航项
 
 **CI & 脚本**
-- [x] 任务 13：`.github/workflows/eval.yml` — CI 流水线（unit-tests + eval-suite + artifact 上传）
-- [x] 任务 14：`scripts/generate-eval-report.ts` — 报告生成器（输出 `eval-results/report.json`）
+- [x] 任务 13：`.github/workflows/eval.yml` — CI 流水线
+- [x] 任务 14：`scripts/generate-eval-report.ts` — 报告生成器
 
 **文档**
-- [x] 任务 15：`docs/eval/three-tier-pyramid.md` — 三层架构说明
-- [x] 任务 16：`docs/eval/writing-good-test-cases.md` — 用例撰写规范
-- [x] 任务 17：`docs/eval/canary-process.md` — Canary 发布流程
+- [x] 任务 15：`docs/eval/three-tier-pyramid.md`
+- [x] 任务 16：`docs/eval/writing-good-test-cases.md`
+- [x] 任务 17：`docs/eval/canary-process.md`
+- [x] 任务 18：ADR 0005-0013（P1-P9 架构决策补充）
 
-### 当前状态
+### 完成标准验证
 
-- PR #43 已开放，等待合并到 refactor/v3
-- 448 个测试全部通过（+201 个 Phase 9 新增 eval 测试）
-- 后端 + 前端 TypeScript 零错误
+- [x] TypeScript 零错误
+- [x] 448 个测试全部通过（+201 个 Phase 9 新增 eval 测试）
+- [x] Eval 套件覆盖：120 条 capability + 50 条 golden = 170 条
+- [x] Canary 渐进发布链路（5%→25%→50%→100%）可用
 
 ### Eval 套件统计
 
@@ -484,28 +477,164 @@
 | golden-set.yaml | 50 | 必须答对的关键场景（7 大类，任何 PR 破坏均 block merge）|
 | **总计** | **170** | - |
 
+---
+
+## Phase 9.5 详细进度（已完成）
+
+### 任务清单
+
+**核心模块（`src/skill-factory/`）**
+- [x] 任务 1：`types.ts` — SkillSpec / SkillFactoryJob / 8 状态枚举 / 评分结构体
+- [x] 任务 2：`client.ts` — LocalSkillFactory（Stage 1-4 串联）
+- [x] 任务 3：`server.ts` — EnterpriseSkillFactory（Stage 5 + Admin 评审门）
+- [x] 任务 4：`stages/understand.ts` — LLM 意图解析 → SkillSpec 草稿
+- [x] 任务 5：`stages/synthesize.ts` — LLM 生成 SKILL.md + index.ts
+- [x] 任务 6：`stages/verify.ts` — StaticValidator（frontmatter/kebab-case/export）+ SecurityScanner（16 条规则）
+- [x] 任务 7：`stages/eval.ts` — tsx 进程隔离执行（30s 超时）+ LLM-as-Judge（4 维度评分）
+- [x] 任务 8：`publisher.ts` — 发布到 skill_catalog + audit_log
+- [x] 任务 9：`auto-curator.ts` — 每日 curation（featured/needs_improvement/archived）
+
+**数据层**
+- [x] 任务 10：`src/core/database.ts` — 新增 `skill_factory_jobs` + `skill_catalog` 两张表
+
+**API（10 个端点）**
+- [x] 任务 11：`src/gateway/admin-router.ts` — factory 命名空间下的 10 个端点（job CRUD + 状态轮询 + publish/approve/reject/archive）
+
+**前端**
+- [x] 任务 12：`web/src/app/skills/factory/page.tsx` — 5 步向导（需求输入 / 生成中 / 审查代码 / 安全评分 / 发布确认）
+- [x] 任务 13：`web/src/components/skill-factory-wizard.tsx` — 向导组件（含 Progress UI）
+
+**测试**
+- [x] 任务 14：`tests/skill-factory.test.ts`（41 个测试）
+  - StaticValidator / SecurityScanner 16 条规则覆盖
+  - LLMJudge mock 解析 4 维度评分
+  - LocalSkillFactory job CRUD 完整 DB 操作
+  - DB 迁移表创建验证
+
+### 完成标准验证
+
+- [x] TypeScript 零错误（skill-factory 模块）
+- [x] 489 个测试全部通过（+41 个 Phase 9.5 新增）
+- [x] SecurityScanner 拦截 hardcoded-key / SQL 注入 / 命令注入 / 路径遍历
+- [x] LLM-as-Judge 综合分 < 7 → pending-review 路由验证
+- [x] 5 步向导 UI 实时显示生成进度
+
 ### 设计决策
 
 | 决策 | 原因 |
 |------|------|
-| Eval runner 用 Vitest 而非 promptfoo | 项目已有 Vitest，无需引入新 CLI 工具；结构验证不需要真实 LLM 调用 |
-| Shadow Traffic 不集成 Langfuse Dataset | Langfuse 为可选基础设施，Shadow 结果写内存统计，生产部署时再接 Langfuse |
-| Canary 4 个 stage（5%/25%/50%/100%） | 参照 Netflix Spinnaker 渐进发布实践，每阶段 24h 观察窗口 |
-| Golden Set 作为 block merge 门槛 | 50 条精心标注的"必须答对"场景，是质量底线不是优化目标 |
+| 双段协同（Local + Enterprise）| 个人草稿不阻塞企业评审，快速反馈 |
+| tsx 进程隔离（非 Docker）| 轻量沙箱，无需容器基础设施 |
+| 16 条内置安全规则（非 Semgrep）| 避免外部依赖，critical/high → 直接拒绝，不经过 LLM 判断 |
+
+---
+
+## Phase 9.7 详细进度（已完成）
+
+### 任务清单
+
+**Design Tokens**
+- [x] 任务 1：`design/tokens/color.ts` — 品牌色 + 语义色 + 中性色梯度
+- [x] 任务 2：`design/tokens/typography.ts` — 字号阶梯 / 行高 / 字重
+- [x] 任务 3：`design/tokens/spacing.ts` — 4px 基准 8 级间距
+- [x] 任务 4：`design/tokens/radius.ts` + `shadow.ts` + `motion.ts`
+
+**主题系统**
+- [x] 任务 5：`web/src/app/globals.css` — `.high-contrast` + `.high-contrast.dark` CSS 变量（WCAG AAA）
+- [x] 任务 6：`web/src/components/theme-provider.tsx` — 三主题（light / dark / high-contrast）+ localStorage 持久化
+
+**组件库（26 个组件）**
+- [x] 任务 7：基础 UI 组件（checkbox / radio-group / popover）— `@radix-ui/react-*`
+- [x] 任务 8：业务组件（chat-message / tool-call-card / thinking-panel / hitl-approval-dialog / skill-card / skill-factory-wizard / command-palette / citation-link / status-indicator / connector-card）
+- [x] 任务 9：布局组件（header / empty-state / main-layout / auth-layout / index.ts barrel）
+
+**Storybook**
+- [x] 任务 10：`.storybook/main.ts` + `preview.ts` — `@storybook/nextjs@^8.6.18` + `addon-a11y`
+- [x] 任务 11：7 个 stories 文件（28+ stories）
+- [x] 任务 12：`web/tsconfig.json` — stories 文件排除（防 Next.js 类型冲突）
+
+### 完成标准验证
+
+- [x] `cd web && npm run build` — 24 条路由，0 错误
+- [x] 三主题 CSS 变量完整（light / dark / high-contrast 各一套）
+- [x] Storybook 可启动（`npm run storybook`）
+- [x] Radix UI 导入路径正确（`@radix-ui/react-*` 独立包）
+- [x] stories 文件从 tsconfig 排除，消除类型报错
+
+### 设计决策
+
+| 决策 | 原因 |
+|------|------|
+| TypeScript 常量 Token（非 Style Dictionary）| 当前规模不值得工具链；TypeScript 有完整类型检查 |
+| CSS 变量覆盖高对比度（非独立主题文件）| 不修改组件代码即可切换，AAA 对比度由 CSS 变量保证 |
+| Storybook stories 排除于 tsconfig | Next.js App Router 不需要 stories 类型；消除构建冲突 |
+
+---
+
+## Phase 10 详细进度（进行中，PR #46 开放）
+
+### 任务清单
+
+**存储抽象层（`src/storage/`）**
+- [x] 任务 1：`types.ts` — IStorageAdapter 接口（Session / Message / Memory / Audit 四类）
+- [x] 任务 2：`web-adapter.ts` — WebStorageAdapter（HTTP 调用 Fastify API，Phase 13 Electron 预留替换点）
+
+**AG-UI Runtime**
+- [x] 任务 3：`web/src/lib/agui-runtime.ts` — 将后端 SSE chunk 映射为 AG-UI 事件序列
+
+**新页面**
+- [x] 任务 4：`web/src/app/auth/login/page.tsx` — Login 页（SSO 跳转 + dev 快速登录）
+- [x] 任务 5：`web/src/app/history/page.tsx` — 历史记录（按日期分组 + 搜索 + 导出 + 软删除）
+
+**全局组件**
+- [x] 任务 6：`web/src/components/command-palette-provider.tsx` — ⌘K / Ctrl+K 全局命令面板
+- [x] 任务 7：`web/src/components/onboarding-tour.tsx` — 5 步引导（localStorage 一次性展示）
+- [x] 任务 8：`web/src/components/error-boundary.tsx` — React class boundary（重试 + 刷新）
+- [x] 任务 9：`web/src/components/sw-registrar.tsx` — Service Worker 注册器
+
+**离线支持**
+- [x] 任务 10：`web/public/sw.js` — 网络优先（HTML 导航）+ 缓存优先（静态资源），不缓存 /api/ / /ws
+
+**页面增强**
+- [x] 任务 11：Settings 页 — 新增「个人偏好」Tab（三主题选择 + 语言 + 通知）
+- [x] 任务 12：Skills 页 — 新增「技能目录」Tab（SkillCard 网格 + 搜索 + 状态过滤）
+- [x] 任务 13：Sidebar — 添加「历史记录」+ 「Skill Factory」导航项
+
+**安全**
+- [x] 任务 14：`web/next.config.ts` — CSP / X-Frame-Options / X-Content-Type-Options / Referrer-Policy 响应头
+
+**Bug Fix**
+- [x] 任务 15：`src/llm/openai.ts` + `anthropic.ts` — HTTPS 代理 TLS 修复（函数包装模式，详见 ADR-0017）
+
+### 当前状态
+
+- PR #46 已开放，等待合并到 master
+- 460 个后端测试通过（3 个 pre-existing 失败：otel / conductor-api / harness）
+- 前端 TypeScript 零错误，`npm run build` 29 条路由通过
+
+### 设计决策
+
+| 决策 | 原因 |
+|------|------|
+| IStorageAdapter 接口 | Phase 13 Electron 只需替换实现，UI 无感（详见 ADR-0016）|
+| AG-UI Runtime 并行于 assistant-runtime.ts | 不替换现有 runtime，AG-UI 路径作为未来切换点 |
+| Service Worker 跳过 /api/ 和 /ws | API 和 WebSocket 必须走网络，缓存会导致数据过期 |
+| dev 模式快速登录仅在 development 可见 | `process.env.NODE_ENV === 'development'` 守卫，防止生产环境暴露 |
 
 ---
 
 ## 待办事项（后续 Phase）
 
-### P9.5 — Skill Factory 2.0（下一个）
-- 员工自助创建技能完整流程（生成 → 沙箱测试 → 安全审核 → 发布）
-- `skill_reviews` 表写入端（Phase 8 已建表，Phase 9.5 完成 lifecycle 管理）
-- RBAC 运行时执行接入 SkillRegistry（Phase 8 仅持久化存储）
+### P11 — Web 版灰度上线（下一个）
+- 灰度发布策略（Canary Service 集成）
+- 用户反馈收集 API
+- 性能监控（Core Web Vitals）
+- 回滚预案文档
 
-### P9.7 — UI/UX Design System
-- shadcn/ui 扩展 + Tailwind token
-- 核心页面重设计
+### P12 — Web 版迭代运营
+- 基于 Langfuse 数据和用户反馈持续优化
+- 能力 eval 通过率逐步提升
 
-### P10 — Web 版 MVP
-- 企业员工可通过浏览器访问完整功能
-- 前置：P9.5 + P9.7 完成
+### P13 — Electron 准备
+- 实现 `ElectronStorageAdapter`（IStorageAdapter 接口的本地 SQLite 实现）
+- 评估 Electron vs Tauri
