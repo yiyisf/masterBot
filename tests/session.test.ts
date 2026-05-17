@@ -88,14 +88,54 @@ describe('AgentRouter', () => {
             expect(newId).toBe('claude-fork-sess-abc');
         });
 
-        it('无 claudeAgent 时使用 legacyAgent.fork()', async () => {
+        it('claudeAgent fork 抛出 Invalid sessionId（Legacy 会话）时降级为 copy-based fork', async () => {
+            const claudeAgentThatRejects = makeMockAgent({
+                async fork() { throw new Error('Invalid sessionId: FLrQIARM1NyW_lmYYBZKS'); },
+                async checkpoint(sid: string) { return `cp-${sid}`; },
+                capabilities: () => ({ supportsStreaming: true, supportsFork: true, supportsCheckpoint: true, maxContextTokens: 200_000 }),
+            });
+            const mockMessages = [
+                { id: 'm1', role: 'user', content: 'hello' },
+                { id: 'm2', role: 'assistant', content: 'world' },
+            ];
+            const saved: any[] = [];
+            const mockRepo = {
+                getMessages: (_sid: string) => mockMessages,
+                saveMessage: (_sid: string, msg: any) => { saved.push(msg); return msg.id; },
+                recordFork: (_parent: string, _newId: string) => {},
+            };
+            const r = new AgentRouter({
+                legacyFactory: () => legacyAgent,
+                claudeFactory: () => claudeAgentThatRejects,
+                featureFlags: new EnvFeatureFlagService({ 'claude-managed-agent': true }),
+                logger,
+                historyRepository: mockRepo,
+            });
+            const newId = await r.fork('sess-abc');
+            expect(typeof newId).toBe('string');
+            expect(newId.length).toBeGreaterThan(0);
+            expect(newId).not.toBe('sess-abc');
+            expect(saved.length).toBe(2); // 两条消息被复制
+        });
+
+        it('无 claudeAgent 时使用 copy-based fork', async () => {
+            const mockMessages = [{ id: 'm1', role: 'user', content: 'hi' }];
+            const saved: any[] = [];
+            const mockRepo = {
+                getMessages: (_sid: string) => mockMessages,
+                saveMessage: (_sid: string, msg: any) => { saved.push(msg); return msg.id; },
+                recordFork: (_parent: string, _newId: string) => {},
+            };
             const r = new AgentRouter({
                 legacyFactory: () => legacyAgent,
                 featureFlags: new EnvFeatureFlagService(),
                 logger,
+                historyRepository: mockRepo,
             });
             const newId = await r.fork('sess-abc');
-            expect(newId).toBe('legacy-fork');
+            expect(typeof newId).toBe('string');
+            expect(newId).not.toBe('sess-abc');
+            expect(saved.length).toBe(1);
         });
     });
 
