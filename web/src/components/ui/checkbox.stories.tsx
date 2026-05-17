@@ -1,3 +1,4 @@
+import * as React from 'react';
 import type { Meta, StoryObj } from '@storybook/react';
 import { Label } from './label';
 import { Checkbox } from './checkbox';
@@ -25,7 +26,7 @@ export const Checked: Story = {
 };
 
 export const WithLabel: Story = {
-  render: (args) => (
+  render: (args: React.ComponentProps<typeof Checkbox>) => (
     <div className="flex items-center gap-2">
       <Checkbox id="terms" {...args} />
       <Label htmlFor="terms">接受服务条款</Label>
