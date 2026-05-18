@@ -1,4 +1,4 @@
-import { DatabaseSync } from 'node:sqlite';
+import Database from 'better-sqlite3';
 import path from 'path';
 import { existsSync, mkdirSync } from 'fs';
 import { fileURLToPath } from 'url';
@@ -10,13 +10,15 @@ const DB_PATH = path.join(DATA_DIR, 'cmaster.db');
 
 /**
  * 数据库初始化与管理
+ * @param dbPath 可选路径，测试时传 ':memory:' 创建内存数据库；省略则使用默认文件路径
  */
-export function initDatabase(): DatabaseSync {
-    if (!existsSync(DATA_DIR)) {
+export function initDatabase(dbPath?: string): Database.Database {
+    const targetPath = dbPath ?? DB_PATH;
+    if (targetPath !== ':memory:' && !existsSync(DATA_DIR)) {
         mkdirSync(DATA_DIR, { recursive: true });
     }
 
-    const db = new DatabaseSync(DB_PATH);
+    const db = new Database(targetPath);
     db.exec('PRAGMA journal_mode = WAL');
 
     // 创建表结构
@@ -574,4 +576,4 @@ export function initDatabase(): DatabaseSync {
     return db;
 }
 
-export const db: DatabaseSync = initDatabase();
+export const db: Database.Database = initDatabase();

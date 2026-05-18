@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach } from 'vitest';
-import type { DatabaseSync } from 'node:sqlite';
+import type Database from 'better-sqlite3';
 import { initDatabase } from '../src/core/database.js';
 import { AdminRepository } from '../src/core/admin-repository.js';
 import { createAdminHook } from '../src/gateway/auth.js';
@@ -13,7 +13,7 @@ const mockLogger: Logger = {
 // ─── AdminRepository Tests ────────────────────────────────────────────────────
 
 describe('AdminRepository', () => {
-    let db: DatabaseSync;
+    let db: Database.Database;
     let repo: AdminRepository;
 
     beforeEach(() => {

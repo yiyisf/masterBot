@@ -3,14 +3,14 @@
  * 知识图谱增强版 — 写入需通过 HitL 审批，查询即时可用 approved 事实。
  */
 
-import type { DatabaseSync } from 'node:sqlite';
+import type Database from 'better-sqlite3';
 import { nanoid } from 'nanoid';
 import type { Logger } from '../types.js';
 import type { SemanticFact } from './types.js';
 
 export class SemanticMemoryStore {
     constructor(
-        private db: DatabaseSync,
+        private db: Database.Database,
         private logger: Logger,
     ) {}
 

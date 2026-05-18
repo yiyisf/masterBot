@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { mkdirSync, writeFileSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import type { DatabaseSync } from 'node:sqlite';
+import type Database from 'better-sqlite3';
 import type { LLMAdapter, Logger } from '../types.js';
 import type { SkillFactoryJob, SkillSpec, ValidationResult, SecurityScanResult, SandboxTestResult, LLMJudgeResult } from './types.js';
 import { SpecBuilder, type ConversationContext } from './spec-builder.js';
@@ -46,7 +46,7 @@ export class LocalSkillFactory {
     constructor(
         private llm: LLMAdapter,
         private logger: Logger,
-        private db: DatabaseSync
+        private db: Database.Database
     ) {
         this.specBuilder = new SpecBuilder(llm, logger);
         this.synthesizer = new SkillSynthesizer(llm, logger);

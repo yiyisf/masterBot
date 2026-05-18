@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { DatabaseSync } from 'node:sqlite';
+import Database from 'better-sqlite3';
 import { initDatabase } from '../src/core/database.js';
 import { SpecBuilder } from '../src/skill-factory/spec-builder.js';
 import { SkillSynthesizer } from '../src/skill-factory/synthesizer.js';
@@ -107,16 +107,16 @@ describe('github-pr-lister', () => {
 // ─── DB migration test ────────────────────────────────────────────────────────
 
 describe('Database migration (Phase 9.5 tables)', () => {
-    let db: DatabaseSync;
+    let db: Database.Database;
 
     beforeEach(() => {
-        db = new DatabaseSync(':memory:');
+        db = new Database(':memory:');
         initDatabase();
     });
 
     it('should create skill_factory_jobs table', () => {
         // Use a fresh in-memory DB to test table creation
-        const testDb = new DatabaseSync(':memory:');
+        const testDb = new Database(':memory:');
         testDb.exec(`
             CREATE TABLE IF NOT EXISTS skill_reviews (id TEXT PRIMARY KEY, skill_name TEXT NOT NULL UNIQUE, skill_path TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'pending', review_notes TEXT, reviewer TEXT, created_at TEXT NOT NULL DEFAULT (datetime('now')), updated_at TEXT NOT NULL DEFAULT (datetime('now')));
             CREATE TABLE IF NOT EXISTS admin_audit_log (id TEXT PRIMARY KEY, admin_id TEXT NOT NULL, action TEXT NOT NULL, target TEXT, detail TEXT, created_at TEXT NOT NULL DEFAULT (datetime('now')));
@@ -130,7 +130,7 @@ describe('Database migration (Phase 9.5 tables)', () => {
     });
 
     it('should insert and query skill_factory_jobs rows', () => {
-        const testDb = new DatabaseSync(':memory:');
+        const testDb = new Database(':memory:');
         testDb.exec(`
             CREATE TABLE skill_factory_jobs (id TEXT PRIMARY KEY, skill_name TEXT, state TEXT NOT NULL DEFAULT 'drafting', spec_json TEXT, generated_files_json TEXT, validation_json TEXT, security_json TEXT, sandbox_json TEXT, judge_json TEXT, install_path TEXT, review_id TEXT, created_by TEXT, created_at TEXT NOT NULL DEFAULT (datetime('now')), updated_at TEXT NOT NULL DEFAULT (datetime('now')), error TEXT)
         `);
@@ -141,7 +141,7 @@ describe('Database migration (Phase 9.5 tables)', () => {
     });
 
     it('should insert and query skill_catalog rows', () => {
-        const testDb = new DatabaseSync(':memory:');
+        const testDb = new Database(':memory:');
         testDb.exec(`
             CREATE TABLE skill_catalog (id TEXT PRIMARY KEY, skill_name TEXT NOT NULL UNIQUE, skill_path TEXT NOT NULL, description TEXT, category TEXT, author TEXT, version TEXT, state TEXT NOT NULL DEFAULT 'active', curation_status TEXT DEFAULT 'normal', usage_30d INTEGER DEFAULT 0, created_at TEXT NOT NULL DEFAULT (datetime('now')), updated_at TEXT NOT NULL DEFAULT (datetime('now')))
         `);
@@ -464,7 +464,7 @@ describe('LLMJudge', () => {
 
 describe('LocalSkillFactory', () => {
     function makeDb() {
-        const db = new DatabaseSync(':memory:');
+        const db = new Database(':memory:');
         db.exec(`
             CREATE TABLE skill_reviews (id TEXT PRIMARY KEY, skill_name TEXT NOT NULL UNIQUE, skill_path TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'pending', review_notes TEXT, reviewer TEXT, created_at TEXT NOT NULL DEFAULT (datetime('now')), updated_at TEXT NOT NULL DEFAULT (datetime('now')));
             CREATE TABLE skill_factory_jobs (id TEXT PRIMARY KEY, skill_name TEXT, state TEXT NOT NULL DEFAULT 'drafting', spec_json TEXT, generated_files_json TEXT, validation_json TEXT, security_json TEXT, sandbox_json TEXT, judge_json TEXT, install_path TEXT, review_id TEXT, created_by TEXT, created_at TEXT NOT NULL DEFAULT (datetime('now')), updated_at TEXT NOT NULL DEFAULT (datetime('now')), error TEXT);

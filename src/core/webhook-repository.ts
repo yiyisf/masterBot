@@ -49,7 +49,7 @@ export class WebhookRepository {
 
         if (fields.length === 0) return;
         values.push(id);
-        db.prepare(`UPDATE webhooks SET ${fields.join(', ')} WHERE id = ?`).run(...values as import('node:sqlite').SQLInputValue[]);
+        db.prepare(`UPDATE webhooks SET ${fields.join(', ')} WHERE id = ?`).run(...values);
     }
 
     delete(id: string): void {

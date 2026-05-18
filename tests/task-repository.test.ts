@@ -1,9 +1,9 @@
 import { describe, it, expect, beforeEach } from 'vitest';
-import { DatabaseSync } from 'node:sqlite';
+import Database from 'better-sqlite3';
 import { TaskRepository } from '../src/core/task-repository.js';
 
-function createTestDb(): DatabaseSync {
-    const db = new DatabaseSync(':memory:');
+function createTestDb(): Database.Database {
+    const db = new Database(':memory:');
     db.exec(`
         CREATE TABLE IF NOT EXISTS sessions (
             id TEXT PRIMARY KEY,

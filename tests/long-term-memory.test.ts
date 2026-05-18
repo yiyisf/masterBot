@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { DatabaseSync } from 'node:sqlite';
+import Database from 'better-sqlite3';
 import { LongTermMemory } from '../src/memory/long-term.js';
 
 const mockLogger = {
@@ -10,7 +10,7 @@ const mockLogger = {
 };
 
 function createMemory() {
-    const db = new DatabaseSync(':memory:');
+    const db = new Database(':memory:');
     const mem = new LongTermMemory({ db, logger: mockLogger });
     mem.initialize();
     return { db, mem };

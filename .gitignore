@@ -10,3 +10,6 @@ data/*.db-wal
 data/.memory/MEMORY.md
 data/.memory/**/*.md
 mcp-servers.json
+.next/
+data/vectors.duckdb
+data/vectors.duckdb.wal

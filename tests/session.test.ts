@@ -217,8 +217,8 @@ describe('CheckpointManager', () => {
     const logger = makeLogger();
 
     beforeEach(() => {
-        const { DatabaseSync } = require('node:sqlite');
-        const db = new DatabaseSync(':memory:');
+        const Database = require('better-sqlite3');
+        const db = new Database(':memory:');
         // 建表（production 中由 database.ts 统一创建）
         db.exec(`CREATE TABLE checkpoints (
             id TEXT PRIMARY KEY,

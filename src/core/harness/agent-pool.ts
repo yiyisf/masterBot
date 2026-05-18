@@ -21,7 +21,7 @@ import type { SkillRegistry } from '../../skills/registry.js';
 import type { LongTermMemory } from '../../memory/long-term.js';
 import type { MemoryRouter } from '../../memory/memory-router.js';
 import type { SessionMemoryManager } from '../../memory/short-term.js';
-import type { DatabaseSync } from 'node:sqlite';
+import type Database from 'better-sqlite3';
 
 export { SessionEventStore, CredentialVault };
 
@@ -49,7 +49,7 @@ export class AgentPool {
         private sessionStore?: SessionEventStore,
         private credentialVault?: CredentialVault,
         private sessionMemoryManager?: SessionMemoryManager,
-        private db?: DatabaseSync
+        private db?: Database.Database
     ) {}
 
     // ─────────────────────────────────────────────────
@@ -101,7 +101,7 @@ export class AgentPool {
                 WHERE id NOT IN (${placeholders})
                 ORDER BY started_at DESC
                 LIMIT 200
-            `).all(...(liveIds as import('node:sqlite').SQLInputValue[])) as Array<{
+            `).all(...liveIds) as Array<{
                 id: string;
                 spec_id: string;
                 spec_name: string;

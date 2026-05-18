@@ -16,8 +16,8 @@ function makeLogger(): Logger {
 }
 
 function makeDb() {
-    const { DatabaseSync } = require('node:sqlite');
-    const db = new DatabaseSync(':memory:');
+    const Database = require('better-sqlite3');
+    const db = new Database(':memory:');
     db.exec(`
         CREATE TABLE episodic_memories (
             id TEXT PRIMARY KEY,

@@ -6,7 +6,7 @@
  */
 
 import { randomUUID } from 'crypto';
-import type { DatabaseSync } from 'node:sqlite';
+import type Database from 'better-sqlite3';
 import type { Logger } from '../types.js';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -52,7 +52,7 @@ interface CanaryMetricRow {
 // ─── CanaryService ────────────────────────────────────────────────────────────
 
 export class CanaryService {
-    constructor(private readonly db: DatabaseSync, private readonly logger: Logger) {}
+    constructor(private readonly db: Database.Database, private readonly logger: Logger) {}
 
     createFlag(
         flagName: string,

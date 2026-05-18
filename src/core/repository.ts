@@ -44,7 +44,7 @@ export class HistoryRepository {
             params.push(opts.limit);
         }
 
-        const rows = db.prepare(query).all(...(params as import('node:sqlite').SQLInputValue[])) as any[];
+        const rows = db.prepare(query).all(...params) as any[];
         return rows.map(row => this.rowToMessage(row));
     }
 

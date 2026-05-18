@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import type { DatabaseSync } from 'node:sqlite';
+import type Database from 'better-sqlite3';
 import type { LLMAdapter, Logger } from '../types.js';
 import type { SkillFactoryJob } from './types.js';
 import { SecurityScanner } from './validators/security.js';
@@ -16,7 +16,7 @@ export class EnterpriseSkillFactory {
     constructor(
         private llm: LLMAdapter,
         private logger: Logger,
-        private db: DatabaseSync
+        private db: Database.Database
     ) {
         this.securityScanner = new SecurityScanner();
         this.sandboxTester = new LocalSandboxTester();
