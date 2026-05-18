@@ -3,7 +3,7 @@
 import * as React from "react";
 import { useRouter } from "next/navigation";
 import {
-  MessageSquare, Trash2, Archive, Download, Search, Clock,
+  MessageSquare, Trash2, Download, Search, Clock,
   ChevronRight, Loader2,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -102,17 +102,19 @@ export default function HistoryPage() {
 
   const handleExport = async (id: string, e: React.MouseEvent) => {
     e.stopPropagation();
+    let url: string | undefined;
     try {
       const data = await fetchApi<{ messages: unknown[] }>(`/api/sessions/${id}/messages`);
       const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
-      const url = URL.createObjectURL(blob);
+      url = URL.createObjectURL(blob);
       const a = document.createElement("a");
       a.href = url;
       a.download = `session-${id}.json`;
       a.click();
-      URL.revokeObjectURL(url);
     } catch {
       toast.error("导出失败");
+    } finally {
+      if (url) URL.revokeObjectURL(url);
     }
   };
 

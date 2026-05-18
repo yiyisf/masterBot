@@ -107,6 +107,17 @@ export class AgentRouter implements IAgent {
     }
 
     async *resume(sessionId: string): AsyncGenerator<AgentEvent> {
+        // ClaudeManagedAgent 持有 SDK session 状态，SDK 创建的会话必须由它来恢复。
+        if (this.claudeAgent) {
+            try {
+                yield* this.claudeAgent.resume(sessionId);
+                return;
+            } catch (err: any) {
+                const msg: string = err?.message ?? '';
+                if (!msg.includes('Invalid sessionId') && !msg.includes('not found')) throw err;
+                this.opts.logger.debug?.(`[AgentRouter] claudeAgent.resume failed (legacy session ${sessionId}), falling back`);
+            }
+        }
         yield* this.legacyAgent.resume(sessionId);
     }
 
@@ -146,7 +157,10 @@ export class AgentRouter implements IAgent {
         repo.recordFork(parentSessionId, newSessionId);
         const messages = repo.getMessages(parentSessionId);
         for (const msg of messages) {
-            repo.saveMessage(newSessionId, { ...msg, id: nanoid() });
+            // 附件 id 必须重新生成：attachments 表 id 为 PRIMARY KEY，
+            // 复用原 id 会导致 UNIQUE constraint violation。
+            const attachments = msg.attachments?.map((att: any) => ({ ...att, id: nanoid() }));
+            repo.saveMessage(newSessionId, { ...msg, id: nanoid(), attachments });
         }
         this.opts.logger.info?.(
             `[AgentRouter] copy fork ok: ${parentSessionId} → ${newSessionId} (${messages.length} messages copied)`,

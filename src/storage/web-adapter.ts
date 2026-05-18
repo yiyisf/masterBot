@@ -33,11 +33,10 @@ export class WebStorageAdapter implements IStorageAdapter {
   // ── Sessions ──────────────────────────────────────────────────────────────
 
   async getSession(id: string): Promise<Session | null> {
-    try {
-      return await this.fetch<Session>(`/api/sessions/${id}`);
-    } catch {
-      return null;
-    }
+    const res = await fetch(`${this.baseUrl}/api/sessions/${id}`, { headers: this.headers() });
+    if (res.status === 404) return null;
+    if (!res.ok) throw new Error(`HTTP ${res.status}: ${await res.text()}`);
+    return res.json() as Promise<Session>;
   }
 
   async saveSession(session: Session): Promise<void> {

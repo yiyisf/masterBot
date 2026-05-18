@@ -161,6 +161,29 @@ export class GatewayServer {
         if (this.config.auth?.enabled) {
             this.app.addHook('onRequest', createAuthHook(this.config.auth, this.logger));
         }
+
+        // Security headers for all responses served by Fastify (covers static export HTML).
+        // next.config.ts headers() is a no-op in output:'export' mode — Fastify owns this.
+        this.app.addHook('onSend', (_request, reply, _payload, done) => {
+            reply.header('X-DNS-Prefetch-Control', 'on');
+            reply.header('X-Frame-Options', 'SAMEORIGIN');
+            reply.header('X-Content-Type-Options', 'nosniff');
+            reply.header('Referrer-Policy', 'strict-origin-when-cross-origin');
+            reply.header('Permissions-Policy', 'camera=(), microphone=(), geolocation=()');
+            reply.header(
+                'Content-Security-Policy',
+                [
+                    "default-src 'self'",
+                    "script-src 'self' 'unsafe-inline'",
+                    "style-src 'self' 'unsafe-inline'",
+                    "img-src 'self' data: blob:",
+                    "font-src 'self' data:",
+                    "connect-src 'self' ws: wss:",
+                    "frame-ancestors 'self'",
+                ].join('; '),
+            );
+            done();
+        });
     }
 
     private async setupStatic(): Promise<void> {
