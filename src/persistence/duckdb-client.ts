@@ -35,8 +35,19 @@ export class DuckDBClient {
             this.instance = await DuckDBInstance.create(this.dbPath);
             this.conn = await this.instance.connect();
 
-            // Load VSS extension (auto-downloads on first use)
-            await this.conn.run('INSTALL vss; LOAD vss;');
+            // Load VSS extension: try cached version first to avoid network requests.
+            // Falls back to INSTALL (requires internet) only if not already cached.
+            // In air-gapped environments, set DUCKDB_VSS_SKIP=true to bypass entirely.
+            if (process.env.DUCKDB_VSS_SKIP === 'true') {
+                throw new Error('DuckDB VSS skipped via DUCKDB_VSS_SKIP=true');
+            }
+            try {
+                await this.conn.run('LOAD vss;');
+            } catch {
+                // Not cached — download from DuckDB extension repository.
+                // This requires internet access; fails in air-gapped environments.
+                await this.conn.run('INSTALL vss; LOAD vss;');
+            }
 
             // Create episodic vector table
             await this.conn.run(`
@@ -59,8 +70,17 @@ export class DuckDBClient {
             this.ready = true;
             this.logger.info(`[duckdb] DuckDB VSS initialized (dim=${this.dim}, path=${this.dbPath})`);
         } catch (err: any) {
-            this.logger.warn(`[duckdb] DuckDB VSS unavailable, vector search disabled: ${err.message}`);
             this.ready = false;
+            const isNetworkErr = /network|download|http|url|connect|timeout/i.test(err.message ?? '');
+            if (isNetworkErr) {
+                this.logger.info(
+                    '[duckdb] DuckDB VSS extension requires internet to download on first use. ' +
+                    'Vector search disabled. ' +
+                    'To skip this in air-gapped environments: set DUCKDB_VSS_SKIP=true in .env',
+                );
+            } else {
+                this.logger.warn(`[duckdb] DuckDB VSS unavailable, vector search disabled: ${err.message}`);
+            }
         }
     }
 

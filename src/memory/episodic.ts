@@ -48,7 +48,9 @@ export class EpisodicMemoryStore {
                 USING fts5(id UNINDEXED, tenant_id UNINDEXED, content, tokenize='unicode61');
             `);
         } catch {
-            this.logger.warn('[episodic] FTS5 not available, falling back to LIKE search');
+            // FTS5 not compiled in this SQLite build (common on Windows).
+            // LIKE search fallback is used automatically — no functionality loss.
+            this.logger.info('[episodic] FTS5 not compiled in this SQLite build, using LIKE search fallback (normal on Windows)');
         }
 
         this.logger.debug('[episodic] EpisodicMemoryStore initialized');

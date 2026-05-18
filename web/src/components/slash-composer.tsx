@@ -195,6 +195,21 @@ export function SlashComposer() {
     const [attachmentCount, setAttachmentCount] = useState(0);
     const inputRef = useRef<HTMLTextAreaElement>(null);
 
+    // Explicit focus on mount — replaces `autoFocus` which is unreliable
+    // in Next.js static export mode after client-side hydration (Windows/Edge).
+    useEffect(() => {
+        const timer = setTimeout(() => inputRef.current?.focus(), 50);
+        return () => clearTimeout(timer);
+    }, []);
+
+    // Re-focus after OnboardingTour dialog closes (Windows: Radix Dialog doesn't
+    // always restore focus to the correct element).
+    useEffect(() => {
+        const refocus = () => setTimeout(() => inputRef.current?.focus(), 50);
+        window.addEventListener('cmaster:tour-complete', refocus);
+        return () => window.removeEventListener('cmaster:tour-complete', refocus);
+    }, []);
+
     // Track attachment count for button highlight
     useEffect(() => {
         const unsub = composerRuntime.subscribe(() => {
@@ -267,7 +282,6 @@ export function SlashComposer() {
             <ComposerPrimitive.Input
                 ref={inputRef}
                 rows={1}
-                autoFocus
                 className="aui-composer-input max-h-60 overflow-y-auto"
                 placeholder="输入消息… 按 / 打开命令"
                 onChange={handleChange}

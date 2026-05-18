@@ -928,10 +928,21 @@ export class GatewayServer {
                 };
             } catch (err: any) {
                 const isTimeout = err.name === 'TimeoutError' || err.message?.includes('timeout');
-                this.logger.error(`[config] Connectivity test failed for ${providerName}${isTimeout ? ' (Timeout)' : ''}: ${err.message}`);
+                const errMsg: string = err.message ?? String(err);
+                this.logger.error(`[config] Connectivity test failed for ${providerName}${isTimeout ? ' (Timeout)' : ''}: ${errMsg}`);
+
+                // Diagnose common proxy errors for better UX
+                let hint: string | undefined;
+                if (errMsg.includes('no connected db')) {
+                    hint = 'LiteLLM 代理需要数据库支持（budget tracking）。建议：① 配置 litellm_database_url；② 或在 liteLLM config.yaml 中禁用 database_type；③ 或在 CMaster 中将此 provider 的 type 改为 openai 以使用 OpenAI 兼容接口。';
+                } else if (errMsg.includes('model not found') || errMsg.includes('invalid model')) {
+                    hint = `模型名称 "${providerConfig.model}" 在代理端不存在，请检查 liteLLM config.yaml 中的 model_name 配置。`;
+                }
+
                 return {
                     success: false,
-                    error: isTimeout ? 'Request timed out (30s)' : err.message,
+                    error: isTimeout ? 'Request timed out (30s)' : errMsg,
+                    hint,
                     debugInfo: {
                         baseUrl: providerConfig.baseUrl,
                         model: providerConfig.model,

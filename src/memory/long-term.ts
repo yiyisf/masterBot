@@ -102,7 +102,9 @@ export class LongTermMemory implements MemoryAccess {
             this.logger.debug('[memory] FTS5 available');
         } catch (err) {
             this._ftsAvailable = false;
-            this.logger.warn(`[memory] FTS5 not available, falling back to LIKE search: ${(err as Error).message}`);
+            // FTS5 not compiled in this SQLite build (common on Windows with Node.js built-in sqlite).
+            // LIKE search is the graceful fallback — functionality is unaffected, only search speed differs.
+            this.logger.info(`[memory] FTS5 not compiled in this SQLite build, using LIKE search fallback (normal on Windows)`);
         }
 
         // 确保文件目录存在

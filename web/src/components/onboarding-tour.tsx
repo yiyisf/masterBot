@@ -64,6 +64,9 @@ export function OnboardingTour({ onComplete }: OnboardingTourProps) {
     localStorage.setItem(STORAGE_KEY, "1");
     setOpen(false);
     onComplete?.();
+    // Notify SlashComposer to re-focus the chat input.
+    // On Windows, Radix Dialog may not always restore focus to the correct element.
+    window.dispatchEvent(new CustomEvent('cmaster:tour-complete'));
   };
 
   const handleNext = () => {

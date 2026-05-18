@@ -40,9 +40,11 @@ export class AnthropicAdapter implements LLMAdapter {
         const response = await this.client.messages.create({
             model: options?.model ?? this.config.model,
             max_tokens: options?.maxTokens ?? this.config.maxTokens ?? 4096,
-            system: systemPrompt,
+            // Omit system when empty — some proxies (e.g. liteLLM) reject system: ""
+            ...(systemPrompt ? { system: systemPrompt } : {}),
             messages: convertedMessages,
-            tools: options?.tools ? this.convertTools(options.tools) : undefined,
+            // Omit tools when not provided — passing tools: undefined can confuse proxies
+            ...(options?.tools?.length ? { tools: this.convertTools(options.tools) } : {}),
         }, { signal: options?.abortSignal });
 
         // Process response content
@@ -77,9 +79,9 @@ export class AnthropicAdapter implements LLMAdapter {
         const stream = this.client.messages.stream({
             model: options?.model ?? this.config.model,
             max_tokens: options?.maxTokens ?? this.config.maxTokens ?? 4096,
-            system: systemPrompt,
+            ...(systemPrompt ? { system: systemPrompt } : {}),
             messages: convertedMessages,
-            tools: options?.tools ? this.convertTools(options.tools) : undefined,
+            ...(options?.tools?.length ? { tools: this.convertTools(options.tools) } : {}),
         }, { signal: options?.abortSignal });
 
         let currentToolCall: StreamChunk['toolCall'] | null = null;
