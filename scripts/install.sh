@@ -36,9 +36,37 @@ if [ "$NODE_VER" -lt 22 ]; then
 fi
 ok "Node.js $(node --version) ✓"
 
+# Check GitHub connectivity for better-sqlite3 prebuilds
+info "检测网络环境..."
+if curl -fsSL --connect-timeout 5 "https://github.com" -o /dev/null 2>/dev/null; then
+    ok "网络正常，使用在线模式安装"
+    OFFLINE_MODE=false
+else
+    warn "无法访问 GitHub，切换到内网离线安装模式..."
+    warn "better-sqlite3 将使用 prebuilds/ 目录中的预编译文件"
+    OFFLINE_MODE=true
+fi
+
 # Install backend dependencies
 info "安装后端依赖..."
-npm install
+if [ "$OFFLINE_MODE" = true ]; then
+    npm install --ignore-scripts
+    # Extract Linux prebuild if available
+    ARCH=$(node -e "process.stdout.write(process.arch)")
+    ABI=$(node -e "process.stdout.write(process.versions.modules)")
+    PREBUILD="prebuilds/better-sqlite3/better-sqlite3-v12.10.0-node-v${ABI}-linux-${ARCH}.tar.gz"
+    if [ -f "$PREBUILD" ]; then
+        mkdir -p node_modules/better-sqlite3/build/Release
+        tar -xzf "$PREBUILD" -C node_modules/better-sqlite3
+        ok "better-sqlite3 预编译文件安装完成 ($ARCH)"
+    else
+        warn "未找到 Linux 平台预编译文件 ($PREBUILD)，尝试从源码编译..."
+        (cd node_modules/better-sqlite3 && npm run build-release) || \
+            warn "编译失败，运行时可能出现问题。请参阅 docs/offline-install.md"
+    fi
+else
+    npm install
+fi
 ok "后端依赖安装完成"
 
 # Install frontend dependencies
