@@ -2,7 +2,7 @@ import { mkdirSync, writeFileSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { randomUUID } from 'node:crypto';
-import type { DatabaseSync } from 'node:sqlite';
+import type Database from 'better-sqlite3';
 import type { Logger } from '../types.js';
 import type { SkillFactoryJob } from './types.js';
 
@@ -12,7 +12,7 @@ const SKILLS_INSTALLED_DIR = join(__dirname, '../../skills/installed');
 export class SkillPublisher {
     constructor(
         private logger: Logger,
-        private db: DatabaseSync,
+        private db: Database.Database,
         private skillsDir?: string
     ) {}
 

@@ -199,14 +199,14 @@ export class AuditRepository {
         const offset = f?.offset ?? 0;
         const rows = db.prepare(
             `SELECT * FROM execution_records ${where} ORDER BY started_at DESC LIMIT ? OFFSET ?`
-        ).all(...(params as import('node:sqlite').SQLInputValue[]), limit, offset) as any[];
+        ).all(...params, limit, offset) as any[];
         return rows.map(rowToExecution);
     }
 
     countExecutions(f?: Parameters<AuditRepository['listExecutions']>[0]): number {
         const { where, params } = this.buildExecFilter(f);
         const row = db.prepare(`SELECT COUNT(*) as c FROM execution_records ${where}`)
-            .get(...(params as import('node:sqlite').SQLInputValue[])) as any;
+            .get(...params) as any;
         return row?.c ?? 0;
     }
 
@@ -279,14 +279,14 @@ export class AuditRepository {
         const offset = f?.offset ?? 0;
         const rows = db.prepare(
             `SELECT * FROM audit_approvals ${where} ORDER BY decided_at DESC LIMIT ? OFFSET ?`
-        ).all(...(params as import('node:sqlite').SQLInputValue[]), limit, offset) as any[];
+        ).all(...params, limit, offset) as any[];
         return rows.map(rowToApproval);
     }
 
     countApprovals(f?: Parameters<AuditRepository['listApprovals']>[0]): number {
         const { where, params } = this.buildApprovalFilter(f);
         const row = db.prepare(`SELECT COUNT(*) as c FROM audit_approvals ${where}`)
-            .get(...(params as import('node:sqlite').SQLInputValue[])) as any;
+            .get(...params) as any;
         return row?.c ?? 0;
     }
 
@@ -368,7 +368,7 @@ export class AuditRepository {
         const offset = f?.offset ?? 0;
         const rows = db.prepare(
             `SELECT * FROM scheduled_task_runs ${where} ORDER BY started_at DESC LIMIT ? OFFSET ?`
-        ).all(...(params as import('node:sqlite').SQLInputValue[]), limit, offset) as any[];
+        ).all(...params, limit, offset) as any[];
         return rows.map(rowToScheduledRun);
     }
 

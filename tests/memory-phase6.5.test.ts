@@ -7,7 +7,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { DatabaseSync } from 'node:sqlite';
+import Database from 'better-sqlite3';
 import { nanoid } from 'nanoid';
 import { EpisodicMemoryStore } from '../src/memory/episodic.js';
 import { SemanticMemoryStore } from '../src/memory/semantic.js';
@@ -21,7 +21,7 @@ function makeLogger(): Logger {
 }
 
 function makeFullDb() {
-    const db = new DatabaseSync(':memory:');
+    const db = new Database(':memory:');
     // Phase 6 target tables
     db.exec(`
         CREATE TABLE episodic_memories (
@@ -53,7 +53,7 @@ function makeFullDb() {
 }
 
 function makeLegacyDb() {
-    const db = new DatabaseSync(':memory:');
+    const db = new Database(':memory:');
     // Legacy memories table
     db.exec(`
         CREATE TABLE memories (
@@ -200,7 +200,7 @@ describe('Phase 6.5 数据迁移逻辑', () => {
     const TTL_90D = 90 * 24 * 60 * 60 * 1000;
 
     function migrateMemoriesToEpisodic(
-        db: DatabaseSync,
+        db: Database.Database,
         defaultTenant = 'default',
     ): { migrated: number; skipped: number } {
         const rows = db.prepare(
@@ -237,7 +237,7 @@ describe('Phase 6.5 数据迁移逻辑', () => {
     }
 
     function migrateKnowledgeToSemantic(
-        db: DatabaseSync,
+        db: Database.Database,
         defaultTenant = 'default',
     ): { migrated: number; skipped: number } {
         const nodes = db.prepare(

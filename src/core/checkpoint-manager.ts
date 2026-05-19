@@ -9,7 +9,7 @@
  */
 
 import { nanoid } from 'nanoid';
-import type { DatabaseSync } from 'node:sqlite';
+import type Database from 'better-sqlite3';
 import type { Message, Logger } from '../types.js';
 
 export interface CheckpointInfo {
@@ -22,7 +22,7 @@ export interface CheckpointInfo {
 
 export class CheckpointManager {
     constructor(
-        private db: DatabaseSync,
+        private db: Database.Database,
         private logger: Logger,
     ) {}
 

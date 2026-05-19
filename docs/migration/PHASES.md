@@ -94,33 +94,40 @@
 
 ---
 
-## Phase 9：评估金字塔（持续 Phase）🔄
+## Phase 9：评估金字塔（持续 Phase）✅
 
-**分支**：`worktree-refactor-v3-p9` | **PR**：#43（开放中）  
+**分支**：`worktree-refactor-v3-p9` | **PR**：#43 | **合并**：2026-05-16  
 **目标**：三层评估金字塔：Tier 1 Offline Eval + Tier 2 Shadow Traffic + Tier 3 Canary 发布。  
 **关键产出**：4 套 capability YAML（各 30 条）+ Golden Set（50 条）；ShadowTrafficService；CanaryService（渐进发布 5%→100%+自动回滚）；GitHub Actions eval CI；201 个新测试。  
+**ADR**：ADR-0013（评估金字塔三层架构）；同期补充 ADR-0005 ~ ADR-0012（P1-P8 回溯记录）  
 > 注：Phase 9 是「持续 Phase」，与后续所有 Phase 并行；每个 Phase 完成后需补充用例并检查 shadow traffic。
 
 ---
 
-## Phase 9.5：Skill Factory 2.0
+## Phase 9.5：Skill Factory 2.0 ✅
 
-**分支**：`refactor-v3-p9.5-skill-factory`  
-**目标**：员工自助创建技能的完整流程（生成 → 沙箱测试 → 安全审核 → 发布同步）。
-
----
-
-## Phase 9.7：UI/UX Design System
-
-**分支**：`refactor-v3-p9.7-design-system`  
-**目标**：建立设计系统（shadcn/ui 扩展 + Tailwind tokens），重设计核心页面。
+**分支**：`worktree-refactor-v3-p9.5` | **PR**：#44 | **合并**：2026-05-16  
+**目标**：员工自助创建技能的完整流程（生成 → 沙箱测试 → 安全审核 → 发布同步）。  
+**关键产出**：五阶段流水线（UNDERSTAND/SYNTHESIZE/VERIFY/EVAL/PUBLISH）；双段协同（LocalSkillFactory + EnterpriseSkillFactory）；8 状态生命周期；16 条安全规则；LLM-as-Judge 4 维度评分；Auto-Curator；5 步向导 UI；41 个新测试。  
+**ADR**：ADR-0014（Skill Factory 五阶段流水线）
 
 ---
 
-## Phase 10：Web 版 MVP（2 周）
+## Phase 9.7：UI/UX Design System ✅
 
-**分支**：`refactor-v3-p10-web-mvp`  
-**目标**：Web-First 上线，企业员工可通过浏览器访问完整功能。这是第一个对外可用的里程碑。
+**分支**：`worktree-refactor-v3-p9.7` | **PR**：#45 | **合并**：2026-05-17  
+**目标**：建立设计系统（Design Tokens + 三主题 + 26 组件 + Storybook），为 Web MVP 提供统一基础。  
+**关键产出**：6 个 Token 文件（color/typography/spacing/radius/shadow/motion）；三主题（light/dark/high-contrast WCAG AAA）；26 个组件（基础 UI 3 + 业务 10 + 布局 5 + 升级 8）；Storybook 8.6.18（7 stories 文件，28+ stories，addon-a11y）。  
+**ADR**：ADR-0015（UI/UX 设计系统 — Design Tokens + 三主题 + Storybook）
+
+---
+
+## Phase 10：Web 版 MVP（2 周）🔄
+
+**分支**：`worktree-refactor-v3-p10` | **PR**：#46（开放中）  
+**目标**：Web-First 上线，企业员工可通过浏览器访问完整功能。这是第一个对外可用的里程碑。  
+**关键产出**：IStorageAdapter 抽象（Phase 13 Electron 预留）；AG-UI Runtime；Login 页 + History 页；⌘K 命令面板；首次引导；Error Boundary；Service Worker 离线；Settings 个人偏好 Tab；Skills 目录 Tab；HTTPS 代理 TLS 修复。  
+**ADR**：ADR-0016（IStorageAdapter 抽象）；ADR-0017（HTTPS 代理函数包装）
 
 ---
 

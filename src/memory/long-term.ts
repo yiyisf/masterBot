@@ -1,4 +1,4 @@
-import { DatabaseSync } from 'node:sqlite';
+import type Database from 'better-sqlite3';
 import { nanoid } from 'nanoid';
 import { readFile, writeFile, mkdir } from 'fs/promises';
 import { existsSync, mkdirSync } from 'fs';
@@ -6,7 +6,7 @@ import { join, dirname } from 'path';
 import type { MemoryAccess, MemoryEntry, Logger } from '../types.js';
 
 export interface LongTermMemoryOptions {
-    db: DatabaseSync;
+    db: Database.Database;
     logger: Logger;
     /** 文件记忆根目录，默认 data/.memory */
     dataDir?: string;
@@ -39,7 +39,7 @@ function sanitizeFilename(s: string): string {
  * - 自动维护 data/.memory/MEMORY.md 索引（前 200 行注入每个 session）
  */
 export class LongTermMemory implements MemoryAccess {
-    private db: DatabaseSync;
+    private db: Database.Database;
     private logger: Logger;
     private dataDir: string;
     /** FTS5 是否可用（部分 Windows/旧 Node 构建中 SQLite 可能未编译 FTS5）*/
@@ -102,7 +102,9 @@ export class LongTermMemory implements MemoryAccess {
             this.logger.debug('[memory] FTS5 available');
         } catch (err) {
             this._ftsAvailable = false;
-            this.logger.warn(`[memory] FTS5 not available, falling back to LIKE search: ${(err as Error).message}`);
+            // FTS5 not compiled in this SQLite build (common on Windows with Node.js built-in sqlite).
+            // LIKE search is the graceful fallback — functionality is unaffected, only search speed differs.
+            this.logger.info(`[memory] FTS5 not compiled in this SQLite build, using LIKE search fallback (normal on Windows)`);
         }
 
         // 确保文件目录存在

@@ -161,6 +161,29 @@ export class GatewayServer {
         if (this.config.auth?.enabled) {
             this.app.addHook('onRequest', createAuthHook(this.config.auth, this.logger));
         }
+
+        // Security headers for all responses served by Fastify (covers static export HTML).
+        // next.config.ts headers() is a no-op in output:'export' mode — Fastify owns this.
+        this.app.addHook('onSend', (_request, reply, _payload, done) => {
+            reply.header('X-DNS-Prefetch-Control', 'on');
+            reply.header('X-Frame-Options', 'SAMEORIGIN');
+            reply.header('X-Content-Type-Options', 'nosniff');
+            reply.header('Referrer-Policy', 'strict-origin-when-cross-origin');
+            reply.header('Permissions-Policy', 'camera=(), microphone=(), geolocation=()');
+            reply.header(
+                'Content-Security-Policy',
+                [
+                    "default-src 'self'",
+                    "script-src 'self' 'unsafe-inline'",
+                    "style-src 'self' 'unsafe-inline'",
+                    "img-src 'self' data: blob:",
+                    "font-src 'self' data:",
+                    "connect-src 'self' ws: wss:",
+                    "frame-ancestors 'self'",
+                ].join('; '),
+            );
+            done();
+        });
     }
 
     private async setupStatic(): Promise<void> {
@@ -905,10 +928,21 @@ export class GatewayServer {
                 };
             } catch (err: any) {
                 const isTimeout = err.name === 'TimeoutError' || err.message?.includes('timeout');
-                this.logger.error(`[config] Connectivity test failed for ${providerName}${isTimeout ? ' (Timeout)' : ''}: ${err.message}`);
+                const errMsg: string = err.message ?? String(err);
+                this.logger.error(`[config] Connectivity test failed for ${providerName}${isTimeout ? ' (Timeout)' : ''}: ${errMsg}`);
+
+                // Diagnose common proxy errors for better UX
+                let hint: string | undefined;
+                if (errMsg.includes('no connected db')) {
+                    hint = 'LiteLLM 代理需要数据库支持（budget tracking）。建议：① 配置 litellm_database_url；② 或在 liteLLM config.yaml 中禁用 database_type；③ 或在 CMaster 中将此 provider 的 type 改为 openai 以使用 OpenAI 兼容接口。';
+                } else if (errMsg.includes('model not found') || errMsg.includes('invalid model')) {
+                    hint = `模型名称 "${providerConfig.model}" 在代理端不存在，请检查 liteLLM config.yaml 中的 model_name 配置。`;
+                }
+
                 return {
                     success: false,
-                    error: isTimeout ? 'Request timed out (30s)' : err.message,
+                    error: isTimeout ? 'Request timed out (30s)' : errMsg,
+                    hint,
                     debugInfo: {
                         baseUrl: providerConfig.baseUrl,
                         model: providerConfig.model,

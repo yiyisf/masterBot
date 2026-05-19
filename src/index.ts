@@ -220,6 +220,7 @@ async function main() {
     // Phase 3: 构建 AgentRouter（ClaudeManagedAgent + LegacySelfHostedAgent 双引擎）
     const featureFlags = createDefaultFeatureFlagService();
     const agentRouter = new AgentRouter({
+        historyRepository,
         legacyFactory: () => new LegacySelfHostedAgent({
             llm: () => {
                 const provider = config.models.default;

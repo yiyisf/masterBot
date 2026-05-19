@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
+import { useTheme } from "next-themes";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -228,6 +229,93 @@ function ImIntegrationCard() {
 }
 
 // ── Main page ──────────────────────────────────────────────────────────────────
+
+// ── Preferences Tab ────────────────────────────────────────────────────────
+
+const THEME_OPTIONS = [
+    { value: 'light', label: '亮色模式', description: '清爽的白色主题，适合日间使用' },
+    { value: 'dark', label: '暗色模式', description: '护眼的深色主题，适合夜间使用' },
+    { value: 'high-contrast', label: '高对比度', description: '符合 WCAG AAA，增强可读性' },
+    { value: 'system', label: '跟随系统', description: '自动跟随操作系统主题设置' },
+] as const;
+
+function PreferencesTab() {
+    const { theme, setTheme } = useTheme();
+    const [language, setLanguage] = useState('zh');
+    const [notifications, setNotifications] = useState(true);
+
+    return (
+        <div className="space-y-6">
+            {/* Theme */}
+            <Card>
+                <CardHeader>
+                    <CardTitle className="text-base">外观主题</CardTitle>
+                    <CardDescription>选择界面颜色主题，支持三种模式</CardDescription>
+                </CardHeader>
+                <CardContent>
+                    <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+                        {THEME_OPTIONS.map((opt) => (
+                            <button
+                                key={opt.value}
+                                onClick={() => setTheme(opt.value)}
+                                className={`flex flex-col gap-1.5 rounded-lg border-2 p-3 text-left transition-all hover:bg-muted/50 ${
+                                    theme === opt.value
+                                        ? 'border-primary bg-primary/5'
+                                        : 'border-border'
+                                }`}
+                            >
+                                <span className="text-sm font-medium">{opt.label}</span>
+                                <span className="text-xs text-muted-foreground leading-snug">
+                                    {opt.description}
+                                </span>
+                            </button>
+                        ))}
+                    </div>
+                </CardContent>
+            </Card>
+
+            {/* Language */}
+            <Card>
+                <CardHeader>
+                    <CardTitle className="text-base">界面语言</CardTitle>
+                    <CardDescription>设置界面显示语言</CardDescription>
+                </CardHeader>
+                <CardContent>
+                    <div className="flex gap-3">
+                        {[{ value: 'zh', label: '中文' }, { value: 'en', label: 'English' }].map(opt => (
+                            <Button
+                                key={opt.value}
+                                variant={language === opt.value ? 'default' : 'outline'}
+                                size="sm"
+                                onClick={() => setLanguage(opt.value)}
+                            >
+                                {opt.label}
+                            </Button>
+                        ))}
+                    </div>
+                    <p className="mt-2 text-xs text-muted-foreground">语言切换将在下次刷新后生效</p>
+                </CardContent>
+            </Card>
+
+            {/* Notifications */}
+            <Card>
+                <CardHeader>
+                    <CardTitle className="text-base">通知设置</CardTitle>
+                    <CardDescription>管理系统通知和提醒</CardDescription>
+                </CardHeader>
+                <CardContent className="space-y-4">
+                    <div className="flex items-center justify-between">
+                        <div>
+                            <p className="text-sm font-medium">浏览器通知</p>
+                            <p className="text-xs text-muted-foreground">任务完成时发送桌面通知</p>
+                        </div>
+                        <Switch checked={notifications} onCheckedChange={setNotifications} />
+                    </div>
+                </CardContent>
+            </Card>
+        </div>
+    );
+}
 
 export default function SettingsPage() {
     // ─ state
@@ -494,8 +582,9 @@ export default function SettingsPage() {
                     </Button>
                 </div>
 
-                <Tabs defaultValue="config">
+                <Tabs defaultValue="preferences">
                     <TabsList className="mb-4">
+                        <TabsTrigger value="preferences">个人偏好</TabsTrigger>
                         <TabsTrigger value="config">系统配置</TabsTrigger>
                         <TabsTrigger value="agent-routing">Agent 路由</TabsTrigger>
                         <TabsTrigger value="usage">
@@ -503,6 +592,11 @@ export default function SettingsPage() {
                             用量统计
                         </TabsTrigger>
                     </TabsList>
+
+                    {/* ══════════ Tab 0: 个人偏好 ══════════ */}
+                    <TabsContent value="preferences" className="space-y-6 mt-0">
+                        <PreferencesTab />
+                    </TabsContent>
 
                     {/* ══════════ Tab 1: 系统配置 ══════════ */}
                     <TabsContent value="config" className="space-y-8 mt-0">

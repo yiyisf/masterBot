@@ -7,7 +7,7 @@
  * Harness 崩溃后，任意新实例可通过 wake(sessionId) 从最后事件恢复。
  */
 
-import type { DatabaseSync } from 'node:sqlite';
+import type Database from 'better-sqlite3';
 import { nanoid } from 'nanoid';
 import type { SessionEvent, SessionEventType, Message } from '../../types.js';
 
@@ -58,11 +58,11 @@ export interface WakeContext {
 // ─────────────────────────────────────────────────
 
 export class SessionEventStore {
-    private stmtAppend: ReturnType<DatabaseSync['prepare']>;
-    private stmtGetBySession: ReturnType<DatabaseSync['prepare']>;
-    private stmtGetUnfinished: ReturnType<DatabaseSync['prepare']>;
+    private stmtAppend: Database.Statement;
+    private stmtGetBySession: Database.Statement;
+    private stmtGetUnfinished: Database.Statement;
 
-    constructor(private db: DatabaseSync) {
+    constructor(private db: Database.Database) {
         this.stmtAppend = db.prepare(`
             INSERT INTO session_events (id, session_id, timestamp, type, payload, caused_by)
             VALUES (?, ?, ?, ?, ?, ?)
@@ -148,7 +148,7 @@ export class SessionEventStore {
             sql = `SELECT * FROM session_events WHERE ${whereClause} ORDER BY timestamp ASC`;
         }
 
-        const rows = this.db.prepare(sql).all(...(params as import('node:sqlite').SQLInputValue[])) as Array<{
+        const rows = this.db.prepare(sql).all(...params) as Array<{
             id: string; session_id: string; timestamp: number; type: string; payload: string; caused_by: string | null;
         }>;
         let events = this.parseRows(rows);

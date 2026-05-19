@@ -1,8 +1,8 @@
-import type { DatabaseSync } from 'node:sqlite';
+import type Database from 'better-sqlite3';
 import type { Logger } from '../types.js';
 
 export class AutoCurator {
-    constructor(private db: DatabaseSync, private logger: Logger) {}
+    constructor(private db: Database.Database, private logger: Logger) {}
 
     async runDailyCuration(): Promise<{
         featured: string[];

@@ -1,5 +1,5 @@
 import type { FastifyInstance } from 'fastify';
-import type { DatabaseSync } from 'node:sqlite';
+import type Database from 'better-sqlite3';
 import type { LLMAdapter, Logger } from '../types.js';
 import { AdminRepository, type SkillReviewStatus, type RbacEffect } from '../core/admin-repository.js';
 import { CanaryService } from '../eval/canary.js';
@@ -13,7 +13,7 @@ function getAdminId(request: any): string {
 
 export function registerAdminRoutes(
     app: FastifyInstance,
-    db: DatabaseSync,
+    db: Database.Database,
     adminApiKeys: string[],
     logger: Logger,
     llm?: LLMAdapter,
@@ -321,7 +321,7 @@ export function registerAdminRoutes(
                 if (state) { query += ' AND state = ?'; params.push(state); }
                 if (curation) { query += ' AND curation_status = ?'; params.push(curation); }
                 query += ' ORDER BY updated_at DESC';
-                return db.prepare(query).all(...(params as unknown as import('node:sqlite').SQLInputValue[]));
+                return db.prepare(query).all(...params);
             }
         );
     });

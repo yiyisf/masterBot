@@ -1,5 +1,5 @@
 import { randomUUID } from 'crypto';
-import type { DatabaseSync } from 'node:sqlite';
+import type Database from 'better-sqlite3';
 
 export type SkillReviewStatus = 'pending' | 'approved' | 'rejected';
 export type RbacEffect = 'allow' | 'deny';
@@ -34,7 +34,7 @@ export interface AdminAuditEntry {
 }
 
 export class AdminRepository {
-    constructor(private db: DatabaseSync) {}
+    constructor(private db: Database.Database) {}
 
     // ─── Skill Reviews ────────────────────────────────────────────────────────
 
@@ -191,11 +191,11 @@ export class AdminRepository {
         try {
             const rows = this.db.prepare(
                 `SELECT * FROM execution_records ${where} ORDER BY started_at DESC LIMIT ? OFFSET ?`
-            ).all(...(params as import('node:sqlite').SQLInputValue[]), limit, offset);
+            ).all(...params, limit, offset);
 
             const total = (this.db.prepare(
                 `SELECT COUNT(*) as c FROM execution_records ${where}`
-            ).get(...(params as import('node:sqlite').SQLInputValue[])) as any)?.c ?? 0;
+            ).get(...params) as any)?.c ?? 0;
 
             return { rows, total, limit, offset };
         } catch {

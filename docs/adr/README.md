@@ -19,6 +19,10 @@
 | [0011](0011-session-checkpoint-strategy.md) | Accepted | P5 | Session Fork/Checkpoint 存储策略 — SDK JSONL 优先 + SQLite Fallback |
 | [0012](0012-otel-spanrecorder-dual-write.md) | Accepted | P1 | 可观测性 — SpanRecorder 双写模式（SQLite + OTel）|
 | [0013](0013-evaluation-pyramid.md) | Accepted | P9 | 评估金字塔三层架构 — Vitest + Shadow Traffic + Canary |
+| [0014](0014-skill-factory-5stage-pipeline.md) | Accepted | P9.5 | Skill Factory 2.0 — 五阶段流水线 + 双段协同 |
+| [0015](0015-design-system-tokens.md) | Accepted | P9.7 | UI/UX 设计系统 — Design Tokens + 三主题 + Storybook |
+| [0016](0016-istorage-adapter-abstraction.md) | Accepted | P10 | IStorageAdapter 抽象 — Web HTTP 实现 + Phase 13 Electron 预留 |
+| [0017](0017-proxy-agent-function-wrapper.md) | Accepted | P10 | HTTPS 代理适配 — https-proxy-agent 函数包装模式 |
 
 ## 状态说明
 
@@ -30,7 +34,7 @@
 ## 新增 ADR 流程
 
 1. 复制现有 ADR 作为模板
-2. 编号递增（下一个为 `0005`）
+2. 编号递增（下一个为 `0018`）
 3. 填写 Context / Decision / Consequences / Alternatives
 4. 更新本 README 索引
 5. 在 PR 描述中说明 ADR 编号

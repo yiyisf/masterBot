@@ -1,4 +1,5 @@
 import Anthropic from '@anthropic-ai/sdk';
+import { HttpsProxyAgent } from 'https-proxy-agent';
 import type {
     LLMAdapter,
     Message,
@@ -19,9 +20,17 @@ export class AnthropicAdapter implements LLMAdapter {
 
     constructor(config: LLMConfig) {
         this.config = config;
+        const proxyUrl = process.env.https_proxy || process.env.HTTPS_PROXY
+            || process.env.http_proxy || process.env.HTTP_PROXY;
+        let httpAgent: import('http').Agent | undefined;
+        if (proxyUrl) {
+            const proxyAgentInstance = new HttpsProxyAgent(proxyUrl);
+            httpAgent = (() => proxyAgentInstance) as unknown as import('http').Agent;
+        }
         this.client = new Anthropic({
             apiKey: config.apiKey,
             baseURL: config.baseUrl || undefined,
+            ...(httpAgent ? { httpAgent } : {}),
         });
     }
 
@@ -31,9 +40,11 @@ export class AnthropicAdapter implements LLMAdapter {
         const response = await this.client.messages.create({
             model: options?.model ?? this.config.model,
             max_tokens: options?.maxTokens ?? this.config.maxTokens ?? 4096,
-            system: systemPrompt,
+            // Omit system when empty — some proxies (e.g. liteLLM) reject system: ""
+            ...(systemPrompt ? { system: systemPrompt } : {}),
             messages: convertedMessages,
-            tools: options?.tools ? this.convertTools(options.tools) : undefined,
+            // Omit tools when not provided — passing tools: undefined can confuse proxies
+            ...(options?.tools?.length ? { tools: this.convertTools(options.tools) } : {}),
         }, { signal: options?.abortSignal });
 
         // Process response content
@@ -68,9 +79,9 @@ export class AnthropicAdapter implements LLMAdapter {
         const stream = this.client.messages.stream({
             model: options?.model ?? this.config.model,
             max_tokens: options?.maxTokens ?? this.config.maxTokens ?? 4096,
-            system: systemPrompt,
+            ...(systemPrompt ? { system: systemPrompt } : {}),
             messages: convertedMessages,
-            tools: options?.tools ? this.convertTools(options.tools) : undefined,
+            ...(options?.tools?.length ? { tools: this.convertTools(options.tools) } : {}),
         }, { signal: options?.abortSignal });
 
         let currentToolCall: StreamChunk['toolCall'] | null = null;

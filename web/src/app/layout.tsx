@@ -5,12 +5,8 @@ import { AppSidebar } from "@/components/sidebar";
 import {
   SidebarProvider,
   SidebarInset,
-  SidebarTrigger
 } from "@/components/ui/sidebar";
-import { Separator } from "@/components/ui/separator";
 
-// Use locally bundled Inter font to avoid network requests to Google CDN at build time.
-// Font files are in web/src/fonts/ (copied from Next.js font cache).
 const inter = localFont({
   src: [
     { path: "../fonts/inter-latin.woff2", style: "normal" },
@@ -29,6 +25,9 @@ export const metadata: Metadata = {
 import { ThemeProvider } from "@/components/theme-provider";
 import { ModeToggle } from "@/components/mode-toggle";
 import { Toaster } from "@/components/ui/sonner";
+import { CommandPaletteProvider } from "@/components/command-palette-provider";
+import { OnboardingTour } from "@/components/onboarding-tour";
+import { ServiceWorkerRegistrar } from "@/components/sw-registrar";
 
 export default function RootLayout({
   children,
@@ -44,21 +43,23 @@ export default function RootLayout({
           enableSystem
           disableTransitionOnChange
         >
-          <SidebarProvider>
-            <AppSidebar />
-            <SidebarInset className="h-svh overflow-hidden flex flex-col">
-              <header className="flex h-14 shrink-0 items-center justify-between border-b px-4 transition-all">
-                <div className="flex items-center gap-2">
-                  {/* SidebarTrigger 已移至侧边栏内部 */}
-                </div>
-                <ModeToggle />
-              </header>
-              <main className="flex flex-1 flex-col overflow-hidden p-6">
-                {children}
-              </main>
-            </SidebarInset>
-          </SidebarProvider>
-          <Toaster />
+          <CommandPaletteProvider>
+            <SidebarProvider>
+              <AppSidebar />
+              <SidebarInset className="h-svh overflow-hidden flex flex-col">
+                <header className="flex h-14 shrink-0 items-center justify-between border-b px-4 transition-all">
+                  <div />
+                  <ModeToggle />
+                </header>
+                <main className="flex flex-1 flex-col overflow-hidden p-6">
+                  {children}
+                </main>
+              </SidebarInset>
+            </SidebarProvider>
+            <Toaster />
+            <OnboardingTour />
+            <ServiceWorkerRegistrar />
+          </CommandPaletteProvider>
         </ThemeProvider>
       </body>
     </html>

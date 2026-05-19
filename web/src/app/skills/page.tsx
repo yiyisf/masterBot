@@ -1,6 +1,7 @@
 "use client";
 
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState, useCallback, useMemo } from "react";
+import { SkillCard } from "@/components/skill-card";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle, CardFooter } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Switch } from "@/components/ui/switch";
@@ -11,7 +12,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { Textarea } from "@/components/ui/textarea";
 import { useRouter } from "next/navigation";
-import { Puzzle, Box, Code, Server, Plus, Trash2, Terminal, Globe, Search, Download, ExternalLink, Loader2, Sparkles, Wand2, CheckCircle2, XCircle, AlertCircle, Wrench } from "lucide-react";
+import { Puzzle, Box, Code, Server, Plus, Trash2, Terminal, Globe, Search, Download, ExternalLink, Loader2, Sparkles, Wand2, CheckCircle2, XCircle, AlertCircle, Wrench, Star, Filter } from "lucide-react";
 import { toast } from "sonner";
 import { fetchApi } from "@/lib/api";
 
@@ -220,12 +221,30 @@ export default function SkillsPage() {
         }
     };
 
+    // Catalog state
+    const [catalogSearch, setCatalogSearch] = useState('');
+    const [catalogFilter, setCatalogFilter] = useState<'all' | 'active' | 'degraded'>('all');
+
+    const catalogSkills = useMemo(() => {
+        return skills
+            .filter(s => {
+                if (catalogFilter === 'active') return s.status !== 'degraded';
+                if (catalogFilter === 'degraded') return s.status === 'degraded';
+                return true;
+            })
+            .filter(s =>
+                !catalogSearch ||
+                s.name.toLowerCase().includes(catalogSearch.toLowerCase()) ||
+                s.description.toLowerCase().includes(catalogSearch.toLowerCase()),
+            );
+    }, [skills, catalogSearch, catalogFilter]);
+
     return (
         <div className="h-full overflow-y-auto w-full max-w-5xl mx-auto p-6 space-y-8 pb-10">
             <div className="flex items-start justify-between">
                 <div>
-                    <h1 className="text-3xl font-bold tracking-tight">Skill & MCP Management</h1>
-                    <p className="text-muted-foreground mt-1">Configure capabilities and external MCP server connections.</p>
+                    <h1 className="text-3xl font-bold tracking-tight">技能中心</h1>
+                    <p className="text-muted-foreground mt-1">管理能力扩展，配置 MCP 服务器连接。</p>
                 </div>
                 <Button onClick={() => router.push("/skills/factory")} className="gap-2 shrink-0">
                     <Wand2 className="w-4 h-4" />
@@ -233,13 +252,63 @@ export default function SkillsPage() {
                 </Button>
             </div>
 
-            <Tabs defaultValue="available">
-                <TabsList className="grid w-full grid-cols-4 max-w-[700px]">
-                    <TabsTrigger value="available">Active Skills</TabsTrigger>
+            <Tabs defaultValue="catalog">
+                <TabsList className="grid w-full grid-cols-5 max-w-[800px]">
+                    <TabsTrigger value="catalog" className="gap-1.5"><Star className="w-3.5 h-3.5" />技能目录</TabsTrigger>
+                    <TabsTrigger value="available">已安装</TabsTrigger>
                     <TabsTrigger value="mcp">MCP Servers</TabsTrigger>
                     <TabsTrigger value="registry">MCP Registry</TabsTrigger>
                     <TabsTrigger value="generate" className="gap-1.5"><Sparkles className="w-3.5 h-3.5" />生成技能</TabsTrigger>
                 </TabsList>
+
+                {/* ── Catalog Tab ──────────────────────────────────────────────────── */}
+                <TabsContent value="catalog" className="mt-6">
+                    <div className="flex gap-3 mb-6">
+                        <div className="relative flex-1">
+                            <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                            <Input
+                                placeholder="搜索技能..."
+                                className="pl-9"
+                                value={catalogSearch}
+                                onChange={e => setCatalogSearch(e.target.value)}
+                            />
+                        </div>
+                        <div className="flex gap-1">
+                            {(['all', 'active', 'degraded'] as const).map(f => (
+                                <Button
+                                    key={f}
+                                    variant={catalogFilter === f ? 'default' : 'outline'}
+                                    size="sm"
+                                    onClick={() => setCatalogFilter(f)}
+                                >
+                                    {f === 'all' ? '全部' : f === 'active' ? '正常' : '异常'}
+                                </Button>
+                            ))}
+                        </div>
+                    </div>
+                    {catalogSkills.length === 0 ? (
+                        <div className="text-center py-12 text-muted-foreground">
+                            <Puzzle className="h-10 w-10 mx-auto mb-3 opacity-30" />
+                            <p>暂无匹配技能</p>
+                        </div>
+                    ) : (
+                        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+                            {catalogSkills.map(skill => (
+                                <SkillCard
+                                    key={skill.name}
+                                    name={skill.name}
+                                    description={skill.description}
+                                    category={skill.status === 'degraded' ? '异常' : '已安装'}
+                                    usageCount={skill.actions.length}
+                                    onView={() => {
+                                        // Scroll to the "已安装" tab and highlight
+                                    }}
+                                    onInstall={skill.status === 'degraded' ? () => repairSkill(skill.name) : undefined}
+                                />
+                            ))}
+                        </div>
+                    )}
+                </TabsContent>
 
                 <TabsContent value="available" className="mt-6">
                     <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-2">

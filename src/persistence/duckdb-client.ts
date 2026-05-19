@@ -35,8 +35,35 @@ export class DuckDBClient {
             this.instance = await DuckDBInstance.create(this.dbPath);
             this.conn = await this.instance.connect();
 
-            // Load VSS extension (auto-downloads on first use)
-            await this.conn.run('INSTALL vss; LOAD vss;');
+            // Load VSS extension.
+            // Priority order:
+            //   1. DUCKDB_VSS_SKIP=true  → bypass entirely (CI, no vector search)
+            //   2. DUCKDB_VSS_PATH=<dir> → load from local directory (air-gapped/enterprise)
+            //   3. DUCKDB_EXTENSION_DIRECTORY=<dir> → set custom extension cache dir then LOAD
+            //   4. Try LOAD from default cache; fall back to INSTALL from DuckDB repo
+            if (process.env.DUCKDB_VSS_SKIP === 'true') {
+                throw new Error('DuckDB VSS skipped via DUCKDB_VSS_SKIP=true');
+            }
+
+            const vssPath = process.env.DUCKDB_VSS_PATH;
+            const extDir = process.env.DUCKDB_EXTENSION_DIRECTORY;
+
+            if (vssPath) {
+                // Load directly from a local .duckdb_extension file (air-gapped deployment)
+                await this.conn.run(`LOAD '${vssPath.replace(/'/g, "''")}'`);
+            } else {
+                if (extDir) {
+                    // Point DuckDB to a custom directory that contains pre-downloaded extensions
+                    await this.conn.run(`SET extension_directory='${extDir.replace(/'/g, "''")}'`);
+                }
+                try {
+                    await this.conn.run('LOAD vss;');
+                } catch {
+                    // Not cached — download from DuckDB extension repository.
+                    // To avoid this, pre-download with: npx tsx scripts/setup-duckdb.mjs
+                    await this.conn.run('INSTALL vss; LOAD vss;');
+                }
+            }
 
             // Create episodic vector table
             await this.conn.run(`
@@ -59,8 +86,17 @@ export class DuckDBClient {
             this.ready = true;
             this.logger.info(`[duckdb] DuckDB VSS initialized (dim=${this.dim}, path=${this.dbPath})`);
         } catch (err: any) {
-            this.logger.warn(`[duckdb] DuckDB VSS unavailable, vector search disabled: ${err.message}`);
             this.ready = false;
+            const isNetworkErr = /network|download|http|url|connect|timeout/i.test(err.message ?? '');
+            if (isNetworkErr) {
+                this.logger.info(
+                    '[duckdb] DuckDB VSS extension requires internet to download on first use. ' +
+                    'Vector search disabled. ' +
+                    'To skip this in air-gapped environments: set DUCKDB_VSS_SKIP=true in .env',
+                );
+            } else {
+                this.logger.warn(`[duckdb] DuckDB VSS unavailable, vector search disabled: ${err.message}`);
+            }
         }
     }
 

@@ -13,7 +13,7 @@
  */
 
 import { createCipheriv, createDecipheriv, createHmac, randomBytes, scryptSync } from 'crypto';
-import type { DatabaseSync } from 'node:sqlite';
+import type Database from 'better-sqlite3';
 import { nanoid } from 'nanoid';
 import type { SessionEventStore } from './session-store.js';
 
@@ -31,15 +31,15 @@ function deriveKey(masterKey: string): Buffer {
 
 export class CredentialVault {
     private key: Buffer;
-    private stmtUpsert: ReturnType<DatabaseSync['prepare']>;
-    private stmtGet: ReturnType<DatabaseSync['prepare']>;
-    private stmtList: ReturnType<DatabaseSync['prepare']>;
-    private stmtDelete: ReturnType<DatabaseSync['prepare']>;
+    private stmtUpsert: Database.Statement;
+    private stmtGet: Database.Statement;
+    private stmtList: Database.Statement;
+    private stmtDelete: Database.Statement;
     /** D4: sessionToken → sessionId 映射表，用于 retrieveWithToken() 反查 */
     private tokenToSession = new Map<string, string>();
 
     constructor(
-        private db: DatabaseSync,
+        private db: Database.Database,
         masterKey: string,
         private sessionStore?: SessionEventStore
     ) {

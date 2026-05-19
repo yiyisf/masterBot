@@ -29,6 +29,23 @@ try {
     Write-Die "未找到 Node.js。请从 https://nodejs.org 安装 Node.js 22 LTS"
 }
 
+# Check GitHub connectivity for better-sqlite3 prebuilds
+Write-Info "检测网络环境..."
+$canReachGitHub = $false
+try {
+    $resp = Invoke-WebRequest -Uri "https://github.com" -TimeoutSec 5 -UseBasicParsing -ErrorAction Stop
+    $canReachGitHub = ($resp.StatusCode -eq 200)
+} catch { }
+
+if (-not $canReachGitHub) {
+    Write-Warn "无法访问 GitHub，切换到内网离线安装模式..."
+    Write-Warn "正在调用离线安装脚本，请稍候..."
+    Write-Host ""
+    & "$PSScriptRoot\install-offline.ps1"
+    exit $LASTEXITCODE
+}
+Write-Ok "网络正常，使用在线模式安装"
+
 # Install backend dependencies
 Write-Info "安装后端依赖..."
 npm install

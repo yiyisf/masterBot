@@ -4,6 +4,7 @@
  * Phase 3 将注入 ClaudeManagedAgent；当前仅路由到 LegacySelfHostedAgent。
  */
 
+import { nanoid } from 'nanoid';
 import type { IAgent, AgentInput, AgentEvent, AgentCapabilities } from './types.js';
 import type { Logger } from '../../types.js';
 
@@ -28,6 +29,14 @@ export class EnvFeatureFlagService implements IFeatureFlagService {
     }
 }
 
+// ─── Fork Repository（最小接口，避免与 HistoryRepository 强耦合）────────────
+
+export interface ForkRepository {
+    getMessages(sessionId: string, opts?: { limit?: number }): any[];
+    saveMessage(sessionId: string, message: any): string;
+    recordFork(parentSessionId: string, newSessionId: string, title?: string): void;
+}
+
 // ─── Agent Factory ────────────────────────────────────────────────────────────
 
 export type AgentFactory = () => IAgent;
@@ -41,12 +50,19 @@ export interface AgentRouterOptions {
     claudeFactory?: AgentFactory;
     featureFlags?: IFeatureFlagService;
     logger: Logger;
+    /**
+     * Phase 10 fix: 用于 Legacy 会话的 copy-based fork。
+     * SDK forkSession() 只识别 SDK 自己创建的 session ID；Legacy 会话（nanoid）
+     * 必须通过消息复制实现 fork。
+     */
+    historyRepository?: ForkRepository;
 }
 
 // ─── AgentRouter ──────────────────────────────────────────────────────────────
 
 export class AgentRouter implements IAgent {
-    private readonly opts: Required<Omit<AgentRouterOptions, 'claudeFactory'>> & { claudeFactory?: AgentFactory };
+    private readonly opts: Required<Omit<AgentRouterOptions, 'claudeFactory' | 'historyRepository'>>
+        & { claudeFactory?: AgentFactory; historyRepository?: ForkRepository };
     private readonly legacyAgent: IAgent;
     private claudeAgent?: IAgent;
 
@@ -56,6 +72,7 @@ export class AgentRouter implements IAgent {
             claudeFactory: options.claudeFactory,
             featureFlags: options.featureFlags ?? new EnvFeatureFlagService(),
             logger: options.logger,
+            historyRepository: options.historyRepository,
         };
         this.legacyAgent = options.legacyFactory();
         if (options.claudeFactory) {
@@ -90,13 +107,65 @@ export class AgentRouter implements IAgent {
     }
 
     async *resume(sessionId: string): AsyncGenerator<AgentEvent> {
+        // ClaudeManagedAgent 持有 SDK session 状态，SDK 创建的会话必须由它来恢复。
+        if (this.claudeAgent) {
+            try {
+                yield* this.claudeAgent.resume(sessionId);
+                return;
+            } catch (err: any) {
+                const msg: string = err?.message ?? '';
+                if (!msg.includes('Invalid sessionId') && !msg.includes('not found')) throw err;
+                this.opts.logger.debug?.(`[AgentRouter] claudeAgent.resume failed (legacy session ${sessionId}), falling back`);
+            }
+        }
         yield* this.legacyAgent.resume(sessionId);
     }
 
     async fork(sessionId: string): Promise<string> {
-        // Phase 5: 优先走 ClaudeManagedAgent（SDK forkSession），fallback legacy
-        const agent = this.claudeAgent ?? this.legacyAgent;
-        return agent.fork(sessionId);
+        // 优先尝试 ClaudeManagedAgent SDK fork；若 session 不属于 SDK（Legacy 会话），
+        // 则自动降级到 copy-based fork，无需外部感知。
+        if (this.claudeAgent) {
+            try {
+                return await this.claudeAgent.fork(sessionId);
+            } catch (err: any) {
+                const msg: string = err?.message ?? '';
+                if (!msg.includes('Invalid sessionId') && !msg.includes('not found') && !msg.includes('does not support')) {
+                    throw err; // 非预期错误直接抛出
+                }
+                this.opts.logger.warn?.(
+                    `[AgentRouter] SDK forkSession rejected (session=${sessionId}, legacy mode) — falling back to copy fork`,
+                );
+            }
+        }
+        return this.copyFork(sessionId);
+    }
+
+    /**
+     * Legacy copy-based fork：将父会话的消息全量复制到新会话。
+     * 适用于 Legacy 模式创建的 nanoid 会话（SDK 不感知这些 ID）。
+     */
+    private async copyFork(parentSessionId: string): Promise<string> {
+        const repo = this.opts.historyRepository;
+        if (!repo) {
+            throw new Error(
+                '[AgentRouter] historyRepository is required for legacy copy fork. ' +
+                'Inject it via AgentRouterOptions.historyRepository.',
+            );
+        }
+        const newSessionId = nanoid();
+        // recordFork 内含 INSERT OR IGNORE INTO sessions，会同时创建新会话记录
+        repo.recordFork(parentSessionId, newSessionId);
+        const messages = repo.getMessages(parentSessionId);
+        for (const msg of messages) {
+            // 附件 id 必须重新生成：attachments 表 id 为 PRIMARY KEY，
+            // 复用原 id 会导致 UNIQUE constraint violation。
+            const attachments = msg.attachments?.map((att: any) => ({ ...att, id: nanoid() }));
+            repo.saveMessage(newSessionId, { ...msg, id: nanoid(), attachments });
+        }
+        this.opts.logger.info?.(
+            `[AgentRouter] copy fork ok: ${parentSessionId} → ${newSessionId} (${messages.length} messages copied)`,
+        );
+        return newSessionId;
     }
 
     async checkpoint(sessionId: string, label?: string): Promise<string> {

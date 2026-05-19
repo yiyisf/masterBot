@@ -6,7 +6,7 @@
  * 任一层不可用时自动降级，不影响功能。
  */
 
-import type { DatabaseSync } from 'node:sqlite';
+import type Database from 'better-sqlite3';
 import { nanoid } from 'nanoid';
 import type { Logger } from '../types.js';
 import type { EpisodicMemory } from './types.js';
@@ -17,7 +17,7 @@ const TTL_MS = 90 * 24 * 60 * 60 * 1000; // 90 days
 
 export class EpisodicMemoryStore {
     constructor(
-        private db: DatabaseSync,
+        private db: Database.Database,
         private logger: Logger,
         /** Phase 6.5: 可选向量搜索增强 */
         private duckdb?: DuckDBClient,
@@ -48,7 +48,9 @@ export class EpisodicMemoryStore {
                 USING fts5(id UNINDEXED, tenant_id UNINDEXED, content, tokenize='unicode61');
             `);
         } catch {
-            this.logger.warn('[episodic] FTS5 not available, falling back to LIKE search');
+            // FTS5 not compiled in this SQLite build (common on Windows).
+            // LIKE search fallback is used automatically — no functionality loss.
+            this.logger.info('[episodic] FTS5 not compiled in this SQLite build, using LIKE search fallback (normal on Windows)');
         }
 
         this.logger.debug('[episodic] EpisodicMemoryStore initialized');
@@ -105,7 +107,7 @@ export class EpisodicMemoryStore {
                         SELECT * FROM episodic_memories
                         WHERE id IN (${placeholders})
                           AND expires_at > ?
-                    `).all(...(ids as import('node:sqlite').SQLInputValue[]), now) as any[];
+                    `).all(...ids, now) as any[];
 
                     if (rows.length > 0) {
                         // 按向量相似度分数排序
