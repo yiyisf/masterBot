@@ -145,10 +145,6 @@ export class GatewayServer {
                 ? { level: options.config.logging.level }
                 : false,
         });
-
-        this.setupMiddleware();
-        this.setupRoutes();
-        this.setupStatic();
     }
 
     private async setupMiddleware(): Promise<void> {
@@ -2183,6 +2179,14 @@ export class GatewayServer {
 
     async start(port: number, host: string): Promise<void> {
         try {
+            // Must await in order: middleware (registers websocket plugin) → routes
+            // (uses websocket: true) → static. Calling these from the constructor
+            // without await caused a Fastify v5 race where app.listen() / ready()
+            // would hang because the websocket plugin wasn't registered yet when
+            // the /ws route was processed.
+            await this.setupMiddleware();
+            this.setupRoutes();
+            await this.setupStatic();
             await this.app.listen({ port, host });
             this.logger.info(`Server listening on http://${host}:${port}`);
         } catch (error) {
