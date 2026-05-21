@@ -173,8 +173,9 @@ export class AguiRuntimeAdapter implements ChatModelAdapter {
                 }
             }
         } catch (error: any) {
-            if (error.name === "AbortError") {
-                // 用户主动取消，静默处理
+            const isAbort = error.name === "AbortError" || error.message?.includes("aborted") || error.message?.includes("abort");
+            if (isAbort) {
+                // User cancelled — silent
             } else {
                 console.error("[AguiRuntimeAdapter]", error);
                 yield {

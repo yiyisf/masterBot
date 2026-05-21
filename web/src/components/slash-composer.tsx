@@ -210,14 +210,43 @@ export function SlashComposer() {
         return () => window.removeEventListener('cmaster:tour-complete', refocus);
     }, []);
 
-    // Track attachment count for button highlight
+    // Track attachment count for button highlight; also reset slashQuery when text is cleared
     useEffect(() => {
         const unsub = composerRuntime.subscribe(() => {
             const state = composerRuntime.getState();
             setAttachmentCount((state as any).attachments?.length ?? 0);
+            // Text is cleared programmatically after send — onChange is not fired in that case
+            if ((state as any).text === '') {
+                setSlashQuery(null);
+            }
         });
         return unsub;
     }, [composerRuntime]);
+
+    // Re-focus the textarea whenever the thread finishes running.
+    // When the thread starts running, the browser disables + blurs the textarea.
+    // When it stops, the textarea is re-enabled but focus is NOT restored, so
+    // subsequent keystrokes go nowhere. Watch for the disabled→enabled transition.
+    useEffect(() => {
+        const input = inputRef.current;
+        if (!input) return;
+
+        let prevDisabled = input.disabled;
+        const observer = new MutationObserver(() => {
+            const isDisabled = input.disabled;
+            if (prevDisabled && !isDisabled) {
+                setTimeout(() => {
+                    if (inputRef.current && !inputRef.current.disabled) {
+                        inputRef.current.focus();
+                    }
+                }, 50);
+            }
+            prevDisabled = isDisabled;
+        });
+
+        observer.observe(input, { attributes: true, attributeFilter: ['disabled'] });
+        return () => observer.disconnect();
+    }, []);
 
     const handleChange = useCallback(
         (e: React.ChangeEvent<HTMLTextAreaElement>) => {

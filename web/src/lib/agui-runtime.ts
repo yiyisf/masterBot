@@ -186,6 +186,10 @@ export async function* runAgui(options: AguiRunOptions): AsyncGenerator<AguiEven
 
     yield { type: 'RUN_FINISHED' };
   } catch (err: unknown) {
+    // Re-throw AbortError so the caller (agui-adapter) can silently handle cancellation
+    if (err instanceof Error && err.name === 'AbortError') {
+      throw err;
+    }
     const message = err instanceof Error ? err.message : String(err);
     yield { type: 'RUN_ERROR', error: message };
   }
