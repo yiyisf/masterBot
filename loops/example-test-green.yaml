@@ -1,0 +1,36 @@
+# 示例 LoopSpec：过夜代码任务 — 修到测试全绿为止（U15 Loop Engineering）
+#
+# 语义：让 coder Agent 反复「修改 → 跑测试 → 读报错 → 再修」，
+# 直到 npm test 通过（确定性验证），停滞或超预算时升级人工。
+
+id: test-green
+name: 测试全绿守护
+goal: "修复项目中所有失败的单元测试，使 npm run test:run 退出码为 0"
+
+trigger:
+  manual: true        # 也可改为 cron: "0 2 * * *"（每天凌晨 2 点）
+
+execute:
+  agent: coder        # 使用 AgentPool 中的 coder spec（U16: Claude Agent SDK 引擎）
+  promptTemplate: |
+    目标：{{goal}}
+
+    {{feedback}}请运行测试定位失败用例，分析根因并修复。
+    修复后必须重新运行测试验证，把测试输出纳入回答。
+
+verify:
+  - name: 单元测试全绿
+    tool: shell.execute
+    params:
+      command: "npm run test:run"
+    assert: "exit_code == 0"
+
+budgets:
+  maxIterations: 8
+  maxSteps: 400
+  maxWallClockMin: 120
+
+stall:
+  noProgressRounds: 3   # 同一批测试连续 3 轮修不过 → 升级人工
+
+onStall: escalate

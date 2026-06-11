@@ -244,13 +244,19 @@ SDK 能力与现有组件的映射（几乎一一对应，集成成本低）：
 ## 五、实施路线图建议
 
 ```
-迭代 N（P0 基线）      : U1 混合检索 → U2 Prompt Caching/SDK → U4 OTel 双发
-迭代 N+1（P0 收尾+P1）: U3 评测体系（此后所有升级受评测保护）→ U5 记忆治理
-迭代 N+2（P1 引擎）    : U16 Coder 引擎（IAgentEngine 抽象 + Claude Agent SDK）→ U15 Loop Engineering
+迭代 N（P0 基线）      : U1 混合检索 → U2 Prompt Caching/SDK → U4 OTel 双发      ✅ 已完成
+迭代 N+1（P0 收尾+P1）: U3 评测体系（此后所有升级受评测保护）→ U5 记忆治理        ✅ 已完成
+迭代 N+2（P1 引擎）    : U16 Coder 引擎（IAgentEngine 抽象 + Claude Agent SDK）→ U15 Loop Engineering  ✅ 已完成
 迭代 N+3（P1 协议）    : U6 MCP v2 + Server 模式（与 U16 共享实现）→ U7 A2A 适配
 迭代 N+4（P1 企业）    : U8 沙箱硬隔离 → U9 RBAC/限流/SSO  ← v1.0 发布门槛
 迭代 N+5+（P2 前瞻）   : U10–U14 按业务场景拉动排期
 ```
+
+**实施落点速查**（已完成项）：
+- U1: `src/memory/long-term.ts`（混合检索）；U2: `src/llm/anthropic.ts`（cache_control）；U3: `evals/`；U4: `src/core/otel.ts` + `trace.ts`
+- U5: `src/memory/memory-governor.ts` + long-term.ts 治理列（confidence / superseded_by / 反思衰减）
+- U16: `src/core/harness/agent-engine.ts`（IAgentEngine）+ `claude-sdk-engine.ts`（Claude Agent SDK 引擎，自动降级 native）；coder SOUL.md v3 已切换
+- U15: `src/core/loop/`（LoopSpec + 确定性验证器 + LoopRunner，预算熔断/停滞检测/escalate）；示例见 `loops/*.yaml`
 
 **排序原则**：
 1. U3（评测）虽列 P0 末位，但应在大规模架构改动（U5–U9、U15–U16）前就位，使后续升级全部有回归保护；
