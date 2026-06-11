@@ -247,7 +247,7 @@ SDK 能力与现有组件的映射（几乎一一对应，集成成本低）：
 迭代 N（P0 基线）      : U1 混合检索 → U2 Prompt Caching/SDK → U4 OTel 双发      ✅ 已完成
 迭代 N+1（P0 收尾+P1）: U3 评测体系（此后所有升级受评测保护）→ U5 记忆治理        ✅ 已完成
 迭代 N+2（P1 引擎）    : U16 Coder 引擎（IAgentEngine 抽象 + Claude Agent SDK）→ U15 Loop Engineering  ✅ 已完成
-迭代 N+3（P1 协议）    : U6 MCP v2 + Server 模式（与 U16 共享实现）→ U7 A2A 适配
+迭代 N+3（P1 协议）    : U6 MCP v2 + Server 模式（与 U16 共享实现）→ U7 A2A 适配   🔶 U6 Server 模式已完成
 迭代 N+4（P1 企业）    : U8 沙箱硬隔离 → U9 RBAC/限流/SSO  ← v1.0 发布门槛
 迭代 N+5+（P2 前瞻）   : U10–U14 按业务场景拉动排期
 ```
@@ -257,6 +257,7 @@ SDK 能力与现有组件的映射（几乎一一对应，集成成本低）：
 - U5: `src/memory/memory-governor.ts` + long-term.ts 治理列（confidence / superseded_by / 反思衰减）
 - U16: `src/core/harness/agent-engine.ts`（IAgentEngine）+ `claude-sdk-engine.ts`（Claude Agent SDK 引擎，自动降级 native）；coder SOUL.md v3 已切换
 - U15: `src/core/loop/`（LoopSpec + 确定性验证器 + LoopRunner，预算熔断/停滞检测/escalate）；示例见 `loops/*.yaml`
+- U6(Server): `src/gateway/mcp-server.ts`（POST /mcp 无状态 Streamable HTTP，全部技能对外暴露，复用网关认证）；客户端 elicitation/async-tasks/OAuth 2.1 待后续迭代
 
 **排序原则**：
 1. U3（评测）虽列 P0 末位，但应在大规模架构改动（U5–U9、U15–U16）前就位，使后续升级全部有回归保护；

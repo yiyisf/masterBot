@@ -18,6 +18,7 @@ import { taskRepository } from '../core/task-repository.js';
 import { McpSkillSource } from '../skills/mcp-source.js';
 import { McpRegistryClient } from '../skills/mcp-registry.js';
 import { createAuthHook } from './auth.js';
+import { registerMcpServerRoutes } from './mcp-server.js';
 import { db } from '../core/database.js';
 import { webhookRepository } from '../core/webhook-repository.js';
 import { RunbookEngine } from '../core/runbook-engine.js';
@@ -186,6 +187,15 @@ export class GatewayServer {
     private setupRoutes(): void {
         // Health check
         this.app.get('/health', async () => ({ status: 'ok', timestamp: new Date().toISOString() }));
+
+        // U6: MCP Server 模式 — 技能注册表经 Streamable HTTP 暴露给外部 MCP 客户端
+        if (this.skillRegistry) {
+            registerMcpServerRoutes(this.app, {
+                registry: this.skillRegistry,
+                logger: this.logger,
+                getMemory: (sessionId) => this.sessionManager.getSession(sessionId),
+            });
+        }
 
         // Chat API (non-streaming)
         this.app.post<{ Body: ChatRequest }>('/api/chat', async (request, reply) => {
