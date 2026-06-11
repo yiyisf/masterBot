@@ -89,6 +89,9 @@ export class LongTermMemory implements MemoryAccess {
             'ALTER TABLE memories ADD COLUMN session_id TEXT',
             'ALTER TABLE memories ADD COLUMN updated_at DATETIME DEFAULT CURRENT_TIMESTAMP',
             'ALTER TABLE memories ADD COLUMN embedding TEXT',  // U1: 向量嵌入列
+            'ALTER TABLE memories ADD COLUMN confidence REAL DEFAULT 0.8',        // U5: 置信度
+            'ALTER TABLE memories ADD COLUMN last_verified_at DATETIME',          // U5: 最近验证时间
+            'ALTER TABLE memories ADD COLUMN superseded_by TEXT',                 // U5: 被哪条记忆取代
         ]) {
             try { this.db.exec(migration); } catch { /* 列已存在，忽略 */ }
         }
@@ -187,10 +190,21 @@ export class LongTermMemory implements MemoryAccess {
         const category = (metadata?.category as MemoryCategory | undefined) ?? 'user';
         const topic = (metadata?.topic as string | undefined) ?? `memory-${id.slice(0, 8)}`;
         const validCategory = VALID_CATEGORIES.has(category) ? category : 'user';
+        // U5: 置信度（0-1），新记忆默认 0.8
+        const rawConfidence = metadata?.confidence;
+        const confidence = typeof rawConfidence === 'number'
+            ? Math.max(0, Math.min(1, rawConfidence))
+            : 0.8;
 
         this.db.prepare(
-            'INSERT INTO memories (id, category, topic, content, metadata, session_id) VALUES (?, ?, ?, ?, ?, ?)'
-        ).run(id, validCategory, topic, content, JSON.stringify(metadata ?? {}), sessionId ?? null);
+            'INSERT INTO memories (id, category, topic, content, metadata, session_id, confidence, last_verified_at) VALUES (?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)'
+        ).run(id, validCategory, topic, content, JSON.stringify(metadata ?? {}), sessionId ?? null, confidence);
+
+        // U5: supersedes — 新记忆取代旧记忆（旧条目标记 superseded_by，不再参与召回）
+        const supersedes = metadata?.supersedes as string | undefined;
+        if (supersedes) {
+            this.supersede(supersedes, id);
+        }
 
         if (this._ftsAvailable) {
             this.db.prepare(
@@ -218,6 +232,101 @@ export class LongTermMemory implements MemoryAccess {
             this.db.prepare('DELETE FROM memory_fts WHERE id = ?').run(id);
         }
         return result.changes > 0;
+    }
+
+    // ──────────────────────── U5: 记忆治理 API ────────────────────────
+
+    /**
+     * 标记旧记忆被新记忆取代（被取代条目不再参与召回，但保留可追溯）
+     */
+    supersede(oldId: string, newId: string): boolean {
+        const result = this.db.prepare(
+            'UPDATE memories SET superseded_by = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?'
+        ).run(newId, oldId);
+        if (result.changes > 0 && this._ftsAvailable) {
+            // 从 FTS 索引移除，词法召回不再命中
+            this.db.prepare('DELETE FROM memory_fts WHERE id = ?').run(oldId);
+        }
+        return result.changes > 0;
+    }
+
+    /**
+     * 列出最近的有效记忆（未被取代），供治理引擎做查重候选。
+     * FTS 对 CJK 的「相似但不相同」句子召回有限，治理时需补充时间维度候选。
+     */
+    listRecent(limit = 20, category?: string): MemoryEntry[] {
+        const rows = (category
+            ? this.db.prepare(
+                'SELECT id, content, metadata, created_at FROM memories WHERE superseded_by IS NULL AND category = ? ORDER BY updated_at DESC LIMIT ?'
+            ).all(category, limit)
+            : this.db.prepare(
+                'SELECT id, content, metadata, created_at FROM memories WHERE superseded_by IS NULL ORDER BY updated_at DESC LIMIT ?'
+            ).all(limit)
+        ) as Array<{ id: string; content: string; metadata: string; created_at: string }>;
+
+        return rows.map(row => ({
+            id: row.id,
+            content: row.content,
+            metadata: this._parseMeta(row.metadata),
+            createdAt: new Date(row.created_at),
+        }));
+    }
+
+    /**
+     * 标记记忆已被验证仍然有效：刷新 last_verified_at 并小幅提升置信度
+     */
+    markVerified(id: string): boolean {
+        const result = this.db.prepare(`
+            UPDATE memories
+            SET last_verified_at = CURRENT_TIMESTAMP,
+                confidence = MIN(1.0, COALESCE(confidence, 0.8) + 0.05)
+            WHERE id = ?
+        `).run(id);
+        return result.changes > 0;
+    }
+
+    /**
+     * 周期性反思：对长期未验证的记忆衰减置信度，清理低置信度的过期记忆。
+     * 由 MemoryGovernor 定时调用。
+     */
+    decayAndPrune(opts?: {
+        /** 超过该天数未验证则衰减（默认 90）*/
+        staleDays?: number;
+        /** 每次衰减乘数（默认 0.9）*/
+        decayFactor?: number;
+        /** 置信度低于该值且超过 pruneDays 未验证则删除（默认 0.2）*/
+        pruneThreshold?: number;
+        /** 删除观察期天数（默认 180）*/
+        pruneDays?: number;
+    }): { decayed: number; pruned: number } {
+        const staleDays = opts?.staleDays ?? 90;
+        const decayFactor = opts?.decayFactor ?? 0.9;
+        const pruneThreshold = opts?.pruneThreshold ?? 0.2;
+        const pruneDays = opts?.pruneDays ?? 180;
+
+        // 衰减：last_verified_at（或 updated_at）早于 staleDays 的记忆
+        const decayResult = this.db.prepare(`
+            UPDATE memories
+            SET confidence = MAX(0.1, COALESCE(confidence, 0.8) * ?)
+            WHERE superseded_by IS NULL
+              AND COALESCE(last_verified_at, updated_at, created_at) < datetime('now', ?)
+        `).run(decayFactor, `-${staleDays} days`);
+
+        // 清理：低置信度 + 长期未验证 + 已被取代超过观察期的条目
+        const pruneRows = this.db.prepare(`
+            SELECT id FROM memories
+            WHERE (confidence < ? AND COALESCE(last_verified_at, updated_at, created_at) < datetime('now', ?))
+               OR (superseded_by IS NOT NULL AND updated_at < datetime('now', ?))
+        `).all(pruneThreshold, `-${pruneDays} days`, `-${pruneDays} days`) as Array<{ id: string }>;
+
+        for (const row of pruneRows) {
+            this.db.prepare('DELETE FROM memories WHERE id = ?').run(row.id);
+            if (this._ftsAvailable) {
+                this.db.prepare('DELETE FROM memory_fts WHERE id = ?').run(row.id);
+            }
+        }
+
+        return { decayed: decayResult.changes as number, pruned: pruneRows.length };
     }
 
     /**
@@ -331,6 +440,20 @@ export class LongTermMemory implements MemoryAccess {
     // ─────────────────────────────── private ───────────────────────────────
 
     /**
+     * U5: 治理权重 = 置信度因子 × 时近性因子
+     * - 置信度因子: 0.5 + 0.5 × confidence（confidence=1 → 1.0，confidence=0 → 0.5）
+     * - 时近性因子: 0.7 + 0.3 × exp(-ageDays/90)（90 天半衰期式衰减，下限 0.7）
+     */
+    private static _govWeight(confidence: number | null, lastVerifiedAt: string | null, createdAt: string): number {
+        const conf = confidence ?? 0.8;
+        const refTime = lastVerifiedAt ?? createdAt;
+        const ageDays = Math.max(0, (Date.now() - new Date(refTime).getTime()) / 86_400_000);
+        const confFactor = 0.5 + 0.5 * conf;
+        const recencyFactor = 0.7 + 0.3 * Math.exp(-ageDays / 90);
+        return confFactor * recencyFactor;
+    }
+
+    /**
      * 余弦相似度（纯 JS，无外部依赖）
      */
     private static _cosine(a: number[], b: number[]): number {
@@ -373,13 +496,15 @@ export class LongTermMemory implements MemoryAccess {
             if (!queryVec) return [];
 
             const rows = this.db.prepare(
-                'SELECT id, content, metadata, created_at, embedding FROM memories WHERE embedding IS NOT NULL LIMIT ?'
+                'SELECT id, content, metadata, created_at, embedding, confidence, last_verified_at FROM memories WHERE embedding IS NOT NULL AND superseded_by IS NULL LIMIT ?'
             ).all(MAX_VECTOR_ROWS) as Array<{
                 id: string;
                 content: string;
                 metadata: string;
                 created_at: string;
                 embedding: string;
+                confidence: number | null;
+                last_verified_at: string | null;
             }>;
 
             const scored: Array<MemoryEntry & { score: number }> = [];
@@ -392,7 +517,8 @@ export class LongTermMemory implements MemoryAccess {
                         content: row.content,
                         metadata: this._parseMeta(row.metadata),
                         createdAt: new Date(row.created_at),
-                        score: sim,
+                        // 余弦相似度 × 治理权重
+                        score: sim * LongTermMemory._govWeight(row.confidence, row.last_verified_at, row.created_at),
                     });
                 } catch {
                     // 跳过解析失败的行
@@ -412,44 +538,59 @@ export class LongTermMemory implements MemoryAccess {
         const safeQuery = query.replace(/["*]/g, ' ').trim();
         if (!safeQuery) return [];
 
+        // 多取候选（3x），治理加权后重排再截断
         const rows = this.db.prepare(`
-            SELECT m.id, m.content, m.metadata, m.created_at
+            SELECT m.id, m.content, m.metadata, m.created_at, m.confidence, m.last_verified_at
             FROM memory_fts f
             JOIN memories m ON m.id = f.id
-            WHERE memory_fts MATCH ?
+            WHERE memory_fts MATCH ? AND m.superseded_by IS NULL
             ORDER BY rank
             LIMIT ?
-        `).all(safeQuery, limit) as Array<{
+        `).all(safeQuery, limit * 3) as Array<{
             id: string;
             content: string;
             metadata: string;
             created_at: string;
+            confidence: number | null;
+            last_verified_at: string | null;
         }>;
 
-        return rows.map(row => ({
-            id: row.id,
-            content: row.content,
-            metadata: this._parseMeta(row.metadata),
-            createdAt: new Date(row.created_at),
-        }));
+        return rows
+            .map((row, idx) => ({
+                id: row.id,
+                content: row.content,
+                metadata: this._parseMeta(row.metadata),
+                createdAt: new Date(row.created_at),
+                // 相关性（按 FTS 排名估算）× 治理权重
+                score: Math.max(0.3, 1.0 - idx * 0.05)
+                    * LongTermMemory._govWeight(row.confidence, row.last_verified_at, row.created_at),
+            }))
+            .sort((a, b) => (b.score ?? 0) - (a.score ?? 0))
+            .slice(0, limit);
     }
 
     private _likeSearch(query: string, limit: number): MemoryEntry[] {
         const rows = this.db.prepare(
-            'SELECT id, content, metadata, created_at FROM memories WHERE content LIKE ? ORDER BY updated_at DESC LIMIT ?'
-        ).all(`%${query}%`, limit) as Array<{
+            'SELECT id, content, metadata, created_at, confidence, last_verified_at FROM memories WHERE content LIKE ? AND superseded_by IS NULL ORDER BY updated_at DESC LIMIT ?'
+        ).all(`%${query}%`, limit * 3) as Array<{
             id: string;
             content: string;
             metadata: string;
             created_at: string;
+            confidence: number | null;
+            last_verified_at: string | null;
         }>;
 
-        return rows.map(row => ({
-            id: row.id,
-            content: row.content,
-            metadata: this._parseMeta(row.metadata),
-            createdAt: new Date(row.created_at),
-        }));
+        return rows
+            .map(row => ({
+                id: row.id,
+                content: row.content,
+                metadata: this._parseMeta(row.metadata),
+                createdAt: new Date(row.created_at),
+                score: 0.7 * LongTermMemory._govWeight(row.confidence, row.last_verified_at, row.created_at),
+            }))
+            .sort((a, b) => (b.score ?? 0) - (a.score ?? 0))
+            .slice(0, limit);
     }
 
     private _parseMeta(raw: string): Record<string, unknown> {

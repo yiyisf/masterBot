@@ -49,6 +49,7 @@ export class Agent {
     private maxIterations: number;
     private contextManager: ContextManager;
     private longTermMemory?: LongTermMemory;
+    private memoryGovernor?: import('../memory/memory-governor.js').MemoryGovernor;
     private memoryRouter?: MemoryRouter;
     /** 缓存 CMASTER.md + MEMORY.md 拼接后的全局指令，首次加载后复用 */
     private _globalInstructions: string | null | undefined = undefined;
@@ -67,6 +68,7 @@ export class Agent {
         maxIterations?: number;
         maxContextTokens?: number;
         longTermMemory?: LongTermMemory;
+        memoryGovernor?: import('../memory/memory-governor.js').MemoryGovernor;
         memoryRouter?: MemoryRouter;
         skillConfig?: Record<string, unknown>;
         skillGenerator?: any;
@@ -81,6 +83,7 @@ export class Agent {
         this.logger = options.logger;
         this.maxIterations = options.maxIterations ?? 10;
         this.longTermMemory = options.longTermMemory;
+        this.memoryGovernor = options.memoryGovernor;
         this.memoryRouter = options.memoryRouter;
         this.skillConfig = options.skillConfig ?? {};
         this.skillGenerator = options.skillGenerator;
@@ -416,6 +419,7 @@ export class Agent {
             const handlerDeps: BuiltinHandlerDeps = {
                 logger: this.logger,
                 longTermMemory: this.longTermMemory,
+                memoryGovernor: this.memoryGovernor,
                 memoryRouter: this.memoryRouter,
                 sessionStore: this.sessionStore,
                 skillRegistry: this.skillRegistry,

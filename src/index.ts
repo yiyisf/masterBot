@@ -6,6 +6,7 @@ import { llmFactory } from './llm/index.js';
 import { SkillRegistry, SkillLoader, McpSkillSource } from './skills/index.js';
 import { Agent } from './core/index.js';
 import { SessionMemoryManager, LongTermMemory } from './memory/index.js';
+import { MemoryGovernor } from './memory/memory-governor.js';
 import { GatewayServer } from './gateway/index.js';
 import { db } from './core/database.js';
 import fs from 'fs';
@@ -105,6 +106,20 @@ async function main() {
         logger.info(`[memory] Long-term memory initialized (${embedder ? 'FTS5+Vector hybrid' : 'FTS5'})`);
     }
 
+    // U5: 记忆治理引擎 — 写入查重/冲突检测 + 周期性反思
+    let memoryGovernor: MemoryGovernor | undefined;
+    if (longTermMemory) {
+        memoryGovernor = new MemoryGovernor(longTermMemory, getLlm, logger);
+        // 每 24h 反思一次：衰减过期记忆置信度、清理低置信度条目
+        const reflectionTimer = setInterval(() => {
+            memoryGovernor!.reflect().catch(err =>
+                logger.warn(`[memory-gov] Scheduled reflection failed: ${(err as Error).message}`)
+            );
+        }, 24 * 60 * 60 * 1000);
+        reflectionTimer.unref?.();
+        logger.info('[memory] Memory governor initialized (dedup/conflict detection + daily reflection)');
+    }
+
     const knowledgeGraph = new KnowledgeGraph(getLlm(), logger);
     const orchestrator = new MultiAgentOrchestrator(logger);
     const skillGenerator = new SkillGenerator(getLlm(), logger);
@@ -182,6 +197,7 @@ async function main() {
         maxIterations: config.agent?.maxIterations ?? 10,
         maxContextTokens: config.agent?.maxContextTokens,
         longTermMemory,
+        memoryGovernor,
         memoryRouter,
         skillConfig: {
             sandbox: config.skills.shell?.sandbox,
