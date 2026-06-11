@@ -128,6 +128,99 @@
 #### U9. 多租户 RBAC + 限流（对应 G10，v1.0 既定目标）
 - **方案**：users/roles 表 + 技能级权限门（FilteredSkillRegistry 已是现成的权限执行点）+ per-user/session 令牌桶限流（@fastify/rate-limit）+ OIDC SSO；记忆按用户隔离（SessionMemoryManager 已有会话隔离基础）。
 
+#### U15. Loop Engineering：目标驱动自治循环（LoopSpec + LoopRunner）
+
+> 背景：Loop Engineering 是 2026 年中被推热的工程方向（Addy Osmani、Claude Code 团队等推动）——杠杆从「写好单条 prompt」转移到「设计一个能 发现任务 → 执行 → 验证 → 纠错 → 持久化状态 → 决定下一步 的循环系统」，按计划或直到目标达成无人值守运行。核心要点：① 验证优先用确定性手段（测试/编译/日志/API 状态比对），LLM 评分仅兜底；② goal 原语——让循环自行判断「完成了没有」。
+
+**可行性评估：高。** masterBot 是少数「循环原语已基本备齐、只差组合层」的项目：
+
+| Loop Engineering 要素 | masterBot 对应组件 | 状态 |
+|---|---|---|
+| 内层执行循环 | `agent.ts` ReAct 循环 | ✅ |
+| 验证→修正外循环 | Harness Grader 修订循环（OutcomeSpec + maxRevisions） | ✅ 已是雏形 |
+| 目标定义 | AgentSpec `OutcomeSpec`（criteria + 权重 + required） | ✅ 即现成 goal 原语 |
+| 定时/事件触发 | SchedulerService（Cron）+ Webhook 入站（HMAC） | ✅ |
+| 任务发现与分解 | DAG executor + `plan_task` | ✅ |
+| 状态持久化 | CheckpointManager + 长期记忆 | ✅ |
+| 子 Agent 分派 | AgentPool + AgentBus | ✅ |
+| 卡住时升级人工 | InterruptCoordinator + 飞书 HitL | ✅ |
+| 预算/熔断 | token_usage 仅统计，无熔断 | ⚠️ 缺 |
+| 确定性验证器 | Grader 仅 LLM-as-judge | ⚠️ 缺 |
+| 循环级声明式定义 | Runbook 是「步骤声明式」，非「目标声明式」 | ❌ 缺 |
+
+**方案**：新增 `LoopSpec` 声明式循环定义（类比 SOUL.md / Runbook YAML）+ `LoopRunner` 组合引擎：
+
+```yaml
+goal: "保持 X 服务告警队列清零"        # OutcomeSpec 升格为循环级目标
+trigger: { cron: "*/30 * * * *" }      # 或 webhook / manual
+discover: alerts.list_open             # 任务发现阶段 → 喂给 DAG
+execute: { agent: ops-worker }         # 复用 AgentPool
+verify:                                # 确定性验证优先
+  - { tool: shell.execute, assert: "exit_code == 0" }
+  - { grader: ... }                    # LLM 评分仅兜底模糊准则
+budgets: { maxCostUsd: 2, maxSteps: 200, maxWallClockMin: 60 }
+onStall: escalate                      # → InterruptCoordinator
+```
+
+实施要点：
+1. **确定性验证器（VerifierSpec）**：在 Grader 之前加 shell/http 断言层（复用 HookRunner `shell` hook 机制）——这是与业界差距最实质的一点，当前修订循环完全依赖 LLM 评分；
+2. **停滞检测与熔断**：同一错误连续出现 / Grader 分数不再提升 / 预算耗尽 → 自动暂停并升级 HitL（防 runaway loop 是无人值守的安全底线，成本数据 token_usage 表已有）；
+3. **循环日志/工作笔记**：每轮迭代写结构化笔记（与 U10 合并实现），跨迭代恢复不依赖完整对话历史。
+
+**直接兑现场景**：AIOps 无人值守（Runbook 从「步骤式」升级为「目标式」）、过夜代码任务（修到测试全绿为止）、知识库持续巡检——均为 next-gen 七大场景的自治化版本。**前置依赖**：U3（评测）应先就位提供回归保护；与 U8（沙箱）、U16（Coder 引擎）强协同。
+
+#### U16. Coder Agent 引擎升级：嵌入 Claude Agent SDK（专项分析）
+
+**现状与问题。** 当前编码能力有两条并行路径，质量上限都不高：
+
+1. `agents/builtin/coder/SOUL.md`：通用 ReAct Agent + `shell.*` / `file-manager.*` 工具 + Grader 修订循环（maxRevisions 3 / minScore 75）。问题：
+   - **工具面太粗**：没有专用 Edit（字符串替换式编辑）、Grep/Glob 结构化检索工具，改大文件只能整文件重写，易引入无关 diff；shell 是「万能但不可治理」的工具形态（无法按动作粒度审批/审计/并行调度）。
+   - **资源限额不符合编码任务形态**：15 次迭代 / 180s 超时——真实编码任务（改→跑测试→读报错→修）动辄几十上百次工具调用。
+   - **验证靠 LLM 评分**：Grader 判「runnable」，但不真正跑测试。
+   - **本质约束**：编码 Agent 的效果 = 模型 × Harness（系统提示、工具设计、上下文压缩、子 Agent、权限交互的多年调优）。自研通用 ReAct 循环去追 Claude Code 这类顶级编码 Harness，永远在追赶。
+2. `skills/built-in/claude-code`：shell 出 `claude -p` 单发 CLI。问题：黑盒单发——内部几十次工具调用对 masterBot 完全不可见，无法流式呈现步骤、无法 HitL 审批单个工具调用、无法接入审计/追踪/沙箱，JSON 解析脆弱，且要求宿主机预装 CLI。
+
+**方案对比：**
+
+| 方案 | 编码效果 | 集成深度 | 依赖/约束 | 评估 |
+|---|---|---|---|---|
+| A. 增强自研 coder（补 Edit/Grep 工具、放宽限额、测试验证器） | 中 | 完全可控 | 无新依赖、任意模型 | 永远在追赶顶级 Harness；作为**降级路径**保留 |
+| B. 维持 claude-code CLI 技能 | 高（但黑盒） | 极浅 | 需预装 CLI | 仅适合一次性问答，不适合作为受管 Agent 引擎 |
+| **C. 嵌入 Claude Agent SDK（`@anthropic-ai/claude-agent-sdk`）** | **顶级**（即 Claude Code 同款 Harness） | **深**（逐工具调用可见可控） | 需 Claude 模型访问（API/网关/Bedrock/Vertex 均可） | **推荐** |
+| D. Anthropic Managed Agents（托管会话 + Outcome 评分循环） | 顶级 | 中（事件流） | 工具执行在 Anthropic 容器（或自托管 worker），数据出域 | 云端许可的组织可选；与自托管定位冲突 |
+
+**推荐架构：引擎抽象 + Claude Agent SDK 作为 coder 引擎。**
+
+AgentSpec 增加 `engine: native | claude-agent-sdk` 字段（默认 native，全向后兼容）。改造点恰好只有两处：`agent-harness.ts:90`（`new Agent(...)`）和 `:197`（`for await (const step of this.agent.run(...))`）——抽出 `IAgentEngine` 接口，coder spec 切换引擎：
+
+```
+AgentHarness（不变：Spec/Grader/预算/审计/HitL 的编排层）
+   └─ IAgentEngine
+        ├─ NativeAgentEngine        ← 现有 Agent.run()，所有非编码 Agent 不变
+        └─ ClaudeAgentSdkEngine     ← coder 专用，新增
+```
+
+SDK 能力与现有组件的映射（几乎一一对应，集成成本低）：
+
+| Claude Agent SDK 能力 | masterBot 对接点 |
+|---|---|
+| `query()` AsyncGenerator 流式消息 | 转译为 `ExecutionStep` yield（与 agent.ts 同范式，前端零改动） |
+| `canUseTool` 权限回调 | 接 CommandSandbox 校验 + FilteredSkillRegistry 白名单 + InterruptCoordinator HitL（高危操作飞书卡片审批） |
+| PreToolUse/PostToolUse hooks | 写入 audit-repository + SpanRecorder（统一追踪） |
+| `resume` 会话续接 | 对接 CheckpointManager（断点恢复语义一致） |
+| 进程内 MCP server（自定义工具） | **把 masterBot 技能注册表暴露给 coder**——coder 可直接调用企业连接器/通知/知识图谱技能（与 U6 MCP Server 模式同一份实现） |
+| 内建：Edit/Grep/Glob/Bash 工具、CLAUDE.md、上下文压缩、子 Agent、prompt caching | 免费获得，无需自研（U2/U10 的诉求在 coder 场景直接被覆盖） |
+
+外层闭环保持不变：Harness 仍用 OutcomeSpec + Grader 做结果评分与修订循环；叠加 U15 的确定性验证器（跑测试作为 ground truth）后，构成「顶级编码引擎 + 测试验证 + LLM 评分兜底」的完整质量链路。
+
+**风险与对策**：
+1. *模型绑定*：SDK 仅驱动 Claude 系模型。对策——engine 抽象保证 native 引擎兜底（纯内网/内部模型部署自动降级）；SDK 支持 `ANTHROPIC_BASE_URL` 网关与 Bedrock/Vertex，企业代理场景可用。
+2. *执行安全*：SDK 在宿主进程执行文件/shell 工具。对策——coder 引擎默认运行在 U8 容器沙箱内（工作目录隔离 + 网络白名单），`canUseTool` 回调做第二道闸。
+3. *成本*：Claude Code 式会话 token 消耗大。对策——SDK 自带 prompt caching；接入 token_usage 统计与 U15 预算熔断。
+4. *可观测割裂*：SDK 内部步骤需归一。对策——hooks 全量映射到既有 span/审计表，前端 subTask 步骤聚合（Phase 26）直接复用。
+
+**实施切分**（建议一个迭代内）：① `IAgentEngine` 抽取 + native 实现回归（纯重构，测试保护）→ ② `ClaudeAgentSdkEngine` 最小可用（query 流转译 + canUseTool 接沙箱）→ ③ HitL/审计/检查点对接 → ④ 技能注册表经进程内 MCP 暴露给 coder → ⑤ coder SOUL.md 切换 `engine: claude-agent-sdk`，用 U3 评测集对比新旧引擎的编码通过率。
+
 ### P2 — 前瞻布局（业界新兴方向，按场景需求启动）
 
 #### U10. 上下文工程增量优化（对应 G11）
@@ -153,16 +246,18 @@
 ```
 迭代 N（P0 基线）      : U1 混合检索 → U2 Prompt Caching/SDK → U4 OTel 双发
 迭代 N+1（P0 收尾+P1）: U3 评测体系（此后所有升级受评测保护）→ U5 记忆治理
-迭代 N+2（P1 协议）    : U6 MCP v2 + Server 模式 → U7 A2A 适配
-迭代 N+3（P1 企业）    : U8 沙箱硬隔离 → U9 RBAC/限流/SSO  ← v1.0 发布门槛
-迭代 N+4+（P2 前瞻）   : U10–U14 按业务场景拉动排期
+迭代 N+2（P1 引擎）    : U16 Coder 引擎（IAgentEngine 抽象 + Claude Agent SDK）→ U15 Loop Engineering
+迭代 N+3（P1 协议）    : U6 MCP v2 + Server 模式（与 U16 共享实现）→ U7 A2A 适配
+迭代 N+4（P1 企业）    : U8 沙箱硬隔离 → U9 RBAC/限流/SSO  ← v1.0 发布门槛
+迭代 N+5+（P2 前瞻）   : U10–U14 按业务场景拉动排期
 ```
 
 **排序原则**：
-1. U3（评测）虽列 P0 末位，但应在大规模架构改动（U5–U9）前就位，使后续升级全部有回归保护；
+1. U3（评测）虽列 P0 末位，但应在大规模架构改动（U5–U9、U15–U16）前就位，使后续升级全部有回归保护；
 2. U1/U2 是纯增益、低风险、可独立度量的改造，适合先行建立信心；
-3. U6 的 elicitation 与 U9 的 FilteredSkillRegistry 都能复用现有组件，边际成本低于表面工作量；
-4. P2 项不预先排期，由业务场景（docs/next-gen-capabilities.md 的七大场景）拉动。
+3. U16 与 U15 强协同（过夜编码循环 = 顶级引擎 + 确定性验证 + 预算熔断），且 U16 的进程内 MCP 工具与 U6 的 Server 模式是同一份实现，连排可摊薄成本；
+4. U6 的 elicitation 与 U9 的 FilteredSkillRegistry 都能复用现有组件，边际成本低于表面工作量；
+5. P2 项不预先排期，由业务场景（docs/next-gen-capabilities.md 的七大场景）拉动。
 
 ---
 
@@ -180,3 +275,9 @@
 - [Uptrace — OpenTelemetry for AI Systems (2026)](https://uptrace.dev/blog/opentelemetry-ai-systems)
 - [Innoflexion — Multi-Agent Orchestration: Enterprise GenAI Architecture 2026](https://www.innoflexion.com/blog/multi-agent-orchestration-enterprise-genai-2026)
 - [TURION.AI — The AI Agent Protocol Stack: MCP, A2A & What Comes Next](https://turion.ai/blog/ai-agent-protocol-stack-2026/)
+- [Loops Replace Prompts: Loop Engineering Is Changing How AI Agents Work](https://knightli.com/en/2026/06/10/loops-replace-prompts-agent-loop-engineering/)
+- [Loop Engineering: The Guide for AI Agents — Lushbinary](https://lushbinary.com/blog/loop-engineering-ai-coding-agents-guide/)
+- [Loop Engineering: Coding Agent Loops That Run While You Sleep](https://explainx.ai/blog/loop-engineering-coding-agents-claude-code-guide-2026)
+- [What Is Loop Engineering? The New Meta for AI Coding Agents — MindStudio](https://www.mindstudio.ai/blog/what-is-loop-engineering-ai-coding-agents)
+- [awesome-harness-engineering — AI agent harness 工程模式汇编](https://github.com/ai-boost/awesome-harness-engineering)
+- [Claude Agent SDK / Managed Agents — Anthropic 平台文档](https://platform.claude.com/docs/en/managed-agents/overview)
