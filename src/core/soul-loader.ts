@@ -112,6 +112,13 @@ export class SoulLoader {
             version: fm.version ?? '1.0.0',
             description: fm.description ?? '',
             systemPrompt: fm.systemPrompt ?? `你是 ${fm.name ?? id}，${fm.description ?? '专业 AI 助手'}。`,
+            // U16: 引擎选择（默认 native）
+            engine: fm.engine === 'claude-agent-sdk' ? 'claude-agent-sdk' : 'native',
+            engineOptions: fm.engineOptions ? {
+                allowedTools: Array.isArray(fm.engineOptions.allowedTools) ? fm.engineOptions.allowedTools : undefined,
+                cwd: fm.engineOptions.cwd,
+                model: fm.engineOptions.model,
+            } : undefined,
             tools: {
                 allow: Array.isArray(tools.allow) ? tools.allow : [],
                 deny: Array.isArray(tools.deny) ? tools.deny : [],

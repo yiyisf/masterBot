@@ -42,6 +42,24 @@ export interface AgentSpec {
     description: string;
     systemPrompt: string;
 
+    /**
+     * U16: 执行引擎选择
+     * - native（默认）: 自研 ReAct 循环（Agent.run()），任意 LLM provider
+     * - claude-agent-sdk: Claude Code 同款 Harness（Edit/Grep/Glob/Bash 工具、
+     *   上下文压缩、prompt caching），需 Claude 模型访问；不可用时自动降级 native
+     */
+    engine?: 'native' | 'claude-agent-sdk';
+
+    /** U16: claude-agent-sdk 引擎专属配置 */
+    engineOptions?: {
+        /** SDK 内建工具白名单（默认 Read/Write/Edit/Glob/Grep/Bash/TodoWrite）*/
+        allowedTools?: string[];
+        /** 工作目录（默认 process.cwd()）*/
+        cwd?: string;
+        /** 模型 ID（默认由 SDK / 环境变量决定）*/
+        model?: string;
+    };
+
     /** 工具权限：支持 glob 模式，如 "file-manager.*", "shell.execute" */
     tools: {
         allow: string[];  // 白名单（为空则允许全部）
@@ -85,6 +103,7 @@ export function defaultAgentSpec(partial: Partial<AgentSpec> & { id: string; nam
         version: '1.0.0',
         description: '',
         systemPrompt: `你是 ${partial.name}，${partial.description ?? '一个专业的 AI 助手'}。`,
+        engine: 'native',
         tools: { allow: [], deny: [] },
         resources: { maxIterations: 10, timeoutMs: 60_000, concurrency: 3 },
         memory: {
