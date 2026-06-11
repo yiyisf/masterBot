@@ -1,0 +1,50 @@
+name: tool-use
+description: 工具调用轨迹评测任务集 — 验证 Agent 工具使用决策
+version: "1.0"
+
+tasks:
+  - id: plan-complex-task
+    description: 复杂任务应触发 plan_task 工具
+    input: "帮我制定一个完整的电商网站从零开始上线的项目计划，包括技术选型、开发阶段和时间安排。"
+    assertions:
+      - type: tool_called
+        tool: plan_task
+      - type: keyword
+        values: ["阶段", "步骤", "计划", "phase", "step"]
+    maxIterations: 5
+    timeoutMs: 60000
+
+  - id: memory-remember
+    description: 明确要求记住信息时应调用 memory_remember
+    input: "请记住：我们公司的数据库密码策略是每90天更新一次，并且需要包含大小写字母、数字和特殊字符。"
+    assertions:
+      - type: tool_called
+        tool: memory_remember
+    maxIterations: 3
+    timeoutMs: 30000
+
+  - id: no-tool-simple
+    description: 简单问题不应调用外部工具（Tier 1 路由验证）
+    input: "你好！"
+    assertions:
+      - type: tool_not_called
+        tool: plan_task
+      - type: tool_not_called
+        tool: memory_remember
+      - type: max_iterations
+        max: 2
+    maxIterations: 3
+    timeoutMs: 15000
+
+  - id: dag-multi-step
+    description: 明确的多步并行任务应使用 DAG
+    input: |
+      我需要同时完成以下三个独立任务，请用任务 DAG 来管理：
+      1. 整理第一季度销售报告
+      2. 更新团队文档库
+      3. 准备下周一的技术分享材料
+    assertions:
+      - type: tool_called
+        tool: dag_create_task
+    maxIterations: 5
+    timeoutMs: 60000

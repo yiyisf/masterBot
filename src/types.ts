@@ -146,6 +146,8 @@ export interface MemoryEntry {
     content: string;
     metadata: Record<string, unknown>;
     embedding?: number[];
+    /** Relevance score [0,1] returned by hybrid retrieval (optional, present when vector search is active) */
+    score?: number;
     createdAt: Date;
 }
 
@@ -280,6 +282,8 @@ export interface Config {
     models: {
         default: string;
         providers: Record<string, LLMConfig>;
+        /** U1: 用于生成向量嵌入的 provider 名称（在 providers 中查找），不配置则禁用向量搜索 */
+        embeddingModel?: string;
     };
     agent: {
         maxIterations: number;

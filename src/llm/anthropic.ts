@@ -8,9 +8,17 @@ import type {
     ToolDefinition
 } from '../types.js';
 
+type SystemBlock = {
+    type: 'text';
+    text: string;
+    cache_control?: { type: 'ephemeral' };
+};
+
 /**
- * Anthropic 标准适配器
- * 支持 Claude 系列模型
+ * Anthropic 标准适配器（v2）
+ * - 支持 Claude 系列模型
+ * - U2: system prompt 使用 cache_control ephemeral 块格式，启用服务端提示词缓存
+ * - 工具列表末尾追加 cache_control，缓存全量工具定义
  */
 export class AnthropicAdapter implements LLMAdapter {
     readonly provider = 'anthropic';
@@ -26,17 +34,17 @@ export class AnthropicAdapter implements LLMAdapter {
     }
 
     async chat(messages: Message[], options?: ChatOptions): Promise<Message> {
-        const { systemPrompt, convertedMessages } = this.convertMessages(messages);
+        const { systemBlocks, convertedMessages } = this.convertMessages(messages);
+        const tools = options?.tools ? this.convertTools(options.tools) : undefined;
 
-        const response = await this.client.messages.create({
+        const response = await (this.client.messages.create as any)({
             model: options?.model ?? this.config.model,
             max_tokens: options?.maxTokens ?? this.config.maxTokens ?? 4096,
-            system: systemPrompt,
+            system: systemBlocks.length > 0 ? systemBlocks : undefined,
             messages: convertedMessages,
-            tools: options?.tools ? this.convertTools(options.tools) : undefined,
-        }, { signal: options?.abortSignal });
+            tools: tools && tools.length > 0 ? tools : undefined,
+        }, { signal: options?.abortSignal }) as Anthropic.Message;
 
-        // Process response content
         let content = '';
         const toolCalls: Message['toolCalls'] = [];
 
@@ -63,15 +71,16 @@ export class AnthropicAdapter implements LLMAdapter {
     }
 
     async *chatStream(messages: Message[], options?: ChatOptions): AsyncGenerator<StreamChunk> {
-        const { systemPrompt, convertedMessages } = this.convertMessages(messages);
+        const { systemBlocks, convertedMessages } = this.convertMessages(messages);
+        const tools = options?.tools ? this.convertTools(options.tools) : undefined;
 
         const stream = this.client.messages.stream({
             model: options?.model ?? this.config.model,
             max_tokens: options?.maxTokens ?? this.config.maxTokens ?? 4096,
-            system: systemPrompt,
+            system: systemBlocks.length > 0 ? systemBlocks : undefined,
             messages: convertedMessages,
-            tools: options?.tools ? this.convertTools(options.tools) : undefined,
-        }, { signal: options?.abortSignal });
+            tools: tools && tools.length > 0 ? tools : undefined,
+        } as Parameters<typeof this.client.messages.stream>[0], { signal: options?.abortSignal });
 
         let currentToolCall: StreamChunk['toolCall'] | null = null;
         let currentToolInput = '';
@@ -114,21 +123,19 @@ export class AnthropicAdapter implements LLMAdapter {
     }
 
     async embeddings(_texts: string[]): Promise<number[][]> {
-        // Anthropic 不直接提供 embeddings API
-        // 需要使用其他服务或自定义实现
         throw new Error('Anthropic adapter does not support embeddings. Use OpenAI adapter for embeddings.');
     }
 
     private convertMessages(messages: Message[]): {
-        systemPrompt: string;
+        systemBlocks: SystemBlock[];
         convertedMessages: Anthropic.MessageParam[];
     } {
-        let systemPrompt = '';
+        let systemText = '';
         const convertedMessages: Anthropic.MessageParam[] = [];
 
         for (const msg of messages) {
             if (msg.role === 'system') {
-                systemPrompt = typeof msg.content === 'string' ? msg.content : JSON.stringify(msg.content);
+                systemText = typeof msg.content === 'string' ? msg.content : JSON.stringify(msg.content);
                 continue;
             }
 
@@ -136,31 +143,20 @@ export class AnthropicAdapter implements LLMAdapter {
             if (Array.isArray(msg.content)) {
                 content = msg.content.map(part => {
                     if (part.type === 'image_url') {
-                        // Anthropic expects base64 for images in the message array usually, 
-                        // but here we just map our structure. 
-                        // Note: Claude 3 supports image blocks.
                         return {
                             type: 'image',
-                            source: {
-                                type: 'url', // Assuming the model/adapter handles this or we need to convert to base64
-                                url: part.image_url.url
-                            }
+                            source: { type: 'url', url: part.image_url.url },
                         } as any;
                     }
                     return { type: 'text', text: part.text };
                 });
             } else if (msg.attachments && msg.attachments.length > 0) {
-                // If there are attachments and content is a string, wrap it.
                 const parts: any[] = [{ type: 'text', text: msg.content }];
                 for (const att of msg.attachments) {
                     if (att.type.startsWith('image/')) {
                         parts.push({
                             type: 'image',
-                            source: {
-                                type: 'base64',
-                                media_type: att.type,
-                                data: att.base64 // We need base64 for Anthropic images
-                            }
+                            source: { type: 'base64', media_type: att.type, data: att.base64 },
                         });
                     }
                 }
@@ -168,10 +164,7 @@ export class AnthropicAdapter implements LLMAdapter {
             }
 
             if (msg.role === 'user') {
-                convertedMessages.push({
-                    role: 'user',
-                    content: content,
-                });
+                convertedMessages.push({ role: 'user', content });
             } else if (msg.role === 'assistant') {
                 const responseContent: Anthropic.ContentBlock[] = [];
 
@@ -208,14 +201,26 @@ export class AnthropicAdapter implements LLMAdapter {
             }
         }
 
-        return { systemPrompt, convertedMessages };
+        // U2: 将 system prompt 包装为带 cache_control 的文本块，启用服务端缓存
+        const systemBlocks: SystemBlock[] = systemText
+            ? [{ type: 'text', text: systemText, cache_control: { type: 'ephemeral' } }]
+            : [];
+
+        return { systemBlocks, convertedMessages };
     }
 
     private convertTools(tools: ToolDefinition[]): Anthropic.Tool[] {
-        return tools.map(tool => ({
+        const converted = tools.map(tool => ({
             name: tool.function.name,
             description: tool.function.description,
             input_schema: tool.function.parameters as Anthropic.Tool.InputSchema,
         }));
+
+        // U2: 在最后一个工具上添加 cache_control，缓存全量工具定义
+        if (converted.length > 0) {
+            (converted[converted.length - 1] as any).cache_control = { type: 'ephemeral' };
+        }
+
+        return converted;
     }
 }

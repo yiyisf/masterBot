@@ -1,4 +1,5 @@
 import 'dotenv/config';
+import { initOtel } from './core/otel.js';
 import { loadConfig } from './config.js';
 import { createLogger } from './utils/logger.js';
 import { llmFactory } from './llm/index.js';
@@ -23,8 +24,11 @@ import { AgentPool, SessionEventStore, CredentialVault } from './core/harness/ag
 import { CheckpointManager } from './core/checkpoint-manager.js';
 
 async function main() {
+    // U4: 在所有其他初始化之前启动 OTel（仅当 OTEL_EXPORTER_OTLP_ENDPOINT 配置时生效）
+    await initOtel();
+
     console.log(`
-   ██████╗███╗   ███╗ █████╗ ███████╗████████╗███████╗██████╗ 
+   ██████╗███╗   ███╗ █████╗ ███████╗████████╗███████╗██████╗
   ██╔════╝████╗ ████║██╔══██╗██╔════╝╚══██╔══╝██╔════╝██╔══██╗
   ██║     ██╔████╔██║███████║███████╗   ██║   █████╗  ██████╔╝
   ██║     ██║╚██╔╝██║██╔══██║╚════██║   ██║   ██╔══╝  ██╔══██╗
@@ -63,14 +67,6 @@ async function main() {
         logger,
     });
 
-    // Initialize long-term memory (v2: FTS5 搜索，无 embedding 依赖)
-    let longTermMemory: LongTermMemory | undefined;
-    if (config.memory.longTerm.enabled) {
-        longTermMemory = new LongTermMemory({ db, logger, dataDir: 'data/.memory' });
-        longTermMemory.initialize();
-        logger.info('[memory] Long-term memory initialized (FTS5, no embedding)');
-    }
-
     // Initialize new services (must be before Agent so they can be injected)
     const connectorManager = new ConnectorManager('connectors', logger);
     const connectorSources = await connectorManager.loadAll();
@@ -83,6 +79,31 @@ async function main() {
         const provider = config.models.default;
         return llmFactory.getAdapter(provider, config.models.providers[provider]);
     };
+
+    // U1: 构造向量嵌入函数，供长期记忆混合检索使用
+    // 优先使用 embeddingModel 配置的适配器；如未配置则跳过向量搜索
+    const buildEmbedder = (): ((texts: string[]) => Promise<number[][]>) | undefined => {
+        const embeddingProvider = config.models.embeddingModel;
+        if (!embeddingProvider) return undefined;
+        try {
+            const embeddingLlm = llmFactory.getAdapter(embeddingProvider, config.models.providers[embeddingProvider]);
+            if (typeof (embeddingLlm as any).embed === 'function') {
+                return (texts: string[]) => (embeddingLlm as any).embed(texts) as Promise<number[][]>;
+            }
+        } catch (err) {
+            logger.warn(`[memory] Embedding provider "${embeddingProvider}" not available, vector search disabled: ${(err as Error).message}`);
+        }
+        return undefined;
+    };
+
+    // Initialize long-term memory (v3: FTS5 + 可选向量混合检索)
+    let longTermMemory: LongTermMemory | undefined;
+    if (config.memory.longTerm.enabled) {
+        const embedder = buildEmbedder();
+        longTermMemory = new LongTermMemory({ db, logger, dataDir: 'data/.memory', embedder });
+        longTermMemory.initialize();
+        logger.info(`[memory] Long-term memory initialized (${embedder ? 'FTS5+Vector hybrid' : 'FTS5'})`);
+    }
 
     const knowledgeGraph = new KnowledgeGraph(getLlm(), logger);
     const orchestrator = new MultiAgentOrchestrator(logger);
