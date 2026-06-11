@@ -37,13 +37,13 @@ export class AnthropicAdapter implements LLMAdapter {
         const { systemBlocks, convertedMessages } = this.convertMessages(messages);
         const tools = options?.tools ? this.convertTools(options.tools) : undefined;
 
-        const response = await (this.client.messages.create as any)({
+        const response = await this.client.messages.create({
             model: options?.model ?? this.config.model,
             max_tokens: options?.maxTokens ?? this.config.maxTokens ?? 4096,
             system: systemBlocks.length > 0 ? systemBlocks : undefined,
             messages: convertedMessages,
             tools: tools && tools.length > 0 ? tools : undefined,
-        }, { signal: options?.abortSignal }) as Anthropic.Message;
+        }, { signal: options?.abortSignal });
 
         let content = '';
         const toolCalls: Message['toolCalls'] = [];
@@ -80,7 +80,7 @@ export class AnthropicAdapter implements LLMAdapter {
             system: systemBlocks.length > 0 ? systemBlocks : undefined,
             messages: convertedMessages,
             tools: tools && tools.length > 0 ? tools : undefined,
-        } as Parameters<typeof this.client.messages.stream>[0], { signal: options?.abortSignal });
+        }, { signal: options?.abortSignal });
 
         let currentToolCall: StreamChunk['toolCall'] | null = null;
         let currentToolInput = '';
@@ -166,7 +166,8 @@ export class AnthropicAdapter implements LLMAdapter {
             if (msg.role === 'user') {
                 convertedMessages.push({ role: 'user', content });
             } else if (msg.role === 'assistant') {
-                const responseContent: Anthropic.ContentBlock[] = [];
+                // 请求方向使用 ContentBlockParam（响应类型 ContentBlock 在新 SDK 中要求 citations 等字段）
+                const responseContent: Anthropic.ContentBlockParam[] = [];
 
                 if (Array.isArray(content)) {
                     responseContent.push(...content);
@@ -210,7 +211,7 @@ export class AnthropicAdapter implements LLMAdapter {
     }
 
     private convertTools(tools: ToolDefinition[]): Anthropic.Tool[] {
-        const converted = tools.map(tool => ({
+        const converted: Anthropic.Tool[] = tools.map(tool => ({
             name: tool.function.name,
             description: tool.function.description,
             input_schema: tool.function.parameters as Anthropic.Tool.InputSchema,
@@ -218,7 +219,7 @@ export class AnthropicAdapter implements LLMAdapter {
 
         // U2: 在最后一个工具上添加 cache_control，缓存全量工具定义
         if (converted.length > 0) {
-            (converted[converted.length - 1] as any).cache_control = { type: 'ephemeral' };
+            converted[converted.length - 1].cache_control = { type: 'ephemeral' };
         }
 
         return converted;
