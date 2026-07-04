@@ -22,6 +22,14 @@ import { CommandSandbox } from '../../skills/sandbox.js';
 /** coder 场景默认放行的 SDK 内建工具 */
 const DEFAULT_ALLOWED_TOOLS = ['Read', 'Write', 'Edit', 'Glob', 'Grep', 'Bash', 'TodoWrite'];
 
+/** 与 FilteredSkillRegistry 保持一致的 glob 匹配器（* 通配所有字符）*/
+function matchGlob(name: string, pattern: string): boolean {
+    const regex = new RegExp(
+        '^' + pattern.replace(/[.+^${}()|[\]\\]/g, '\\$&').replace(/\*/g, '.*') + '$'
+    );
+    return regex.test(name);
+}
+
 export interface ClaudeSdkEngineOptions {
     /** SDK 不可用时的降级引擎（推荐传入 NativeAgentEngine）*/
     fallback?: IAgentEngine;
@@ -89,13 +97,21 @@ export class ClaudeAgentSdkEngine implements IAgentEngine {
 
         const queryOptions: Record<string, unknown> = {
             cwd: this.spec.engineOptions?.cwd ?? this.options.cwd ?? process.cwd(),
-            maxTurns: Math.max(this.spec.resources.maxIterations, 30),
+            // 直接遵守 spec 声明的预算（最低 1 轮），不静默覆盖用户配置
+            maxTurns: Math.max(this.spec.resources.maxIterations, 1),
             systemPrompt: { type: 'preset', preset: 'claude_code', append: this.spec.systemPrompt },
             allowedTools: this.allowedTools,
             abortController,
             env,
-            // 第二道闸：Bash 命令过沙箱校验，未放行工具一律拒绝
+            // 第二道闸：spec.tools.deny 模式 + allowedTools 白名单 + Bash 沙箱
             canUseTool: async (toolName: string, toolInput: Record<string, unknown>) => {
+                // spec.tools.deny 优先（与 FilteredSkillRegistry 语义一致）
+                for (const pattern of (this.spec.tools?.deny ?? [])) {
+                    if (matchGlob(toolName, pattern)) {
+                        this.logger.warn(`[claude-sdk-engine] Tool denied by spec.tools.deny (${pattern}): ${toolName}`);
+                        return { behavior: 'deny', message: `Tool "${toolName}" is denied for this agent by policy` };
+                    }
+                }
                 if (!allowedSet.has(toolName)) {
                     this.logger.warn(`[claude-sdk-engine] Tool denied (not in allowlist): ${toolName}`);
                     return { behavior: 'deny', message: `Tool "${toolName}" is not allowed for this agent` };

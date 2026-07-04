@@ -1495,10 +1495,10 @@ export class GatewayServer {
             try {
                 if (q) {
                     return db.prepare(
-                        `SELECT id, key, content, session_id, created_at FROM memories WHERE content LIKE ? ORDER BY created_at DESC LIMIT ?`
+                        `SELECT id, key, content, session_id, created_at FROM memories WHERE content LIKE ? AND superseded_by IS NULL ORDER BY created_at DESC LIMIT ?`
                     ).all(`%${q}%`, lim);
                 }
-                return db.prepare('SELECT id, key, content, session_id, created_at FROM memories ORDER BY created_at DESC LIMIT ?').all(lim);
+                return db.prepare('SELECT id, key, content, session_id, created_at FROM memories WHERE superseded_by IS NULL ORDER BY created_at DESC LIMIT ?').all(lim);
             } catch {
                 return [];
             }

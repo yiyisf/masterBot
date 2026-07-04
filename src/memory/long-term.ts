@@ -54,6 +54,8 @@ export class LongTermMemory implements MemoryAccess {
     private embedder?: (texts: string[]) => Promise<number[][]>;
     /** FTS5 是否可用（部分 Windows/旧 Node 构建中 SQLite 可能未编译 FTS5）*/
     private _ftsAvailable = false;
+    /** 已解析 embedding 向量的内存缓存（id → vector），避免热路径重复 JSON.parse */
+    private _embeddingCache = new Map<string, number[]>();
 
     constructor(options: LongTermMemoryOptions) {
         this.db = options.db;
@@ -478,6 +480,7 @@ export class LongTermMemory implements MemoryAccess {
                 if (vecs?.[0]) {
                     this.db.prepare('UPDATE memories SET embedding = ? WHERE id = ?')
                         .run(JSON.stringify(vecs[0]), id);
+                    this._embeddingCache.set(id, vecs[0]);
                 }
             })
             .catch(err => this.logger.warn(`[memory] Embedding compute failed for ${id}: ${err.message}`));
@@ -510,7 +513,12 @@ export class LongTermMemory implements MemoryAccess {
             const scored: Array<MemoryEntry & { score: number }> = [];
             for (const row of rows) {
                 try {
-                    const rowVec: number[] = JSON.parse(row.embedding);
+                    const rowVec: number[] = this._embeddingCache.get(row.id)
+                        ?? (() => {
+                            const v = JSON.parse(row.embedding) as number[];
+                            this._embeddingCache.set(row.id, v);
+                            return v;
+                        })();
                     const sim = LongTermMemory._cosine(queryVec, rowVec);
                     scored.push({
                         id: row.id,

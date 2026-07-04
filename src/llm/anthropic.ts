@@ -24,6 +24,11 @@ export class AnthropicAdapter implements LLMAdapter {
     readonly provider = 'anthropic';
     private client: Anthropic;
     private config: LLMConfig;
+    /**
+     * 仅当请求目标是原生 Anthropic 端点（无自定义 baseUrl）时才发送 cache_control。
+     * 非 Anthropic 兼容代理收到该字段可能报错（未知字段）。
+     */
+    private readonly _usePromptCaching: boolean;
 
     constructor(config: LLMConfig) {
         this.config = config;
@@ -31,6 +36,8 @@ export class AnthropicAdapter implements LLMAdapter {
             apiKey: config.apiKey,
             baseURL: config.baseUrl || undefined,
         });
+        // 无 baseUrl → 原生 Anthropic API → 支持 cache_control
+        this._usePromptCaching = !config.baseUrl;
     }
 
     async chat(messages: Message[], options?: ChatOptions): Promise<Message> {
@@ -203,8 +210,9 @@ export class AnthropicAdapter implements LLMAdapter {
         }
 
         // U2: 将 system prompt 包装为带 cache_control 的文本块，启用服务端缓存
+        // （仅原生 Anthropic 端点，自定义 baseUrl 代理可能不支持该字段）
         const systemBlocks: SystemBlock[] = systemText
-            ? [{ type: 'text', text: systemText, cache_control: { type: 'ephemeral' } }]
+            ? [{ type: 'text', text: systemText, ...(this._usePromptCaching ? { cache_control: { type: 'ephemeral' } } : {}) }]
             : [];
 
         return { systemBlocks, convertedMessages };
@@ -218,7 +226,7 @@ export class AnthropicAdapter implements LLMAdapter {
         }));
 
         // U2: 在最后一个工具上添加 cache_control，缓存全量工具定义
-        if (converted.length > 0) {
+        if (converted.length > 0 && this._usePromptCaching) {
             converted[converted.length - 1].cache_control = { type: 'ephemeral' };
         }
 

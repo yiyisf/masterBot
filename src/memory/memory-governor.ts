@@ -122,13 +122,20 @@ export class MemoryGovernor {
             .map(m => `- id: ${m.id}\n  content: ${m.content.slice(0, 300)}`)
             .join('\n');
 
-        const response = await this.getLLM().chat(
-            [
-                { role: 'system', content: JUDGE_SYSTEM_PROMPT },
-                { role: 'user', content: `## 新记忆\n${content.slice(0, 500)}\n\n## 既有记忆\n${candidates}` },
-            ],
-            { maxTokens: 200 }
-        );
+        const judgeAbort = new AbortController();
+        const judgeTimeout = setTimeout(() => judgeAbort.abort(), 10_000);
+        let response;
+        try {
+            response = await this.getLLM().chat(
+                [
+                    { role: 'system', content: JUDGE_SYSTEM_PROMPT },
+                    { role: 'user', content: `## 新记忆\n${content.slice(0, 500)}\n\n## 既有记忆\n${candidates}` },
+                ],
+                { maxTokens: 200, abortSignal: judgeAbort.signal }
+            );
+        } finally {
+            clearTimeout(judgeTimeout);
+        }
 
         const raw = typeof response.content === 'string' ? response.content : '';
         const jsonMatch = raw.match(/\{[\s\S]*\}/);

@@ -23,9 +23,9 @@ export function toolToMcpName(toolName: string): string {
     return toolName.replace(/\./g, '__');
 }
 
-/** MCP 工具名 → "skill.action"（仅还原第一个分隔符，动作名可含下划线）*/
+/** MCP 工具名 → "skill.action"（全部 __ 还原为 .，与 toolToMcpName 构成完整 round-trip）*/
 export function mcpNameToTool(mcpName: string): string {
-    return mcpName.replace('__', '.');
+    return mcpName.replace(/__/g, '.');
 }
 
 /** ToolDefinition[] → MCP tools/list 响应条目 */
@@ -111,9 +111,10 @@ export function registerMcpServerRoutes(app: FastifyInstance, opts: McpServerRou
         });
 
         await server.connect(transport);
-        // Fastify 已解析 body，透传给 transport；之后由 transport 接管原始响应流
-        await transport.handleRequest(request.raw, reply.raw, request.body);
+        // hijack 必须在向 reply.raw 写入任何数据之前调用，否则 Fastify 会在
+        // handleRequest 返回后再次写入 headers/body，导致 "write after end" 错误
         reply.hijack();
+        await transport.handleRequest(request.raw, reply.raw, request.body);
     });
 
     // 无状态模式不维护 SSE 长连接与会话
