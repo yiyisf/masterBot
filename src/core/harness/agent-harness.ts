@@ -12,6 +12,8 @@
 
 import { nanoid } from 'nanoid';
 import { Agent } from '../agent.js';
+import { NativeAgentEngine, type IAgentEngine } from './agent-engine.js';
+import { ClaudeAgentSdkEngine } from './claude-sdk-engine.js';
 import { Grader } from './grader.js';
 import { HookRunner, type HookContext } from './hook-runner.js';
 import type { AgentSpec, AgentLifecycleState } from './agent-spec.js';
@@ -54,7 +56,8 @@ export class AgentHarness {
     private completedAt?: Date;
     private error?: string;
 
-    private agent: Agent;
+    /** U16: 执行引擎（native = 现有 Agent.run()；claude-agent-sdk = Claude Code Harness）*/
+    private engine: IAgentEngine;
     private grader: Grader;
     private hookRunner: HookRunner;
     /** 可选的事件发射回调（由 AgentPool 注入，写入 SessionEventStore） */
@@ -87,7 +90,7 @@ export class AgentHarness {
 
         // Agent 使用过滤后的 registry，maxIterations 遵守 spec 约束
         // llm 使用函数形式，保持热更新能力（config 切换提供商后生效）
-        this.agent = new Agent({
+        const nativeAgent = new Agent({
             llm: () => getLLM(spec.resources?.preferredProvider),
             skillRegistry: filteredRegistry,
             logger: this.createScopedLogger(),
@@ -97,6 +100,12 @@ export class AgentHarness {
             // M1: 接线 sessionStore，使 session_recall 在 harness 下可用
             sessionStore,
         });
+
+        // U16: 按 spec.engine 选择执行引擎；claude-agent-sdk 不可用时自动降级 native
+        const nativeEngine = new NativeAgentEngine(nativeAgent);
+        this.engine = spec.engine === 'claude-agent-sdk'
+            ? new ClaudeAgentSdkEngine(spec, this.createScopedLogger(), { fallback: nativeEngine })
+            : nativeEngine;
 
         this.grader = new Grader(getLLM, logger);
 
@@ -193,8 +202,8 @@ export class AgentHarness {
 
                 revision++;
 
-                // ── 执行 Agent ──
-                for await (const step of this.agent.run(currentTask, {
+                // ── 执行 Agent（经 IAgentEngine 抽象，U16）──
+                for await (const step of this.engine.run(currentTask, {
                     sessionId: context.sessionId,
                     userId: context.userId,
                     memory: context.memory,

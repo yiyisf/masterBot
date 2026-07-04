@@ -1,5 +1,8 @@
 export { AgentHarness } from './agent-harness.js';
 export { AgentPool } from './agent-pool.js';
+export { NativeAgentEngine } from './agent-engine.js';
+export type { IAgentEngine, AgentEngineKind, EngineRunContext } from './agent-engine.js';
+export { ClaudeAgentSdkEngine } from './claude-sdk-engine.js';
 export { AgentBus, agentBus } from './agent-bus.js';
 export { HookRunner } from './hook-runner.js';
 export { Grader } from './grader.js';

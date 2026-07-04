@@ -1,0 +1,42 @@
+# 示例 LoopSpec：AIOps 无人值守 — 保持告警队列清零（U15 Loop Engineering）
+#
+# 语义：每 30 分钟发现待处理告警（discover 为空 = 目标达成直接结束），
+# 交给 ops Agent 处置，用 HTTP 状态比对做确定性验证。
+
+id: alert-queue-zero
+name: 告警队列清零守护
+goal: "处理所有未关闭的服务告警，保持告警队列清零"
+
+trigger:
+  cron: "*/30 * * * *"
+
+discover:
+  tool: http-client.get
+  params:
+    url: "${ALERT_API_URL:http://localhost:9093/api/v2/alerts?active=true}"
+  emptyMeansDone: true    # 队列为空 → 目标达成，本轮直接结束
+
+execute:
+  agent: ops-worker
+  promptTemplate: |
+    目标：{{goal}}
+
+    {{discovered}}{{feedback}}请逐条分析告警根因并按 Runbook 处置；
+    无法自动处置的告警在回答中明确列出原因。
+
+verify:
+  - name: 告警队列已清空
+    tool: http-client.get
+    params:
+      url: "${ALERT_API_URL:http://localhost:9093/api/v2/alerts?active=true}"
+    assert: "equals:[]"
+
+budgets:
+  maxIterations: 5
+  maxSteps: 200
+  maxWallClockMin: 25     # 小于 cron 周期，防止重入堆积
+
+stall:
+  noProgressRounds: 2
+
+onStall: escalate

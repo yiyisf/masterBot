@@ -49,6 +49,7 @@ export class Agent {
     private maxIterations: number;
     private contextManager: ContextManager;
     private longTermMemory?: LongTermMemory;
+    private memoryGovernor?: import('../memory/memory-governor.js').MemoryGovernor;
     private memoryRouter?: MemoryRouter;
     /** 缓存 CMASTER.md + MEMORY.md 拼接后的全局指令，首次加载后复用 */
     private _globalInstructions: string | null | undefined = undefined;
@@ -67,6 +68,7 @@ export class Agent {
         maxIterations?: number;
         maxContextTokens?: number;
         longTermMemory?: LongTermMemory;
+        memoryGovernor?: import('../memory/memory-governor.js').MemoryGovernor;
         memoryRouter?: MemoryRouter;
         skillConfig?: Record<string, unknown>;
         skillGenerator?: any;
@@ -81,6 +83,7 @@ export class Agent {
         this.logger = options.logger;
         this.maxIterations = options.maxIterations ?? 10;
         this.longTermMemory = options.longTermMemory;
+        this.memoryGovernor = options.memoryGovernor;
         this.memoryRouter = options.memoryRouter;
         this.skillConfig = options.skillConfig ?? {};
         this.skillGenerator = options.skillGenerator;
@@ -123,6 +126,15 @@ export class Agent {
             sessionId: context.sessionId,
             userId: context.userId,
         });
+        // 保证 span 在 generator 被提前放弃（consumer break/return）时也能关闭
+        let _spanEnded = false;
+        const _endAgentSpan = (result?: string, error?: string) => {
+            if (_spanEnded) return;
+            _spanEnded = true;
+            spanRecorder.endSpan(agentSpanId, result, error);
+        };
+
+        try {
 
         // Extract plain-text representation of input for memory/suggestion APIs
         const inputText = typeof input === 'string'
@@ -200,11 +212,13 @@ export class Agent {
 
             if (this.longTermMemory && trimResult.summaryText) {
                 try {
-                    await this.longTermMemory.remember(
-                        `[AutoFlush] ${trimResult.summaryText}`,
-                        { category: 'operational', topic: `auto-flush-${context.sessionId.slice(0, 8)}`, tags: ['auto-flush', context.sessionId] },
-                        context.sessionId
-                    );
+                    const flushContent = `[AutoFlush] ${trimResult.summaryText}`;
+                    const flushMeta = { category: 'operational', topic: `auto-flush-${context.sessionId.slice(0, 8)}`, tags: ['auto-flush', context.sessionId] };
+                    if (this.memoryGovernor) {
+                        await this.memoryGovernor.governedRemember(flushContent, flushMeta, context.sessionId);
+                    } else {
+                        await this.longTermMemory.remember(flushContent, flushMeta, context.sessionId);
+                    }
                     this.logger.info(`[PreCompactionFlush] Saved summary to long-term memory for session ${context.sessionId}`);
                 } catch (err) {
                     this.logger.warn(`[PreCompactionFlush] Failed to save summary: ${(err as Error).message}`);
@@ -375,7 +389,7 @@ export class Agent {
             if (!response.toolCalls || response.toolCalls.length === 0) {
                 const answerContent = typeof response.content === 'string' ? response.content : JSON.stringify(response.content);
                 // Phase 21: 结束 agent span
-                spanRecorder.endSpan(agentSpanId, answerContent.slice(0, 300));
+                _endAgentSpan(answerContent.slice(0, 300));
                 yield {
                     type: 'answer',
                     content: answerContent,
@@ -416,6 +430,7 @@ export class Agent {
             const handlerDeps: BuiltinHandlerDeps = {
                 logger: this.logger,
                 longTermMemory: this.longTermMemory,
+                memoryGovernor: this.memoryGovernor,
                 memoryRouter: this.memoryRouter,
                 sessionStore: this.sessionStore,
                 skillRegistry: this.skillRegistry,
@@ -454,13 +469,18 @@ export class Agent {
 
         if (iteration >= activeMaxIterations) {
             const errMsg = '抱歉，我已达到最大执行步骤限制。请尝试将任务拆分为更小的步骤。';
-            spanRecorder.endSpan(agentSpanId, undefined, errMsg);
+            _endAgentSpan(undefined, errMsg);
             yield {
                 type: 'answer',
                 content: errMsg,
                 traceId,
                 timestamp: new Date(),
             };
+        }
+
+        } finally {
+            // 确保 OTel Span 在 generator 被提前放弃时也能释放（防止 _otelSpans Map 泄漏）
+            _endAgentSpan();
         }
     }
 

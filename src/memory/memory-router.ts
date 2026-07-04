@@ -41,16 +41,16 @@ export class MemoryRouter {
 
         const results: UnifiedMemoryResult[] = [];
 
-        // 长期记忆结果
+        // 长期记忆结果（U1: 若向量搜索启用则使用真实相似度分数，否则按排名估算）
         if (ltResults) {
-            for (const m of ltResults) {
+            ltResults.forEach((m, idx) => {
                 results.push({
                     source: 'long-term',
                     content: m.content,
-                    score: 0.8,
+                    score: m.score ?? Math.max(0.5, 0.85 - idx * 0.05),
                     metadata: m.metadata,
                 });
-            }
+            });
         }
 
         // 知识图谱结果

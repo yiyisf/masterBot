@@ -1,0 +1,59 @@
+name: basic-reasoning
+description: 基础推理与问答任务集 — 验证 Agent 核心问答能力
+version: "1.0"
+
+tasks:
+  - id: capital-city
+    description: 基础事实问答
+    input: "法国的首都是哪里？"
+    assertions:
+      - type: keyword
+        values: ["Paris", "巴黎"]
+      - type: no_keyword
+        values: ["错误", "不知道"]
+    maxIterations: 2
+    timeoutMs: 30000
+
+  - id: math-basic
+    description: 基础数学计算
+    input: "计算：137 × 28 等于多少？请直接给出结果。"
+    assertions:
+      - type: keyword
+        values: ["3836"]
+    maxIterations: 2
+    timeoutMs: 30000
+
+  - id: code-explain
+    description: 代码解释能力
+    input: |
+      请用一句话解释下面这段 TypeScript 代码的作用：
+      ```typescript
+      const result = arr.reduce((acc, cur) => acc + cur, 0);
+      ```
+    assertions:
+      - type: keyword
+        values: ["求和", "累加", "sum", "总和"]
+    maxIterations: 2
+    timeoutMs: 45000
+
+  - id: json-extraction
+    description: 结构化信息提取
+    input: |
+      从下面的文本中提取 JSON 格式的联系人信息（name, email, phone）：
+      "请联系张伟，邮箱 zhangwei@example.com，电话 138-1234-5678"
+    assertions:
+      - type: keyword
+        values: ["zhangwei@example.com", "138"]
+      - type: format
+        format: contains_json
+    maxIterations: 3
+    timeoutMs: 45000
+
+  - id: language-switch
+    description: 中英文混合指令处理
+    input: "Please summarize in Chinese: The quick brown fox jumps over the lazy dog."
+    assertions:
+      - type: keyword
+        values: ["狐狸", "fox", "跳", "jump"]
+    maxIterations: 2
+    timeoutMs: 30000

@@ -9,7 +9,7 @@ import type {
     LLMConfig,
     ToolDefinition
 } from '../types.js';
-import { HttpsProxyAgent } from 'https-proxy-agent';
+import { ProxyAgent } from 'undici';
 
 function recordTokenUsage(model: string, usage: { prompt_tokens: number; completion_tokens: number; total_tokens: number } | null | undefined) {
     if (!usage) return;
@@ -33,15 +33,17 @@ export class OpenAIAdapter implements LLMAdapter {
 
     constructor(config: LLMConfig) {
         this.config = config;
-        // Node.js 18+ 内置 fetch 不读取 https_proxy 环境变量，
-        // 当系统配置了代理时（常见于需要科学上网的环境），需手动注入 httpAgent
+        // Node.js 内置 fetch 不读取 https_proxy 环境变量，
+        // 当系统配置了代理时（常见于需要科学上网的环境），需手动注入 undici dispatcher
+        // （openai v5+ 移除了 httpAgent，改为 fetchOptions.dispatcher）
         const proxyUrl = process.env.https_proxy || process.env.HTTPS_PROXY
             || process.env.http_proxy || process.env.HTTP_PROXY;
-        const httpAgent = proxyUrl ? new HttpsProxyAgent(proxyUrl) : undefined;
+        const dispatcher = proxyUrl ? new ProxyAgent(proxyUrl) : undefined;
         this.client = new OpenAI({
             apiKey: config.apiKey,
             baseURL: config.baseUrl,
-            ...(httpAgent ? { httpAgent } : {}),
+            // undici 与 undici-types 的 FormData 类型声明存在已知不兼容，运行时行为一致
+            ...(dispatcher ? { fetchOptions: { dispatcher: dispatcher as never } } : {}),
         });
     }
 
@@ -62,14 +64,17 @@ export class OpenAIAdapter implements LLMAdapter {
         return {
             role: 'assistant',
             content: message.content ?? '',
-            toolCalls: message.tool_calls?.map(tc => ({
-                id: tc.id,
-                type: 'function' as const,
-                function: {
-                    name: tc.function.name,
-                    arguments: tc.function.arguments,
-                },
-            })),
+            // openai v6: tool_calls 为 function/custom 联合类型，仅处理 function 调用
+            toolCalls: message.tool_calls
+                ?.filter(tc => tc.type === 'function')
+                .map(tc => ({
+                    id: tc.id,
+                    type: 'function' as const,
+                    function: {
+                        name: tc.function.name,
+                        arguments: tc.function.arguments,
+                    },
+                })),
         };
     }
 

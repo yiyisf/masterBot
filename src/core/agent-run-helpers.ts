@@ -27,6 +27,8 @@ import { isDangerousToolCall } from './agent-tools.js';
 export interface BuiltinHandlerDeps {
     logger: Logger;
     longTermMemory?: LongTermMemory;
+    /** U5: 记忆治理引擎（配置后 memory_remember 走查重/冲突检测）*/
+    memoryGovernor?: import('../memory/memory-governor.js').MemoryGovernor;
     memoryRouter?: MemoryRouter;
     sessionStore?: SessionEventStore;
     skillRegistry: ISkillRegistry;
@@ -66,7 +68,7 @@ export async function* handleBuiltinToolCall(
     deps: BuiltinHandlerDeps,
     messages: Message[],
 ): AsyncGenerator<ExecutionStep> {
-    const { logger, longTermMemory, memoryRouter, sessionStore, skillRegistry,
+    const { logger, longTermMemory, memoryGovernor, memoryRouter, sessionStore, skillRegistry,
         skillGenerator, orchestrator, agentPool, knowledgeGraph, skillConfig, llm } = deps;
     const toolName = toolCall.function.name;
 
@@ -82,9 +84,24 @@ export async function* handleBuiltinToolCall(
         if (category) metadata.category = category;
         if (topic) metadata.topic = topic;
         if (tags) metadata.tags = (tags as string).split(',').map((t: string) => t.trim());
-        const memId = await longTermMemory.remember(memContent, metadata, context.sessionId);
-        const result = `Memory saved (id: ${memId})`;
-        yield { type: 'observation', content: result, toolName, toolOutput: { id: memId }, timestamp: new Date() };
+
+        // U5: 有治理引擎时走查重/冲突检测，否则直接写入
+        let result: string;
+        let toolOutput: Record<string, unknown>;
+        if (memoryGovernor) {
+            const gov = await memoryGovernor.governedRemember(memContent, metadata, context.sessionId);
+            toolOutput = { id: gov.id, verdict: gov.verdict };
+            result = gov.verdict === 'skip_duplicate'
+                ? `Memory already exists (id: ${gov.id}), confidence reinforced instead of duplicating`
+                : gov.verdict === 'supersede'
+                    ? `Memory saved (id: ${gov.id}), superseding a conflicting older memory`
+                    : `Memory saved (id: ${gov.id})`;
+        } else {
+            const memId = await longTermMemory.remember(memContent, metadata, context.sessionId);
+            toolOutput = { id: memId };
+            result = `Memory saved (id: ${memId})`;
+        }
+        yield { type: 'observation', content: result, toolName, toolOutput, timestamp: new Date() };
         messages.push({ role: 'tool', content: result, toolCallId: toolCall.id });
 
     } else if (toolName === 'memory_recall' && longTermMemory) {

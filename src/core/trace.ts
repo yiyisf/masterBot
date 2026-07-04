@@ -1,5 +1,8 @@
 import { nanoid } from 'nanoid';
 import { db } from './database.js';
+import { otelEnabled, getTracer, GENAI_ATTRS } from './otel.js';
+import type { OtelSpan } from './otel.js';
+import { SpanStatusCode } from '@opentelemetry/api';
 
 export interface Span {
     id: string;
@@ -44,10 +47,16 @@ function rowToSpan(row: Record<string, unknown>): Span {
 }
 
 /**
- * 分布式追踪 — Span 记录器
- * 写入 agent_spans SQLite 表
+ * 分布式追踪 — Span 记录器（U4: SQLite + OTel 双发）
+ *
+ * 始终写入 agent_spans SQLite 表（现有行为）。
+ * 当 OTEL_EXPORTER_OTLP_ENDPOINT 环境变量配置时，同步向 OTLP 端点双发 OTel Span，
+ * 使用 GenAI Semantic Conventions (gen_ai.*) 属性映射。
  */
 export class SpanRecorder {
+    /** 活跃 OTel Span，key = 内部 span id */
+    private readonly _otelSpans = new Map<string, OtelSpan>();
+
     startSpan(
         traceId: string,
         parentId: string | undefined,
@@ -56,6 +65,8 @@ export class SpanRecorder {
     ): string {
         const id = nanoid();
         const now = new Date().toISOString();
+
+        // ── SQLite 写入（原有路径）──
         db.prepare(`
             INSERT INTO agent_spans (id, trace_id, parent_id, name, session_id, status, meta, started_at, created_at)
             VALUES (?, ?, ?, ?, ?, 'running', ?, ?, ?)
@@ -69,11 +80,25 @@ export class SpanRecorder {
             now,
             now
         );
+
+        // ── OTel 双发（U4）──
+        if (otelEnabled) {
+            const tracer = getTracer();
+            if (tracer) {
+                const otelSpan = tracer.startSpan(name, {
+                    attributes: this._buildOtelAttributes(name, traceId, meta),
+                });
+                this._otelSpans.set(id, otelSpan);
+            }
+        }
+
         return id;
     }
 
     endSpan(spanId: string, result?: string, error?: string): void {
         const now = new Date().toISOString();
+
+        // ── SQLite 写入（原有路径）──
         const span = db.prepare('SELECT started_at FROM agent_spans WHERE id = ?')
             .get(spanId) as { started_at: string } | undefined;
         const durationMs = span ? Date.now() - new Date(span.started_at).getTime() : null;
@@ -90,6 +115,25 @@ export class SpanRecorder {
             now,
             spanId
         );
+
+        // ── OTel 双发（U4）──
+        const otelSpan = this._otelSpans.get(spanId);
+        if (otelSpan) {
+            if (error) {
+                otelSpan.setStatus({ code: SpanStatusCode.ERROR, message: error.slice(0, 300) });
+                otelSpan.setAttribute('error.message', error.slice(0, 300));
+            } else {
+                otelSpan.setStatus({ code: SpanStatusCode.OK });
+                if (result) {
+                    otelSpan.setAttribute('span.result_preview', result.slice(0, 200));
+                }
+            }
+            if (durationMs !== null) {
+                otelSpan.setAttribute('span.duration_ms', durationMs);
+            }
+            otelSpan.end();
+            this._otelSpans.delete(spanId);
+        }
     }
 
     getTrace(traceId: string): Span[] {
@@ -141,6 +185,37 @@ export class SpanRecorder {
                 startedAt: r['started_at'] as string,
             }));
         }
+    }
+
+    // ─────────────────────────────── private ───────────────────────────────
+
+    private _buildOtelAttributes(
+        name: string,
+        traceId: string,
+        meta?: Record<string, unknown>
+    ): Record<string, string | number | boolean> {
+        const attrs: Record<string, string | number | boolean> = {
+            [GENAI_ATTRS.OPERATION_NAME]: name,
+            'cmaster.trace_id': traceId,
+        };
+
+        if (meta?.sessionId) attrs['session.id'] = String(meta.sessionId);
+        if (meta?.userId) attrs['enduser.id'] = String(meta.userId);
+        if (meta?.agentId) attrs['cmaster.agent_id'] = String(meta.agentId);
+
+        // 从 span 名称推断 gen_ai 属性
+        if (name.startsWith('agent:')) {
+            attrs[GENAI_ATTRS.SYSTEM] = 'cmaster';
+        } else if (name.startsWith('llm:')) {
+            attrs[GENAI_ATTRS.SYSTEM] = String(meta?.provider ?? 'unknown');
+            if (meta?.model) attrs[GENAI_ATTRS.REQUEST_MODEL] = String(meta.model);
+            if (typeof meta?.inputTokens === 'number') attrs[GENAI_ATTRS.USAGE_INPUT_TOKENS] = meta.inputTokens;
+            if (typeof meta?.outputTokens === 'number') attrs[GENAI_ATTRS.USAGE_OUTPUT_TOKENS] = meta.outputTokens;
+        } else if (name.startsWith('tool:')) {
+            attrs['cmaster.tool_name'] = name.replace('tool:', '');
+        }
+
+        return attrs;
     }
 }
 
