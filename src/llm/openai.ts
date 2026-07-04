@@ -9,7 +9,7 @@ import type {
     LLMConfig,
     ToolDefinition
 } from '../types.js';
-import { ProxyAgent } from 'undici';
+import { fetch as undiciFetch, ProxyAgent } from 'undici';
 
 function recordTokenUsage(model: string, usage: { prompt_tokens: number; completion_tokens: number; total_tokens: number } | null | undefined) {
     if (!usage) return;
@@ -42,8 +42,12 @@ export class OpenAIAdapter implements LLMAdapter {
         this.client = new OpenAI({
             apiKey: config.apiKey,
             baseURL: config.baseUrl,
-            // undici 与 undici-types 的 FormData 类型声明存在已知不兼容，运行时行为一致
-            ...(dispatcher ? { fetchOptions: { dispatcher: dispatcher as never } } : {}),
+            // ProxyAgent 必须与同一个 undici 包的 fetch 配合使用，否则 Node.js 内置 fetch
+            // 与外部 undici dispatcher 版本不匹配会导致 APIConnectionError
+            ...(dispatcher ? {
+                fetch: undiciFetch as unknown as typeof globalThis.fetch,
+                fetchOptions: { dispatcher: dispatcher as never },
+            } : {}),
         });
     }
 
