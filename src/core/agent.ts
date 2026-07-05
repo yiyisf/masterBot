@@ -16,11 +16,14 @@ import type { SessionEventStore } from './harness/session-store.js';
 import { spanRecorder } from './trace.js';
 import type { MemoryRouter } from '../memory/memory-router.js';
 import { classifyComplexity, type ReasoningTier } from './complexity-classifier.js';
+import type { ISkillGenerator } from './skill-generator.js';
+import type { IKnowledgeGraph } from '../memory/knowledge-graph.js';
 import {
     SYSTEM_PROMPT,
     PLAN_TOOL_DEF,
     MEMORY_REMEMBER_TOOL,
     MEMORY_RECALL_TOOL,
+    MEMORY_READ_TOOL,
     DAG_CREATE_TASK_TOOL,
     DAG_GET_STATUS_TOOL,
     DAG_EXECUTE_TOOL,
@@ -51,12 +54,9 @@ export class Agent {
     private longTermMemory?: LongTermMemory;
     private memoryGovernor?: import('../memory/memory-governor.js').MemoryGovernor;
     private memoryRouter?: MemoryRouter;
-    /** 缓存 CMASTER.md + MEMORY.md 拼接后的全局指令，首次加载后复用 */
-    private _globalInstructions: string | null | undefined = undefined;
     private skillConfig: Record<string, unknown>;
-    private skillGenerator?: any;
-    private orchestrator?: any;
-    private knowledgeGraph?: any;
+    private skillGenerator?: ISkillGenerator;
+    private knowledgeGraph?: IKnowledgeGraph;
     private deepThinkingProvider?: () => LLMAdapter;
     private sessionStore?: SessionEventStore;
     private agentPool?: import('./harness/agent-pool.js').AgentPool;
@@ -71,9 +71,8 @@ export class Agent {
         memoryGovernor?: import('../memory/memory-governor.js').MemoryGovernor;
         memoryRouter?: MemoryRouter;
         skillConfig?: Record<string, unknown>;
-        skillGenerator?: any;
-        orchestrator?: any;
-        knowledgeGraph?: any;
+        skillGenerator?: ISkillGenerator;
+        knowledgeGraph?: IKnowledgeGraph;
         deepThinkingProvider?: () => LLMAdapter;
         sessionStore?: SessionEventStore;
         agentPool?: import('./harness/agent-pool.js').AgentPool;
@@ -87,7 +86,6 @@ export class Agent {
         this.memoryRouter = options.memoryRouter;
         this.skillConfig = options.skillConfig ?? {};
         this.skillGenerator = options.skillGenerator;
-        this.orchestrator = options.orchestrator;
         this.knowledgeGraph = options.knowledgeGraph;
         this.deepThinkingProvider = options.deepThinkingProvider;
         this.sessionStore = options.sessionStore;
@@ -141,30 +139,23 @@ export class Agent {
             ? input
             : input.filter(p => p.type === 'text').map(p => (p as { type: 'text'; text: string }).text).join(' ');
 
-        // 加载全局指令（CMASTER.md + MEMORY.md 索引），首次运行时懒加载并缓存
-        if (this._globalInstructions === undefined) {
-            this._globalInstructions = await this._loadGlobalInstructions();
-        }
+        // P1-6: 每轮实时加载全局指令（CMASTER.md + MEMORY.md 索引），不做进程级缓存。
+        // 此前缓存首次加载后永不刷新，用户新写入的记忆/手动编辑的 CMASTER.md 要重启进程才会生效。
+        // 均为本地小文件（MEMORY.md 索引已截断至 200 行），每轮重读的 I/O 开销可忽略。
+        const globalInstructions = await this._loadGlobalInstructions();
 
         // Auto-inject relevant long-term memories into system prompt
         let systemContent = SYSTEM_PROMPT;
 
         // 注入 CMASTER.md 全局指令 + MEMORY.md 索引
-        if (this._globalInstructions) {
-            systemContent += this._globalInstructions;
+        if (globalInstructions) {
+            systemContent += globalInstructions;
         }
 
-        if (this.longTermMemory) {
-            try {
-                const memories = await this.longTermMemory.search(inputText, 3);
-                if (memories.length > 0) {
-                    const memoryContext = memories.map(m => `- ${m.content}`).join('\n');
-                    systemContent += `\n\n相关记忆:\n${memoryContext}`;
-                }
-            } catch (err) {
-                this.logger.warn(`Failed to retrieve long-term memories: ${(err as Error).message}`);
-            }
-        }
+        // P1-6 (M5): 不再拿整句用户输入做 top-3 检索注入 —— FTS/LIKE 用整句做匹配命中率
+        // 几乎为零（真实需求是子串关键词检索，而不是整句相似度）。MEMORY.md 索引已常驻于
+        // globalInstructions，模型可自主判断相关性后调用 memory_read（按 category/topic 精确
+        // 读取）或 memory_recall（关键词检索）按需召回，检索智能来自模型而非检索算法。
 
         // Phase 26: 注入可用 Harness Agent 列表（供 LLM 决策 delegate）
         if (this.agentPool) {
@@ -251,7 +242,7 @@ export class Agent {
         const externalTools = await this.skillRegistry.getToolDefinitions();
         const builtinTools = [PLAN_TOOL_DEF, DAG_CREATE_TASK_TOOL, DAG_GET_STATUS_TOOL, DAG_EXECUTE_TOOL, SKILL_GENERATE_TOOL, DELEGATE_AGENT_TOOL, KNOWLEDGE_SEARCH_TOOL];
         if (this.longTermMemory) {
-            builtinTools.push(MEMORY_REMEMBER_TOOL, MEMORY_RECALL_TOOL);
+            builtinTools.push(MEMORY_REMEMBER_TOOL, MEMORY_RECALL_TOOL, MEMORY_READ_TOOL);
         }
         // Gap 5: session_recall 仅当 sessionStore 已注入时暴露
         if (this.sessionStore) {
@@ -435,7 +426,6 @@ export class Agent {
                 sessionStore: this.sessionStore,
                 skillRegistry: this.skillRegistry,
                 skillGenerator: this.skillGenerator,
-                orchestrator: this.orchestrator,
                 agentPool: this.agentPool,
                 knowledgeGraph: this.knowledgeGraph,
                 skillConfig: this.skillConfig,

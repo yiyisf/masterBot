@@ -1,24 +1,39 @@
 /**
- * CJK-aware token counter
+ * Token counter for context-window budgeting.
  *
- * More accurate than simple char/3 estimation:
- * - CJK characters: ~1.5 tokens per character (they often map to 2+ byte sequences)
- * - ASCII words: ~0.75 tokens per word (average English word is ~1.3 tokens)
- * - Whitespace/punctuation: ~0.25 tokens per character
- * - JSON structure characters: ~1 token each
+ * P2-3: primary path uses gpt-tokenizer's o200k_base encoding (real BPE tokenization,
+ * same encoding as GPT-4o/GPT-4.1/o-series models) for accurate counts. Falls back to
+ * a CJK-aware heuristic estimate if gpt-tokenizer throws (defensive — should not happen
+ * in practice since it's a pure-JS dependency with no native bindings).
  */
+
+import { countTokens as encodeCountTokens } from 'gpt-tokenizer/encoding/o200k_base';
 
 // CJK Unicode ranges
 const CJK_REGEX = /[\u2E80-\u9FFF\uF900-\uFAFF\uFE30-\uFE4F\u{20000}-\u{2FA1F}]/u;
 const CJK_CHAR_REGEX = /[\u2E80-\u9FFF\uF900-\uFAFF\uFE30-\uFE4F\u{20000}-\u{2FA1F}]/gu;
 
 /**
- * Estimate token count for a text string
- * Accuracy: ~85-90% compared to tiktoken for mixed CJK/ASCII content
+ * Count tokens for a text string.
+ * Primary: exact o200k_base BPE tokenization. Fallback: CJK-aware heuristic (~85-90% accurate).
  */
 export function countTokens(text: string): number {
     if (!text) return 0;
+    try {
+        return encodeCountTokens(text);
+    } catch {
+        return estimateTokensHeuristic(text);
+    }
+}
 
+/**
+ * CJK-aware heuristic estimate (fallback only — see countTokens() above for the primary path).
+ * - CJK characters: ~1.5 tokens per character (they often map to 2+ byte sequences)
+ * - ASCII words: ~0.75 tokens per word (average English word is ~1.3 tokens)
+ * - Whitespace/punctuation: ~0.25 tokens per character
+ * - JSON structure characters: ~1 token each
+ */
+function estimateTokensHeuristic(text: string): number {
     // Check if text contains CJK characters
     const hasCJK = CJK_REGEX.test(text);
 

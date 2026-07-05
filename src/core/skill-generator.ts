@@ -18,6 +18,15 @@ export interface GeneratedSkill {
     dir: string;
 }
 
+/**
+ * P1-5: Agent 依赖注入接口化 — 只声明 Agent/agent-run-helpers 实际调用的方法，
+ * 取代裸 `any`，编译期即可发现调用点错误。SkillGenerator 结构性满足此接口。
+ */
+export interface ISkillGenerator {
+    generate(req: GenerateSkillRequest): Promise<GeneratedSkill>;
+    install(generated: GeneratedSkill): Promise<string>;
+}
+
 const GENERATOR_SYSTEM_PROMPT = `你是一个专业的技能代码生成器，负责为 CMaster Bot 生成技能文件。
 
 ## 技能文件格式

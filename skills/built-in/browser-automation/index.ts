@@ -5,7 +5,7 @@
  */
 import { platform } from 'os';
 import type { SkillContext } from '../../../src/types.js';
-import { expandPath } from '../../../src/skills/utils.js';
+import { expandPath } from '#skill-kit/skills/utils.js';
 
 // Singleton browser instance per skill context
 let browserInstance: any = null;

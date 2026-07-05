@@ -1,6 +1,6 @@
 import { DatabaseSync } from 'node:sqlite';
 import { nanoid } from 'nanoid';
-import { readFile, writeFile, mkdir } from 'fs/promises';
+import { readFile, writeFile, mkdir, unlink } from 'fs/promises';
 import { existsSync, mkdirSync } from 'fs';
 import { join, dirname } from 'path';
 import type { MemoryAccess, MemoryEntry, Logger } from '../types.js';
@@ -56,6 +56,13 @@ export class LongTermMemory implements MemoryAccess {
     private _ftsAvailable = false;
     /** 已解析 embedding 向量的内存缓存（id → vector），避免热路径重复 JSON.parse */
     private _embeddingCache = new Map<string, number[]>();
+    /**
+     * P1-6 (review fix): MEMORY.md 的更新/删除都是"读整个文件→修改→写回"，
+     * remember() 的写入与 supersede() 的移除可能在同一调用栈内先后触发且都不 await，
+     * 并发无锁写会导致丢失更新（后写的覆盖先写的）。用一条 Promise 链把所有 MEMORY.md
+     * 读改写操作串行化，FIFO 执行，避免竞态。
+     */
+    private _indexQueue: Promise<void> = Promise.resolve();
 
     constructor(options: LongTermMemoryOptions) {
         this.db = options.db;
@@ -105,17 +112,21 @@ export class LongTermMemory implements MemoryAccess {
         `);
 
         try {
+            // U6: unicode61 按空格/标点分词，连续 CJK 文本被当作单个 token，中文子串检索几乎不可用。
+            // trigram 按 3 字符切片索引，中文/日文/韩文子串匹配可用（查询词需 ≥3 字符）。
+            const legacyRows = this._dropFtsTableIfLegacyTokenizer();
             this.db.exec(`
                 CREATE VIRTUAL TABLE IF NOT EXISTS memory_fts USING fts5(
                     id UNINDEXED,
                     category UNINDEXED,
                     topic UNINDEXED,
                     content,
-                    tokenize='unicode61 remove_diacritics 2'
+                    tokenize='trigram'
                 );
             `);
+            this._backfillFtsRows(legacyRows);
             this._ftsAvailable = true;
-            this.logger.debug('[memory] FTS5 available');
+            this.logger.debug('[memory] FTS5 (trigram) available');
         } catch (err) {
             this._ftsAvailable = false;
             this.logger.warn(`[memory] FTS5 not available, falling back to LIKE search: ${(err as Error).message}`);
@@ -227,11 +238,19 @@ export class LongTermMemory implements MemoryAccess {
 
     /**
      * 删除记忆
+     * P1-6 (M3): 文件是记忆的真相源，删除 DB 行的同时同步删除对应 .md 文件与 MEMORY.md 索引行，
+     * 避免文件仍残留在索引中、模型误以为该记忆依然有效。
      */
     async forget(id: string): Promise<boolean> {
+        const row = this.db.prepare('SELECT category, topic FROM memories WHERE id = ?')
+            .get(id) as { category: string; topic: string } | undefined;
+
         const result = this.db.prepare('DELETE FROM memories WHERE id = ?').run(id);
         if (result.changes > 0 && this._ftsAvailable) {
             this.db.prepare('DELETE FROM memory_fts WHERE id = ?').run(id);
+        }
+        if (result.changes > 0 && row?.topic) {
+            await this._removeMemoryFile(row.category, row.topic);
         }
         return result.changes > 0;
     }
@@ -239,15 +258,25 @@ export class LongTermMemory implements MemoryAccess {
     // ──────────────────────── U5: 记忆治理 API ────────────────────────
 
     /**
-     * 标记旧记忆被新记忆取代（被取代条目不再参与召回，但保留可追溯）
+     * 标记旧记忆被新记忆取代（被取代条目不再参与召回，但保留可追溯）。
+     * P1-6 (M3): DB 行保留（供追溯），但对应 .md 文件与索引行会被移除 ——
+     * 被取代的记忆不应再出现在注入给模型的 MEMORY.md 索引中。
      */
     supersede(oldId: string, newId: string): boolean {
+        const row = this.db.prepare('SELECT category, topic FROM memories WHERE id = ?')
+            .get(oldId) as { category: string; topic: string } | undefined;
+
         const result = this.db.prepare(
             'UPDATE memories SET superseded_by = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?'
         ).run(newId, oldId);
         if (result.changes > 0 && this._ftsAvailable) {
             // 从 FTS 索引移除，词法召回不再命中
             this.db.prepare('DELETE FROM memory_fts WHERE id = ?').run(oldId);
+        }
+        if (result.changes > 0 && row?.topic) {
+            this._removeMemoryFile(row.category, row.topic).catch(err =>
+                this.logger.warn(`[memory] Failed to remove superseded memory file: ${(err as Error).message}`)
+            );
         }
         return result.changes > 0;
     }
@@ -382,6 +411,22 @@ export class LongTermMemory implements MemoryAccess {
     }
 
     /**
+     * P1-6 (M1): agentic 检索主路径 —— 按 MEMORY.md 索引给出的 category/topic 直接读取记忆全文，
+     * 不依赖检索算法。模型看到常驻索引后自主判断相关性、按需调用本方法打开具体记忆文件。
+     */
+    async readMemoryFile(category: string, topic: string): Promise<string | null> {
+        const safeCategory = VALID_CATEGORIES.has(category) ? category : 'user';
+        const filePath = join(this.dataDir, safeCategory, `${sanitizeFilename(topic)}.md`);
+        if (!existsSync(filePath)) return null;
+        try {
+            return await readFile(filePath, 'utf-8');
+        } catch (err) {
+            this.logger.warn(`[memory] Failed to read memory file ${filePath}: ${(err as Error).message}`);
+            return null;
+        }
+    }
+
+    /**
      * 从 MEMORY.md 中加载前 N 行作为 session 上下文
      */
     async loadMemoryIndex(maxLines = 200): Promise<string | null> {
@@ -440,6 +485,52 @@ export class LongTermMemory implements MemoryAccess {
     }
 
     // ─────────────────────────────── private ───────────────────────────────
+
+    /**
+     * U6: 已存在的 memory_fts 表若仍是旧 unicode61 分词器，drop 掉并返回待重建的行；
+     * 表结构本身由调用方紧随其后的 `CREATE VIRTUAL TABLE IF NOT EXISTS` 语句创建
+     * （单一 schema 声明处，避免两处 DDL 定义漂移）。
+     * 一次性迁移，幂等（表 sql 不含 'unicode61' 时直接返回空数组）。
+     */
+    private _dropFtsTableIfLegacyTokenizer(): Array<{ id: string; category: string; topic: string; content: string }> {
+        try {
+            const row = this.db.prepare(
+                "SELECT sql FROM sqlite_master WHERE type='table' AND name='memory_fts'"
+            ).get() as { sql: string } | undefined;
+            if (!row || !row.sql.includes('unicode61')) return [];
+
+            this.logger.info('[memory] Migrating memory_fts tokenizer unicode61 → trigram');
+            const rows = this.db.prepare(
+                'SELECT id, category, topic, content FROM memories WHERE superseded_by IS NULL'
+            ).all() as Array<{ id: string; category: string; topic: string; content: string }>;
+            this.db.exec('DROP TABLE IF EXISTS memory_fts');
+            return rows;
+        } catch (err) {
+            this.logger.warn(`[memory] FTS tokenizer migration detection failed (will retry next start): ${(err as Error).message}`);
+            return [];
+        }
+    }
+
+    /**
+     * 将迁移收集到的行批量写回新的 memory_fts 表（单事务，失败整体回滚不留半量索引）。
+     */
+    private _backfillFtsRows(rows: Array<{ id: string; category: string; topic: string; content: string }>): void {
+        if (rows.length === 0) return;
+        try {
+            this.db.exec('BEGIN');
+            const insert = this.db.prepare(
+                'INSERT INTO memory_fts (id, category, topic, content) VALUES (?, ?, ?, ?)'
+            );
+            for (const r of rows) {
+                insert.run(r.id, r.category ?? 'user', r.topic ?? '', r.content);
+            }
+            this.db.exec('COMMIT');
+            this.logger.info(`[memory] Tokenizer migration complete: ${rows.length} rows reindexed`);
+        } catch (err) {
+            try { this.db.exec('ROLLBACK'); } catch { /* no active transaction */ }
+            this.logger.warn(`[memory] FTS tokenizer backfill failed, search index incomplete until affected memories are rewritten: ${(err as Error).message}`);
+        }
+    }
 
     /**
      * U5: 治理权重 = 置信度因子 × 时近性因子
@@ -633,26 +724,98 @@ export class LongTermMemory implements MemoryAccess {
         await this._updateMemoryIndex(safeCategory, safeTopic, content);
     }
 
-    private async _updateMemoryIndex(category: string, topic: string, content: string): Promise<void> {
-        const indexPath = join(this.dataDir, 'MEMORY.md');
-        const relPath = `./${category}/${sanitizeFilename(topic)}.md`;
+    /**
+     * 串行化排队执行一个 MEMORY.md 读改写操作，FIFO，避免并发无锁写丢失更新。
+     * 无论排队的操作成功或失败，都不阻塞队列中后续操作的执行。
+     */
+    private _withIndexLock(fn: () => Promise<void>): Promise<void> {
+        const run = this._indexQueue.then(fn, fn);
+        this._indexQueue = run.then(() => undefined, () => undefined);
+        return run;
+    }
 
-        const summary = content.split('\n')[0].slice(0, 100);
-        const entry = `- [${topic}](${relPath}) — ${summary}`;
+    private _updateMemoryIndex(category: string, topic: string, content: string): Promise<void> {
+        return this._withIndexLock(async () => {
+            const indexPath = join(this.dataDir, 'MEMORY.md');
+            const relPath = `./${category}/${sanitizeFilename(topic)}.md`;
 
-        let existing = '';
-        if (existsSync(indexPath)) {
-            try { existing = await readFile(indexPath, 'utf-8'); } catch { /* ok */ }
+            const summary = content.split('\n')[0].slice(0, 100);
+            const entry = `- [${topic}](${relPath}) — ${summary}`;
+
+            let existing = '';
+            if (existsSync(indexPath)) {
+                try { existing = await readFile(indexPath, 'utf-8'); } catch { /* ok */ }
+            }
+
+            const lines = existing ? existing.split('\n') : ['# Memory Index', ''];
+            const idx = lines.findIndex(l => l.includes(`(${relPath})`));
+            if (idx >= 0) {
+                lines[idx] = entry;
+            } else {
+                lines.push(entry);
+            }
+
+            await writeFile(indexPath, lines.join('\n'), 'utf-8');
+        });
+    }
+
+    /**
+     * P1-6 (M3): 删除记忆对应的 .md 文件并从 MEMORY.md 索引移除该行 ——
+     * forget()/supersede() 调用，保持文件（真相源）与索引不残留失效条目。
+     *
+     * sanitizeFilename() 是有损的多对一映射，理论上两个不同 topic 可能 sanitize 后撞名。
+     * 删除前校验文件 frontmatter 的 `name:` 字段（写入时保留的原始 topic）与预期一致，
+     * 不一致则跳过删除并告警，避免误删撞名的另一条记忆。
+     */
+    private async _removeMemoryFile(category: string, topic: string): Promise<void> {
+        const safeCategory = VALID_CATEGORIES.has(category) ? category : 'user';
+        const safeTopic = sanitizeFilename(topic);
+        const filePath = join(this.dataDir, safeCategory, `${safeTopic}.md`);
+
+        let ownerMatches = true;
+        if (existsSync(filePath)) {
+            try {
+                const fileContent = await readFile(filePath, 'utf-8');
+                const nameMatch = fileContent.match(/^name:\s*(.+)$/m);
+                if (nameMatch && nameMatch[1].trim() !== topic) {
+                    ownerMatches = false;
+                }
+            } catch { /* 读取失败时按原逻辑继续尝试删除 */ }
+
+            if (!ownerMatches) {
+                // 撞名的文件目前实际属于另一条仍然有效的记忆：既不删文件，也不动索引行
+                // （索引行此时也是那条记忆的），避免让其从模型可见的 MEMORY.md 中消失。
+                this.logger.warn(
+                    `[memory] Skipped deleting ${filePath}: sanitized filename collision detected ` +
+                    `(file belongs to a different topic than "${topic}")`
+                );
+            } else {
+                try {
+                    await unlink(filePath);
+                } catch (err) {
+                    this.logger.warn(`[memory] Failed to delete memory file ${filePath}: ${(err as Error).message}`);
+                }
+            }
         }
 
-        const lines = existing ? existing.split('\n') : ['# Memory Index', ''];
-        const idx = lines.findIndex(l => l.includes(`(${relPath})`));
-        if (idx >= 0) {
-            lines[idx] = entry;
-        } else {
-            lines.push(entry);
+        if (ownerMatches) {
+            await this._removeFromMemoryIndex(safeCategory, safeTopic);
         }
+    }
 
-        await writeFile(indexPath, lines.join('\n'), 'utf-8');
+    private _removeFromMemoryIndex(category: string, topic: string): Promise<void> {
+        return this._withIndexLock(async () => {
+            const indexPath = join(this.dataDir, 'MEMORY.md');
+            if (!existsSync(indexPath)) return;
+
+            const relPath = `./${category}/${topic}.md`;
+            try {
+                const existing = await readFile(indexPath, 'utf-8');
+                const lines = existing.split('\n').filter(l => !l.includes(`(${relPath})`));
+                await writeFile(indexPath, lines.join('\n'), 'utf-8');
+            } catch (err) {
+                this.logger.warn(`[memory] Failed to update MEMORY.md index after removal: ${(err as Error).message}`);
+            }
+        });
     }
 }

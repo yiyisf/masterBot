@@ -1,12 +1,15 @@
 import Anthropic from '@anthropic-ai/sdk';
+import { fetch as undiciFetch } from 'undici';
 import type {
     LLMAdapter,
     Message,
     ChatOptions,
     StreamChunk,
     LLMConfig,
-    ToolDefinition
+    ToolDefinition,
+    TokenUsageEvent
 } from '../types.js';
+import { getProxyDispatcher } from './proxy.js';
 
 type SystemBlock = {
     type: 'text';
@@ -29,15 +32,36 @@ export class AnthropicAdapter implements LLMAdapter {
      * 非 Anthropic 兼容代理收到该字段可能报错（未知字段）。
      */
     private readonly _usePromptCaching: boolean;
+    /** P1-7: token 用量上报回调（由 LLMFactory 注入），适配器不再直接依赖 DB */
+    private onUsage?: (usage: TokenUsageEvent) => void;
 
-    constructor(config: LLMConfig) {
+    constructor(config: LLMConfig, onUsage?: (usage: TokenUsageEvent) => void) {
         this.config = config;
+        this.onUsage = onUsage;
+        // P1-4: 与 OpenAIAdapter 共享同一个 EnvHttpProxyAgent 单例，统一代理支持
+        // （此前仅 openai.ts 手动读代理环境变量，anthropic.ts 完全没有代理支持）
         this.client = new Anthropic({
             apiKey: config.apiKey,
             baseURL: config.baseUrl || undefined,
+            fetch: undiciFetch as unknown as typeof globalThis.fetch,
+            fetchOptions: { dispatcher: getProxyDispatcher() as never },
         });
         // 无 baseUrl → 原生 Anthropic API → 支持 cache_control
         this._usePromptCaching = !config.baseUrl;
+    }
+
+    private _reportUsage(model: string, usage: { input_tokens: number; output_tokens: number } | null | undefined): void {
+        if (!usage || !this.onUsage) return;
+        try {
+            this.onUsage({
+                model,
+                promptTokens: usage.input_tokens,
+                completionTokens: usage.output_tokens,
+                totalTokens: usage.input_tokens + usage.output_tokens,
+            });
+        } catch {
+            // non-fatal — 上报失败不应影响 LLM 调用本身
+        }
     }
 
     async chat(messages: Message[], options?: ChatOptions): Promise<Message> {
@@ -70,6 +94,8 @@ export class AnthropicAdapter implements LLMAdapter {
             }
         }
 
+        this._reportUsage(options?.model ?? this.config.model, response.usage);
+
         return {
             role: 'assistant',
             content,
@@ -91,9 +117,13 @@ export class AnthropicAdapter implements LLMAdapter {
 
         let currentToolCall: StreamChunk['toolCall'] | null = null;
         let currentToolInput = '';
+        let inputTokens = 0;
+        let outputTokens = 0;
 
         for await (const event of stream) {
-            if (event.type === 'content_block_start') {
+            if (event.type === 'message_start') {
+                inputTokens = event.message.usage.input_tokens ?? 0;
+            } else if (event.type === 'content_block_start') {
                 const block = event.content_block;
                 if (block.type === 'tool_use') {
                     currentToolCall = {
@@ -123,7 +153,10 @@ export class AnthropicAdapter implements LLMAdapter {
                     currentToolCall = null;
                     currentToolInput = '';
                 }
+            } else if (event.type === 'message_delta') {
+                outputTokens = event.usage.output_tokens ?? 0;
             } else if (event.type === 'message_stop') {
+                this._reportUsage(options?.model ?? this.config.model, { input_tokens: inputTokens, output_tokens: outputTokens });
                 yield { type: 'done' };
             }
         }

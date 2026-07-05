@@ -15,7 +15,6 @@ import type { McpServerConfig } from './types.js';
 import { nanoid } from 'nanoid';
 import { SchedulerService } from './core/scheduler.js';
 import { KnowledgeGraph } from './memory/knowledge-graph.js';
-import { MultiAgentOrchestrator } from './core/multi-agent.js';
 import { SkillGenerator } from './core/skill-generator.js';
 import { ConnectorManager } from './skills/connector-source.js';
 import { SelfImprovementEngine } from './core/self-improvement.js';
@@ -48,6 +47,17 @@ async function main() {
     });
 
     logger.info('Starting CMaster Bot...');
+
+    // P1-7: token 用量落盘由组合根订阅，LLM 适配器不再直接依赖 DB
+    llmFactory.setUsageHandler((usage) => {
+        try {
+            db.prepare(
+                'INSERT INTO token_usage (id, model, prompt_tokens, completion_tokens, total_tokens) VALUES (?, ?, ?, ?, ?)'
+            ).run(nanoid(), usage.model, usage.promptTokens, usage.completionTokens, usage.totalTokens);
+        } catch (err) {
+            logger.warn(`[llm] Failed to record token usage: ${(err as Error).message}`);
+        }
+    });
 
     logger.info(`LLM system ready (Default: ${config.models.default})`);
 
@@ -88,9 +98,13 @@ async function main() {
         if (!embeddingProvider) return undefined;
         try {
             const embeddingLlm = llmFactory.getAdapter(embeddingProvider, config.models.providers[embeddingProvider]);
-            if (typeof (embeddingLlm as any).embed === 'function') {
-                return (texts: string[]) => (embeddingLlm as any).embed(texts) as Promise<number[][]>;
+            // `embeddings()` is a required LLMAdapter method (always present), but AnthropicAdapter's
+            // implementation unconditionally throws — checking `typeof === 'function'` would always
+            // pass and wire in a doomed embedder. Only the openai-compatible adapter actually supports it.
+            if (embeddingLlm.provider !== 'anthropic') {
+                return (texts: string[]) => embeddingLlm.embeddings(texts);
             }
+            logger.warn(`[memory] Embedding provider "${embeddingProvider}" (anthropic) does not support embeddings, vector search disabled`);
         } catch (err) {
             logger.warn(`[memory] Embedding provider "${embeddingProvider}" not available, vector search disabled: ${(err as Error).message}`);
         }
@@ -121,12 +135,11 @@ async function main() {
     }
 
     const knowledgeGraph = new KnowledgeGraph(getLlm(), logger);
-    const orchestrator = new MultiAgentOrchestrator(logger);
     const skillGenerator = new SkillGenerator(getLlm(), logger);
 
     // Phase 21: 初始化统一内存路由器
     if (longTermMemory) {
-        initMemoryRouter(longTermMemory, knowledgeGraph, sessionManager);
+        initMemoryRouter(longTermMemory, knowledgeGraph);
     }
     const { memoryRouter } = await import('./memory/memory-router.js');
 
@@ -166,22 +179,6 @@ async function main() {
     await soulLoader.loadAgents(path.join(process.cwd(), 'agents'));
     await soulLoader.loadAgents(path.join(process.cwd(), 'agents/builtin'));
 
-    // Phase 28: 将 MultiAgentOrchestrator 中的旧 Worker 统一注册为 AgentSpec
-    if (typeof orchestrator.hasWorkers === 'function' && orchestrator.hasWorkers()) {
-        for (const worker of orchestrator.listWorkers()) {
-            if (!agentPool.getSpec(worker.id)) {
-                agentPool.registerLegacyWorker(
-                    worker.id,
-                    worker.name,
-                    worker.description ?? '',
-                    worker.systemPrompt,
-                    worker.skills
-                );
-                logger.info(`[startup] Legacy worker "${worker.name}" registered as AgentSpec`);
-            }
-        }
-    }
-
     // Phase 24: 启动时扫描未完成 session，自动 wake（Harness as Cattle）
     await agentPool.scanAndWake();
 
@@ -203,7 +200,6 @@ async function main() {
             sandbox: config.skills.shell?.sandbox,
         },
         skillGenerator,
-        orchestrator,
         knowledgeGraph,
         sessionStore,
         agentPool,
@@ -247,7 +243,6 @@ async function main() {
         logger,
         config,
         knowledgeGraph,
-        orchestrator,
         skillGenerator,
         skillRegistry,
         connectorManager,

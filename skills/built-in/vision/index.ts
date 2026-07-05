@@ -1,7 +1,7 @@
 import type { SkillContext, Message, MessageContentPart } from '../../../src/types.js';
 import { readFileSync, existsSync } from 'fs';
 import { extname } from 'path';
-import { expandPath } from '../../../src/skills/utils.js';
+import { expandPath } from '#skill-kit/skills/utils.js';
 
 // Supported image extensions
 const IMAGE_EXTENSIONS = new Set(['.jpg', '.jpeg', '.png', '.gif', '.webp', '.bmp']);
@@ -54,7 +54,7 @@ async function callVisionLLM(
     };
 
     // Get the LLM adapter from the factory using env vars (OpenAI-compatible)
-    const { llmFactory } = await import('../../../src/llm/index.js');
+    const { llmFactory } = await import('#skill-kit/llm/index.js');
 
     // Create an adapter from env vars, cached by the factory under 'vision-openai'
     const apiKey = process.env.OPENAI_API_KEY;

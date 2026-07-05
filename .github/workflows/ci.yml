@@ -27,6 +27,11 @@ jobs:
       - name: TypeScript type check
         run: npx tsc --noEmit
 
+      - name: Build backend
+        # P0-3/P0-4 回归守护：tests/skill-prod-loading.test.ts 通过 dist/ 是否存在判断是否运行
+        # #skill-kit 生产解析路径的回归测试，不构建 dist/ 会导致该测试套件被静默跳过。
+        run: npm run build
+
       - name: Run tests
         run: npx vitest run
 
