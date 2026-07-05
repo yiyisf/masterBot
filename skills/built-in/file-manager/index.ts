@@ -2,7 +2,7 @@ import { readFile, writeFile, readdir, unlink, copyFile, stat } from 'fs/promise
 import { join, posix } from 'path';
 import { glob } from 'glob';
 import type { SkillContext } from '../../../src/types.js';
-import { expandPath } from '../../../src/skills/utils.js';
+import { expandPath } from '#skill-kit/skills/utils.js';
 
 /**
  * 读取文件内容

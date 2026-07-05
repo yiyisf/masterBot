@@ -6,7 +6,7 @@ author: CMaster Team
 dependencies:
   pdf-parse: "^1.1.0"
   mammoth: "^1.5.0"
-  xlsx: "^0.18.5"
+  exceljs: "^4.4.0"
 ---
 
 ### read_pdf

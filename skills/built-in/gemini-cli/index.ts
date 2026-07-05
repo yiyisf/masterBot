@@ -1,5 +1,20 @@
+import { resolve, sep } from 'path';
 import type { SkillContext } from '../../../src/types.js';
-import { expandPath, resolveCliCommand, spawnCli } from '../../../src/skills/utils.js';
+import { expandPath, resolveCliCommand, spawnCli } from '#skill-kit/skills/utils.js';
+
+/**
+ * P1-2: 与 claude-code skill 的治理边界保持一致 —— 子进程内部的工具调用不受
+ * CMaster 沙箱/Hook 管辖，cwd 收敛到项目根目录内，禁止越权访问。
+ */
+function resolveSafeCwd(rawCwd?: string): string {
+    const root = resolve(process.cwd());
+    if (!rawCwd) return root;
+    const resolved = expandPath(rawCwd);
+    if (resolved !== root && !resolved.startsWith(root + sep)) {
+        throw new Error(`cwd 必须位于项目根目录内 (${root})，拒绝越权路径: ${resolved}`);
+    }
+    return resolved;
+}
 
 function parseGeminiOutput(raw: string): string {
     try {
@@ -17,8 +32,15 @@ export async function ask(
     ctx: SkillContext,
     params: { prompt: string; cwd?: string; model?: string; files?: string }
 ): Promise<string> {
-    const { prompt, cwd, model, files } = params;
+    const { prompt, model, files } = params;
     if (!prompt) return 'Error: prompt parameter is required';
+
+    let safeCwd: string;
+    try {
+        safeCwd = resolveSafeCwd(params.cwd);
+    } catch (error: any) {
+        return `Error: ${error.message}`;
+    }
 
     const args = ['-p', prompt, '--output-format', 'json'];
     if (model) args.push('-m', model);
@@ -28,7 +50,7 @@ export async function ask(
 
     try {
         const raw = await spawnCli(resolveCliCommand('gemini'), args, {
-            cwd: cwd ? expandPath(cwd) : process.cwd(),
+            cwd: safeCwd,
             timeout: 120_000,
         });
         return parseGeminiOutput(raw);
@@ -44,8 +66,15 @@ export async function analyze_code(
     ctx: SkillContext,
     params: { prompt: string; cwd?: string; include_directories?: string }
 ): Promise<string> {
-    const { prompt, cwd, include_directories } = params;
+    const { prompt, include_directories } = params;
     if (!prompt) return 'Error: prompt parameter is required';
+
+    let safeCwd: string;
+    try {
+        safeCwd = resolveSafeCwd(params.cwd);
+    } catch (error: any) {
+        return `Error: ${error.message}`;
+    }
 
     const args = ['-p', prompt, '--output-format', 'json', '-a'];
     if (include_directories) args.push('--include-directories', include_directories);
@@ -54,7 +83,7 @@ export async function analyze_code(
 
     try {
         const raw = await spawnCli(resolveCliCommand('gemini'), args, {
-            cwd: cwd ? expandPath(cwd) : process.cwd(),
+            cwd: safeCwd,
             timeout: 180_000,
         });
         return parseGeminiOutput(raw);

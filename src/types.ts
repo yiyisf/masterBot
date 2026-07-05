@@ -68,6 +68,17 @@ export interface LLMAdapter {
     embeddings(texts: string[]): Promise<number[][]>;
 }
 
+/**
+ * P1-7: token 用量上报事件。适配器只负责产出这份数据，
+ * 是否落盘/如何落盘由组合根（LLMFactory.setUsageHandler）决定 —— 适配器不再直接依赖 DB。
+ */
+export interface TokenUsageEvent {
+    model: string;
+    promptTokens: number;
+    completionTokens: number;
+    totalTokens: number;
+}
+
 export interface LLMConfig {
     type: 'openai' | 'anthropic' | 'gemini' | 'ollama' | 'custom';
     baseUrl: string;

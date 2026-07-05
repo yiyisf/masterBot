@@ -1,9 +1,9 @@
 import { spawn } from 'child_process';
 import { platform } from 'os';
 import type { SkillContext } from '../../../src/types.js';
-import { CommandSandbox, type SandboxConfig } from '../../../src/skills/sandbox.js';
-import { OsSandboxExecutor } from '../../../src/skills/os-sandbox.js';
-import { expandPath, findGitBash } from '../../../src/skills/utils.js';
+import { CommandSandbox, type SandboxConfig } from '#skill-kit/skills/sandbox.js';
+import { OsSandboxExecutor } from '#skill-kit/skills/os-sandbox.js';
+import { expandPath, findGitBash } from '#skill-kit/skills/utils.js';
 
 function getSandbox(ctx: SkillContext): CommandSandbox | null {
     const sandboxConfig = (ctx.config as any)?.sandbox as SandboxConfig | undefined;

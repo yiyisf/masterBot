@@ -18,6 +18,9 @@ import type { ExecutionStep } from '../../types.js';
 import type { AgentSpec } from './agent-spec.js';
 import type { IAgentEngine, EngineRunContext } from './agent-engine.js';
 import { CommandSandbox } from '../../skills/sandbox.js';
+// P2-6: type-only 导入不产生运行时依赖（SDK 本身仍是动态 import，未安装时保留降级路径），
+// 用于替换 `sdk: any` / `_translateMessage(message: any)`，消除类型逃逸。
+import type { SDKMessage } from '@anthropic-ai/claude-agent-sdk';
 
 /** coder 场景默认放行的 SDK 内建工具 */
 const DEFAULT_ALLOWED_TOOLS = ['Read', 'Write', 'Edit', 'Glob', 'Grep', 'Bash', 'TodoWrite'];
@@ -62,8 +65,9 @@ export class ClaudeAgentSdkEngine implements IAgentEngine {
     }
 
     async *run(input: string, context: EngineRunContext): AsyncGenerator<ExecutionStep> {
-        // 动态加载 SDK：未安装时降级
-        let sdk: any;
+        // 动态加载 SDK：未安装时降级。typeof import(...) 是纯类型查询，不产生静态运行时依赖，
+        // 与"未安装时捕获异常降级"的运行时语义完全兼容。
+        let sdk: typeof import('@anthropic-ai/claude-agent-sdk');
         try {
             sdk = await import('@anthropic-ai/claude-agent-sdk');
         } catch (err) {
@@ -159,10 +163,10 @@ export class ClaudeAgentSdkEngine implements IAgentEngine {
     /**
      * SDK 消息 → ExecutionStep 转译（与 agent.ts 的 yield 范式对齐）
      */
-    private *_translateMessage(message: any): Generator<ExecutionStep> {
+    private *_translateMessage(message: SDKMessage): Generator<ExecutionStep> {
         const now = () => new Date();
 
-        switch (message?.type) {
+        switch (message.type) {
             case 'system': {
                 if (message.subtype === 'init') {
                     yield {
@@ -175,7 +179,7 @@ export class ClaudeAgentSdkEngine implements IAgentEngine {
             }
 
             case 'assistant': {
-                const blocks = message.message?.content ?? [];
+                const blocks = (message.message?.content ?? []) as any[];
                 for (const block of blocks) {
                     if (block.type === 'text' && block.text) {
                         yield { type: 'content', content: block.text, timestamp: now() };
@@ -196,7 +200,7 @@ export class ClaudeAgentSdkEngine implements IAgentEngine {
 
             case 'user': {
                 // 工具结果回填
-                const blocks = Array.isArray(message.message?.content) ? message.message.content : [];
+                const blocks = (Array.isArray(message.message?.content) ? message.message.content : []) as any[];
                 for (const block of blocks) {
                     if (block.type === 'tool_result') {
                         const raw = typeof block.content === 'string'
@@ -235,9 +239,13 @@ export class ClaudeAgentSdkEngine implements IAgentEngine {
                         content: `⚠️ SDK 会话异常结束（${message.subtype}${costInfo}）`,
                         timestamp: now(),
                     };
-                    // 即使异常也输出已有结果，交由外层 Grader 评分
-                    if (message.result) {
-                        yield { type: 'answer', content: message.result, timestamp: now() };
+                    // review fix: SDKResultError 没有 `.result` 字段（只有 SDKResultSuccess 才有），
+                    // 之前的 `(message as any).result` 恒为 undefined，是永远不会执行的死代码——
+                    // 异常终止时 Grader 完全拿不到任何 answer 步骤。改用 SDKResultError 实际拥有的
+                    // `errors: string[]` 字段，让 Grader 至少能看到失败原因去评分/决定是否重试。
+                    // 已有的部分 assistant 输出仍会作为更早的 'content'/'thought' 步骤单独 yield 过。
+                    if (message.errors && message.errors.length > 0) {
+                        yield { type: 'answer', content: message.errors.join('; '), timestamp: now() };
                     }
                 }
                 break;

@@ -78,7 +78,9 @@ export const MEMORY_RECALL_TOOL: ToolDefinition = {
     type: 'function',
     function: {
         name: 'memory_recall',
-        description: 'Search long-term memory for previously saved information',
+        description: 'Keyword search over long-term memory (trigram FTS). Prefer memory_read when you already ' +
+            'know the category/topic from the memory index in your system prompt — this is a fallback for when ' +
+            'you only have a keyword, not the exact topic.',
         parameters: {
             type: 'object',
             properties: {
@@ -86,6 +88,28 @@ export const MEMORY_RECALL_TOOL: ToolDefinition = {
                 limit: { type: 'number', description: 'Maximum number of results (default: 5)' },
             },
             required: ['query'],
+        },
+    },
+};
+
+export const MEMORY_READ_TOOL: ToolDefinition = {
+    type: 'function',
+    function: {
+        name: 'memory_read',
+        description: 'Read the full content of a specific memory by category and topic, as listed in the memory ' +
+            'index (MEMORY.md) already injected into your system prompt. This is the primary recall path — no ' +
+            'keyword search needed: scan the index for a relevant entry, then open it with this tool.',
+        parameters: {
+            type: 'object',
+            properties: {
+                category: {
+                    type: 'string',
+                    enum: ['user', 'operational', 'governance', 'skill', 'correction', 'reference'],
+                    description: 'Memory category, as shown in the index entry path (e.g. "./user/topic.md" → category "user")',
+                },
+                topic: { type: 'string', description: 'Topic identifier, as shown in the index entry filename (without .md)' },
+            },
+            required: ['category', 'topic'],
         },
     },
 };
@@ -203,6 +227,7 @@ export const BUILTIN_TOOL_NAMES = new Set([
     'plan_task',
     'memory_remember',
     'memory_recall',
+    'memory_read',
     'dag_create_task',
     'dag_get_status',
     'dag_execute',

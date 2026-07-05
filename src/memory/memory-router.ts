@@ -1,9 +1,8 @@
 import type { LongTermMemory } from './long-term.js';
 import type { KnowledgeGraph } from './knowledge-graph.js';
-import type { SessionMemoryManager } from './short-term.js';
 
 export interface UnifiedMemoryResult {
-    source: 'long-term' | 'knowledge-graph' | 'short-term';
+    source: 'long-term' | 'knowledge-graph';
     content: string;
     score: number;
     metadata?: Record<string, unknown>;
@@ -12,12 +11,14 @@ export interface UnifiedMemoryResult {
 /**
  * 统一内存路由器 — Phase 21
  * 并行查询 LongTermMemory + KnowledgeGraph，归并排序取 top N
+ *
+ * P1-6 (M8): 移除了从未使用的 shortTermManager 依赖（"short-term" source 从未被填充过，
+ * 短期会话记忆本身不支持语义检索——ShortTermMemory.search() 恒返回空数组）。
  */
 export class MemoryRouter {
     constructor(
         private longTerm: LongTermMemory,
         private knowledgeGraph: KnowledgeGraph,
-        private shortTermManager: SessionMemoryManager,
     ) {}
 
     async query(
@@ -30,7 +31,11 @@ export class MemoryRouter {
         const withTimeout = <T>(p: Promise<T>): Promise<T | null> =>
             Promise.race([
                 p.then(v => v).catch(() => null),
-                new Promise<null>(resolve => setTimeout(() => resolve(null), TIMEOUT_MS)),
+                new Promise<null>(resolve => {
+                    const timer = setTimeout(() => resolve(null), TIMEOUT_MS);
+                    timer.unref?.();
+                    p.finally(() => clearTimeout(timer));
+                }),
             ]);
 
         // 并行查询两个主要来源
@@ -77,8 +82,7 @@ export let memoryRouter: MemoryRouter | undefined;
 
 export function initMemoryRouter(
     longTerm: LongTermMemory,
-    knowledgeGraph: KnowledgeGraph,
-    shortTermManager: SessionMemoryManager
+    knowledgeGraph: KnowledgeGraph
 ): void {
-    memoryRouter = new MemoryRouter(longTerm, knowledgeGraph, shortTermManager);
+    memoryRouter = new MemoryRouter(longTerm, knowledgeGraph);
 }

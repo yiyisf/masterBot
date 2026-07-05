@@ -28,6 +28,16 @@ export interface GraphSearchResult {
     relevanceScores: Record<string, number>;
 }
 
+/**
+ * P1-5: Agent 依赖注入接口化 — 只声明 Agent/网关路由实际调用的方法，
+ * 取代裸 `any`，编译期即可发现调用点错误。KnowledgeGraph 结构性满足此接口。
+ */
+export interface IKnowledgeGraph {
+    getStats(): { nodeCount: number; edgeCount: number };
+    ingest(content: string, metadata: { title: string; type?: string; source?: string }): Promise<string>;
+    search(query: string, opts?: { depth?: number; limit?: number }): Promise<GraphSearchResult>;
+}
+
 function cosineSimilarity(a: number[], b: number[]): number {
     if (a.length !== b.length) return 0;
     let dot = 0, normA = 0, normB = 0;

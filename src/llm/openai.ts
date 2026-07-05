@@ -1,25 +1,23 @@
 import OpenAI from 'openai';
-import { nanoid } from 'nanoid';
-import { db } from '../core/database.js';
 import type {
     LLMAdapter,
     Message,
     ChatOptions,
     StreamChunk,
     LLMConfig,
-    ToolDefinition
+    ToolDefinition,
+    TokenUsageEvent
 } from '../types.js';
-import { fetch as undiciFetch, ProxyAgent } from 'undici';
+import { fetch as undiciFetch } from 'undici';
+import { getProxyDispatcher } from './proxy.js';
 
-function recordTokenUsage(model: string, usage: { prompt_tokens: number; completion_tokens: number; total_tokens: number } | null | undefined) {
-    if (!usage) return;
-    try {
-        db.prepare(
-            'INSERT INTO token_usage (id, model, prompt_tokens, completion_tokens, total_tokens) VALUES (?, ?, ?, ?, ?)'
-        ).run(nanoid(), model, usage.prompt_tokens, usage.completion_tokens, usage.total_tokens);
-    } catch {
-        // non-fatal
-    }
+/**
+ * P1-4: OpenAI 推理模型（o1/o3/o4/gpt-5 系列）已弃用 `max_tokens`，
+ * 改用 `max_completion_tokens`，否则请求会报 400。按模型名路由参数，
+ * 其余模型（含第三方 OpenAI 兼容端点）继续用 `max_tokens` 保持兼容。
+ */
+function usesMaxCompletionTokens(model: string): boolean {
+    return /^o\d(-|$)/.test(model) || model.startsWith('gpt-5');
 }
 
 /**
@@ -30,40 +28,41 @@ export class OpenAIAdapter implements LLMAdapter {
     readonly provider = 'openai';
     private client: OpenAI;
     private config: LLMConfig;
+    /** P1-7: token 用量上报回调（由 LLMFactory 注入），适配器不再直接依赖 DB */
+    private onUsage?: (usage: TokenUsageEvent) => void;
 
-    constructor(config: LLMConfig) {
+    constructor(config: LLMConfig, onUsage?: (usage: TokenUsageEvent) => void) {
         this.config = config;
-        // Node.js 内置 fetch 不读取 https_proxy 环境变量，
-        // 当系统配置了代理时（常见于需要科学上网的环境），需手动注入 undici dispatcher
-        // （openai v5+ 移除了 httpAgent，改为 fetchOptions.dispatcher）
-        const proxyUrl = process.env.https_proxy || process.env.HTTPS_PROXY
-            || process.env.http_proxy || process.env.HTTP_PROXY;
-        const dispatcher = proxyUrl ? new ProxyAgent(proxyUrl) : undefined;
+        this.onUsage = onUsage;
+        // P1-4: Node.js 内置 fetch 不读取 https_proxy 环境变量。EnvHttpProxyAgent 会自动探测
+        // HTTP_PROXY/HTTPS_PROXY/NO_PROXY（未配置代理时透明直连），因此无需再手写环境变量判断分支。
+        // dispatcher 必须与同一个 undici 包的 fetch 配合使用，否则 Node.js 内置 fetch
+        // 与外部 undici dispatcher 版本不匹配会导致 APIConnectionError（openai v5+ 移除了 httpAgent，改为 fetchOptions.dispatcher）
         this.client = new OpenAI({
             apiKey: config.apiKey,
             baseURL: config.baseUrl,
-            // ProxyAgent 必须与同一个 undici 包的 fetch 配合使用，否则 Node.js 内置 fetch
-            // 与外部 undici dispatcher 版本不匹配会导致 APIConnectionError
-            ...(dispatcher ? {
-                fetch: undiciFetch as unknown as typeof globalThis.fetch,
-                fetchOptions: { dispatcher: dispatcher as never },
-            } : {}),
+            fetch: undiciFetch as unknown as typeof globalThis.fetch,
+            fetchOptions: { dispatcher: getProxyDispatcher() as never },
         });
     }
 
     async chat(messages: Message[], options?: ChatOptions): Promise<Message> {
+        const activeModel = options?.model ?? this.config.model;
+        const maxTokens = options?.maxTokens ?? this.config.maxTokens ?? 4096;
         const response = await this.client.chat.completions.create({
-            model: options?.model ?? this.config.model,
+            model: activeModel,
             messages: this.convertMessages(messages),
             temperature: options?.temperature ?? 0.7,
-            max_tokens: options?.maxTokens ?? this.config.maxTokens ?? 4096,
+            ...(usesMaxCompletionTokens(activeModel)
+                ? { max_completion_tokens: maxTokens }
+                : { max_tokens: maxTokens }),
             tools: options?.tools ? this.convertTools(options.tools) : undefined,
         }, { signal: options?.abortSignal });
 
         const choice = response.choices[0];
         const message = choice.message;
 
-        recordTokenUsage(options?.model ?? this.config.model, response.usage);
+        this._reportUsage(options?.model ?? this.config.model, response.usage);
 
         return {
             role: 'assistant',
@@ -84,11 +83,14 @@ export class OpenAIAdapter implements LLMAdapter {
 
     async *chatStream(messages: Message[], options?: ChatOptions): AsyncGenerator<StreamChunk> {
         const activeModel = options?.model ?? this.config.model;
+        const maxTokens = options?.maxTokens ?? this.config.maxTokens ?? 4096;
         const stream = await this.client.chat.completions.create({
             model: activeModel,
             messages: this.convertMessages(messages),
             temperature: options?.temperature ?? 0.7,
-            max_tokens: options?.maxTokens ?? this.config.maxTokens ?? 4096,
+            ...(usesMaxCompletionTokens(activeModel)
+                ? { max_completion_tokens: maxTokens }
+                : { max_tokens: maxTokens }),
             tools: options?.tools ? this.convertTools(options.tools) : undefined,
             stream: true,
             stream_options: { include_usage: true },
@@ -99,7 +101,7 @@ export class OpenAIAdapter implements LLMAdapter {
         for await (const chunk of stream) {
             // Record usage from the final usage-bearing chunk
             if (chunk.usage) {
-                recordTokenUsage(activeModel, chunk.usage);
+                this._reportUsage(activeModel, chunk.usage);
             }
 
             const delta = chunk.choices[0]?.delta;
@@ -149,6 +151,23 @@ export class OpenAIAdapter implements LLMAdapter {
         });
 
         return response.data.map(d => d.embedding);
+    }
+
+    private _reportUsage(
+        model: string,
+        usage: { prompt_tokens: number; completion_tokens: number; total_tokens: number } | null | undefined
+    ): void {
+        if (!usage || !this.onUsage) return;
+        try {
+            this.onUsage({
+                model,
+                promptTokens: usage.prompt_tokens,
+                completionTokens: usage.completion_tokens,
+                totalTokens: usage.total_tokens,
+            });
+        } catch {
+            // non-fatal — 上报失败不应影响 LLM 调用本身
+        }
     }
 
     private convertMessages(messages: Message[]): OpenAI.ChatCompletionMessageParam[] {

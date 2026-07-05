@@ -1,5 +1,5 @@
 import type { SkillAction, SkillContext } from '../../../src/types.js';
-import { imSessionMapper } from '../../../src/gateway/im-gateway.js';
+import { imSessionMapper } from '#skill-kit/gateway/im-gateway.js';
 
 /**
  * im-bot skill — Agent 主动向 IM 平台发送消息

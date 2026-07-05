@@ -2,7 +2,8 @@ import type { SkillContext } from '../../../src/types.js';
 import { readFileSync, writeFileSync, existsSync } from 'fs';
 import { extname } from 'path';
 import { createRequire } from 'module';
-import { expandPath } from '../../../src/skills/utils.js';
+import { expandPath } from '#skill-kit/skills/utils.js';
+import type { CellValue } from 'exceljs';
 
 // Use createRequire for CJS packages to avoid ESM double-wrapping issues
 const _require = createRequire(import.meta.url);
@@ -118,6 +119,22 @@ export async function read_docx(
     }
 }
 
+/** 将单元格值转为可展示的字符串（日期/公式结果/富文本做特殊处理） */
+function cellToDisplay(value: unknown): string {
+    if (value === null || value === undefined) return '';
+    if (value instanceof Date) return value.toISOString();
+    if (typeof value === 'object') {
+        const v = value as Record<string, unknown>;
+        if ('result' in v) return String(v.result ?? '');
+        if (Array.isArray(v.richText)) {
+            return (v.richText as Array<{ text?: string }>).map(t => t.text ?? '').join('');
+        }
+        if (typeof v.text === 'string') return v.text; // hyperlink 单元格
+        return JSON.stringify(v);
+    }
+    return String(value);
+}
+
 /**
  * 读取 Excel 文件
  */
@@ -133,35 +150,55 @@ export async function read_xlsx(
         throw new Error(`文件不存在: ${filePath}`);
     }
 
-    let XLSX: typeof import('xlsx');
+    let ExcelJS: typeof import('exceljs');
     try {
-        XLSX = _require('xlsx');
+        ExcelJS = _require('exceljs');
     } catch {
-        throw new Error('xlsx 未安装，请运行 npm install xlsx');
+        throw new Error('exceljs 未安装，请运行 npm install exceljs');
     }
 
-    const workbook = XLSX.readFile(filePath);
-    const sheetName = params.sheet || workbook.SheetNames[0];
+    const workbook = new ExcelJS.Workbook();
+    await workbook.xlsx.readFile(filePath);
 
-    if (!workbook.SheetNames.includes(sheetName)) {
-        throw new Error(`工作表 "${sheetName}" 不存在。可用工作表: ${workbook.SheetNames.join(', ')}`);
+    const sheetNames = workbook.worksheets.map(ws => ws.name);
+    const worksheet = params.sheet ? workbook.getWorksheet(params.sheet) : workbook.worksheets[0];
+
+    if (!worksheet) {
+        throw new Error(`工作表 "${params.sheet}" 不存在。可用工作表: ${sheetNames.join(', ')}`);
     }
 
-    const sheet = workbook.Sheets[sheetName];
-    const rows = XLSX.utils.sheet_to_json(sheet, { defval: '' }) as Record<string, unknown>[];
+    const colCount = worksheet.columnCount || worksheet.getRow(1).cellCount;
+    const headers: string[] = [];
+    for (let c = 1; c <= colCount; c++) {
+        const val = worksheet.getRow(1).getCell(c).value;
+        headers.push(val === null || val === undefined ? `col${c}` : cellToDisplay(val));
+    }
+
+    const totalDataRows = Math.max(0, worksheet.rowCount - 1);
+    const rows: Record<string, unknown>[] = [];
+    // 只遍历到 max_rows 即可停止，避免超大表格为丢弃的行做无谓的单元格读取
+    const lastRowToRead = Math.min(worksheet.rowCount, 1 + max_rows);
+    for (let r = 2; r <= lastRowToRead; r++) {
+        const row = worksheet.getRow(r);
+        const obj: Record<string, unknown> = {};
+        headers.forEach((h, idx) => {
+            obj[h] = row.getCell(idx + 1).value;
+        });
+        rows.push(obj);
+    }
+
     const limited = rows.slice(0, max_rows);
 
     if (limited.length === 0) {
-        return `工作表 "${sheetName}" 为空`;
+        return `工作表 "${worksheet.name}" 为空`;
     }
 
     // Format as markdown table
-    const headers = Object.keys(limited[0]);
     const headerRow = `| ${headers.join(' | ')} |`;
     const separator = `| ${headers.map(() => '---').join(' | ')} |`;
-    const dataRows = limited.map(row => `| ${headers.map(h => String(row[h] ?? '')).join(' | ')} |`);
+    const dataRows = limited.map(row => `| ${headers.map(h => cellToDisplay(row[h])).join(' | ')} |`);
 
-    return `工作表: ${sheetName}（${rows.length} 行，显示前 ${limited.length} 行）\n\n${headerRow}\n${separator}\n${dataRows.join('\n')}`;
+    return `工作表: ${worksheet.name}（${totalDataRows} 行，显示前 ${limited.length} 行）\n\n${headerRow}\n${separator}\n${dataRows.join('\n')}`;
 }
 
 /**
@@ -175,17 +212,25 @@ export async function write_xlsx(
     const filePath = expandPath(rawPath);
     ctx.logger.info(`[document-processor] write_xlsx: ${filePath}`);
 
-    let XLSX: typeof import('xlsx');
+    let ExcelJS: typeof import('exceljs');
     try {
-        XLSX = _require('xlsx');
+        ExcelJS = _require('exceljs');
     } catch {
-        throw new Error('xlsx 未安装，请运行 npm install xlsx');
+        throw new Error('exceljs 未安装，请运行 npm install exceljs');
     }
 
-    const worksheet = XLSX.utils.json_to_sheet(data);
-    const workbook = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(workbook, worksheet, sheet);
-    XLSX.writeFile(workbook, filePath);
+    const workbook = new ExcelJS.Workbook();
+    const worksheet = workbook.addWorksheet(sheet);
+
+    if (data.length > 0) {
+        const headers = Object.keys(data[0]);
+        worksheet.addRow(headers);
+        for (const row of data) {
+            worksheet.addRow(headers.map(h => (row[h] ?? '') as CellValue));
+        }
+    }
+
+    await workbook.xlsx.writeFile(filePath);
 
     return `Excel 文件已写入: ${filePath}（${data.length} 行数据）`;
 }

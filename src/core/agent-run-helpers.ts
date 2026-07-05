@@ -14,6 +14,8 @@ import type { ISkillRegistry } from '../skills/registry.js';
 import type { LongTermMemory } from '../memory/long-term.js';
 import type { MemoryRouter } from '../memory/memory-router.js';
 import type { SessionEventStore, EventSelector } from './harness/session-store.js';
+import type { ISkillGenerator } from './skill-generator.js';
+import type { IKnowledgeGraph } from '../memory/knowledge-graph.js';
 import { taskRepository } from './task-repository.js';
 import { DAGExecutor } from './dag-executor.js';
 import { waitForApproval } from './interrupt-coordinator.js';
@@ -32,10 +34,9 @@ export interface BuiltinHandlerDeps {
     memoryRouter?: MemoryRouter;
     sessionStore?: SessionEventStore;
     skillRegistry: ISkillRegistry;
-    skillGenerator?: any;
-    orchestrator?: any;
+    skillGenerator?: ISkillGenerator;
     agentPool?: import('./harness/agent-pool.js').AgentPool;
-    knowledgeGraph?: any;
+    knowledgeGraph?: IKnowledgeGraph;
     skillConfig: Record<string, unknown>;
     llm: import('../types.js').LLMAdapter;
 }
@@ -69,7 +70,7 @@ export async function* handleBuiltinToolCall(
     messages: Message[],
 ): AsyncGenerator<ExecutionStep> {
     const { logger, longTermMemory, memoryGovernor, memoryRouter, sessionStore, skillRegistry,
-        skillGenerator, orchestrator, agentPool, knowledgeGraph, skillConfig, llm } = deps;
+        skillGenerator, agentPool, knowledgeGraph, skillConfig, llm } = deps;
     const toolName = toolCall.function.name;
 
     if (toolName === 'plan_task') {
@@ -120,6 +121,13 @@ export async function* handleBuiltinToolCall(
             resultStr = memories.length > 0 ? memories.map(m => `- ${m.content}`).join('\n') : 'No relevant memories found.';
         }
         yield { type: 'observation', content: resultStr, toolName, toolOutput, timestamp: new Date() };
+        messages.push({ role: 'tool', content: resultStr, toolCallId: toolCall.id });
+
+    } else if (toolName === 'memory_read' && longTermMemory) {
+        const { category, topic } = params as { category: string; topic: string };
+        const fileContent = await longTermMemory.readMemoryFile(category, topic);
+        const resultStr = fileContent ?? `Memory not found: ${category}/${topic}. Check the memory index (MEMORY.md) in your system prompt for the exact category/topic.`;
+        yield { type: 'observation', content: resultStr, toolName, toolOutput: { found: fileContent !== null }, timestamp: new Date() };
         messages.push({ role: 'tool', content: resultStr, toolCallId: toolCall.id });
 
     } else if (toolName === 'dag_create_task') {
@@ -209,14 +217,8 @@ export async function* handleBuiltinToolCall(
                     yield { ...step, delegatedFrom: worker_id, harnessInstanceId: instanceId };
                     if (step.type === 'answer') lastAnswer = step.content ?? '';
                 }
-            } else if (orchestrator) {
-                const delegateCtx = { ...context };
-                for await (const step of orchestrator.delegateStream(worker_id, task, delegateCtx)) {
-                    yield step;
-                    if (step.type === 'answer') lastAnswer = step.content ?? '';
-                }
             } else {
-                throw new Error(`Agent "${worker_id}" not found in AgentPool or Orchestrator`);
+                throw new Error(`Agent "${worker_id}" not found in AgentPool`);
             }
             spanRecorder.endSpan(delegateSpanId, lastAnswer.slice(0, 300));
             messages.push({ role: 'tool', content: lastAnswer || '(no answer)', toolCallId: toolCall.id });
