@@ -222,6 +222,27 @@ export const SESSION_RECALL_TOOL: ToolDefinition = {
     },
 };
 
+export const ASK_USER_TOOL: ToolDefinition = {
+    type: 'function',
+    function: {
+        name: 'ask_user',
+        description: 'Ask the user a clarifying question and wait for their answer. ' +
+            'Use this when required information is missing or ambiguous and you cannot proceed reliably without it. ' +
+            'The conversation pauses until the user responds.',
+        parameters: {
+            type: 'object',
+            properties: {
+                question: { type: 'string', description: 'The question to ask the user (clear and specific)' },
+                options: {
+                    type: 'array', items: { type: 'string' },
+                    description: 'Optional suggested answers the user can pick from',
+                },
+            },
+            required: ['question'],
+        },
+    },
+};
+
 /** All built-in tool names for fast lookup */
 export const BUILTIN_TOOL_NAMES = new Set([
     'plan_task',
@@ -235,6 +256,7 @@ export const BUILTIN_TOOL_NAMES = new Set([
     'delegate_to_agent',
     'knowledge_search',
     'session_recall',
+    'ask_user',
 ]);
 
 // ─────────────────────────────────────────────

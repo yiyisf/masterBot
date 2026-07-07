@@ -333,6 +333,8 @@ export class AgentPool {
                     // 累积流式 token，不逐 token 写入
                     if (!contentTimestamp) contentTimestamp = step.timestamp;
                     contentBuffer += step.content ?? '';
+                    // 定时 flush：长文本生成过程中订阅方（Chat 子任务面板等）可中途看到进展
+                    if (Date.now() - contentTimestamp.getTime() > 500) flushContent();
                 } else {
                     // 非 content 步骤：先刷出已缓冲的内容，再推送当前步骤
                     flushContent();

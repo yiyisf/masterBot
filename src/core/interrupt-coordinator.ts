@@ -23,10 +23,18 @@ export interface InterruptMeta {
 export interface ResolveOptions extends InterruptMeta {
     operator?: string;
     operatorChannel?: string;
+    /** 文本应答内容（ask_user 类 question interrupt） */
+    response?: string;
+}
+
+/** 用户对 interrupt 的应答：布尔决定 + 可选文本回答 */
+export interface UserDecision {
+    approved: boolean;
+    response?: string;
 }
 
 interface PendingInterrupt {
-    resolve: (approved: boolean) => void;
+    resolve: (decision: UserDecision) => void;
     reject: (err: Error) => void;
     meta?: InterruptMeta;
 }
@@ -34,13 +42,32 @@ interface PendingInterrupt {
 const pendingInterrupts = new Map<string, PendingInterrupt>();
 
 /**
+ * Called by the agent — suspends until the user responds (or abortSignal fires).
+ * Returns the full decision including optional text response.
+ */
+export function waitForUserDecision(
+    sessionId: string,
+    meta?: InterruptMeta,
+    abortSignal?: AbortSignal
+): Promise<UserDecision> {
+    return new Promise<UserDecision>((resolve, reject) => {
+        pendingInterrupts.set(sessionId, { resolve, reject, meta });
+        // 父级 abort（如 Chat 断连）时释放挂起的 Promise，避免子 Agent 永久悬挂
+        abortSignal?.addEventListener('abort', () => {
+            if (pendingInterrupts.get(sessionId)?.reject === reject) {
+                pendingInterrupts.delete(sessionId);
+                reject(new Error('Aborted while waiting for user response'));
+            }
+        }, { once: true });
+    });
+}
+
+/**
  * Called by the agent — suspends until the user responds.
  * Returns `true` if approved, `false` if rejected.
  */
-export function waitForApproval(sessionId: string, meta?: InterruptMeta): Promise<boolean> {
-    return new Promise<boolean>((resolve, reject) => {
-        pendingInterrupts.set(sessionId, { resolve, reject, meta });
-    });
+export function waitForApproval(sessionId: string, meta?: InterruptMeta, abortSignal?: AbortSignal): Promise<boolean> {
+    return waitForUserDecision(sessionId, meta, abortSignal).then(d => d.approved);
 }
 
 /**
@@ -51,8 +78,8 @@ export function resolveInterrupt(sessionId: string, approved: boolean, opts?: Re
     const pending = pendingInterrupts.get(sessionId);
     if (!pending) return false;
 
-    // Record approval decision in audit log
-    const meta = opts ?? pending.meta;
+    // Record approval decision in audit log（opts 逐字段覆盖挂起时登记的 meta）
+    const meta = { ...pending.meta, ...opts };
     try {
         auditRepository.recordApproval({
             executionId: meta?.executionId,
@@ -69,7 +96,7 @@ export function resolveInterrupt(sessionId: string, approved: boolean, opts?: Re
         // Non-fatal: audit failure should not block HitL resolution
     }
 
-    pending.resolve(approved);
+    pending.resolve({ approved, response: opts?.response });
     pendingInterrupts.delete(sessionId);
     return true;
 }

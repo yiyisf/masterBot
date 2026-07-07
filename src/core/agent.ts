@@ -30,6 +30,7 @@ import {
     SKILL_GENERATE_TOOL,
     DELEGATE_AGENT_TOOL,
     KNOWLEDGE_SEARCH_TOOL,
+    ASK_USER_TOOL,
     SESSION_RECALL_TOOL,
     BUILTIN_TOOL_NAMES,
     buildMinimalContext,
@@ -240,7 +241,7 @@ export class Agent {
 
         // 合并内置工具和外部技能工具
         const externalTools = await this.skillRegistry.getToolDefinitions();
-        const builtinTools = [PLAN_TOOL_DEF, DAG_CREATE_TASK_TOOL, DAG_GET_STATUS_TOOL, DAG_EXECUTE_TOOL, SKILL_GENERATE_TOOL, DELEGATE_AGENT_TOOL, KNOWLEDGE_SEARCH_TOOL];
+        const builtinTools = [PLAN_TOOL_DEF, DAG_CREATE_TASK_TOOL, DAG_GET_STATUS_TOOL, DAG_EXECUTE_TOOL, SKILL_GENERATE_TOOL, DELEGATE_AGENT_TOOL, KNOWLEDGE_SEARCH_TOOL, ASK_USER_TOOL];
         if (this.longTermMemory) {
             builtinTools.push(MEMORY_REMEMBER_TOOL, MEMORY_RECALL_TOOL, MEMORY_READ_TOOL);
         }

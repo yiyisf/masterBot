@@ -200,6 +200,10 @@ export interface ExecutionStep {
     // interrupt fields
     interruptId?: string;
     interruptReason?: string;
+    /** interrupt 类型：approval=危险操作确认（布尔应答），question=向用户提问（文本应答） */
+    interruptKind?: 'approval' | 'question';
+    /** interrupt 实际挂起的 sessionId（子 Agent 场景下与 Chat sessionId 不同，前端应答必须用它） */
+    sessionId?: string;
     // Phase 21: multi-agent delegation
     delegatedFrom?: string;  // workerId — 标记来自哪个 Worker 的步骤
     traceId?: string;
