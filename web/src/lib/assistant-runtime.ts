@@ -62,6 +62,12 @@ export class MyRuntimeAdapter implements ChatModelAdapter {
             metadata: { custom: { steps: [...currentSteps], assistantMessageId, suggestions } },
         });
 
+        // 渲染节流：content token 高频到达时按最小间隔合并 yield，
+        // 避免每个 token 触发一次全量 re-render 导致大输出场景页面卡死。
+        // 非 content 的结构性步骤（thought/action/observation 等）立即 yield。
+        const YIELD_MIN_INTERVAL_MS = 50;
+        let lastYieldTime = 0;
+
         try {
             const requestBody: Record<string, unknown> = {
                 message: userContent,
@@ -81,7 +87,11 @@ export class MyRuntimeAdapter implements ChatModelAdapter {
             for await (const chunk of streamApi("/api/chat/stream", requestBody, abortSignal)) {
                 if (chunk.type === "content") {
                     currentContent += chunk.content;
-                    yield buildYield();
+                    const now = Date.now();
+                    if (now - lastYieldTime >= YIELD_MIN_INTERVAL_MS) {
+                        lastYieldTime = now;
+                        yield buildYield();
+                    }
 
                 } else if (chunk.type === "thought") {
                     currentSteps.push({ thought: chunk.content });
@@ -104,12 +114,14 @@ export class MyRuntimeAdapter implements ChatModelAdapter {
 
                 } else if (chunk.type === "observation") {
                     if (currentSteps.length > 0) {
-                        // Prefer chunk.content (always set by backend), fall back to chunk.result
-                        currentSteps[currentSteps.length - 1].observation =
-                            chunk.content ?? chunk.result ?? chunk.toolOutput ?? "";
-                        if (chunk.duration !== undefined) {
-                            currentSteps[currentSteps.length - 1].duration = chunk.duration;
-                        }
+                        // 用新对象替换而非原地修改，保证下游 memo 组件能感知变化
+                        const last = currentSteps[currentSteps.length - 1];
+                        currentSteps[currentSteps.length - 1] = {
+                            ...last,
+                            // Prefer chunk.content (always set by backend), fall back to chunk.result
+                            observation: chunk.content ?? chunk.result ?? chunk.toolOutput ?? "",
+                            ...(chunk.duration !== undefined ? { duration: chunk.duration } : {}),
+                        };
                     }
                     yield buildYield();
 
@@ -176,21 +188,24 @@ export class MyRuntimeAdapter implements ChatModelAdapter {
                     // Phase 26: 带 delegatedFrom 标记的子 Agent 步骤
                     // 聚合到子任务分组中
                     const instanceId = chunk.harnessInstanceId;
-                    const existingSubTask = currentSteps.find(
+                    const subTaskIdx = currentSteps.findIndex(
                         (s: any) => s.subTask?.instanceId === instanceId
                     );
-                    if (existingSubTask) {
-                        existingSubTask.subTask.steps.push(chunk);
+                    if (subTaskIdx >= 0) {
+                        // 不可变更新，保证下游 memo 组件能感知变化
+                        const prev = currentSteps[subTaskIdx].subTask;
+                        const nextSubTask = { ...prev, steps: [...prev.steps, chunk] };
                         if (chunk.type === 'answer') {
-                            existingSubTask.subTask.status = 'completed';
-                            existingSubTask.subTask.endTime = new Date();
+                            nextSubTask.status = 'completed';
+                            nextSubTask.endTime = new Date();
                         }
                         if (chunk.type === 'grade_result') {
                             try {
                                 const graderResult = JSON.parse(chunk.content ?? '{}');
-                                existingSubTask.subTask.graderScore = graderResult.overallScore;
+                                nextSubTask.graderScore = graderResult.overallScore;
                             } catch { /* ignore */ }
                         }
+                        currentSteps[subTaskIdx] = { subTask: nextSubTask };
                     } else {
                         currentSteps.push({
                             subTask: {
@@ -210,6 +225,8 @@ export class MyRuntimeAdapter implements ChatModelAdapter {
                     yield buildYield();
                 }
             }
+            // 流结束：flush 节流期间可能被跳过的最后一批 content
+            yield buildYield();
         } catch (error: any) {
             if (error.name === 'AbortError') {
                 console.log('Fetch aborted');

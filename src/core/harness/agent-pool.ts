@@ -16,6 +16,7 @@ import { defaultAgentSpec, type AgentSpec, type AgentInstanceInfo, type AgentLif
 import { agentBus } from './agent-bus.js';
 import { SessionEventStore } from './session-store.js';
 import { CredentialVault } from './credential-vault.js';
+import { sanitizeStepForStream } from '../step-sanitizer.js';
 import type { LLMAdapter, Logger, ExecutionStep } from '../../types.js';
 import type { SkillRegistry } from '../../skills/registry.js';
 import type { LongTermMemory } from '../../memory/long-term.js';
@@ -293,8 +294,10 @@ export class AgentPool {
         };
 
         const pushStep = (step: ExecutionStep) => {
-            steps.push(step);
-            agentBus.publish(`agent.step.${harness.instanceId}`, step, harness.instanceId);
+            // 传输层截断：防止大 observation 撑爆步骤缓存与前端渲染
+            const safe = sanitizeStepForStream(step);
+            steps.push(safe);
+            agentBus.publish(`agent.step.${harness.instanceId}`, safe, harness.instanceId);
         };
 
         try {

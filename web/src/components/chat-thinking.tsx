@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { memo, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { Sparkles, ChevronRight, ListTodo, CheckCircle2, XCircle, Clock, Loader2, BrainCircuit, ChevronDown, Bot, ExternalLink, BarChart2 } from "lucide-react";
 import { Card } from "@/components/ui/card";
@@ -40,9 +40,16 @@ export interface ChatStep {
     grading?: { type: string; content: string };
 }
 
-function ThoughtCard({ thought }: { thought: string }) {
+/**
+ * 超过该长度的步骤文本不再走 ReactMarkdown（remark 解析大文本会阻塞主线程），
+ * 降级为纯文本渲染。
+ */
+const MARKDOWN_RENDER_LIMIT = 2000;
+
+const ThoughtCard = memo(function ThoughtCard({ thought }: { thought: string }) {
     const [expanded, setExpanded] = useState(false);
     const isLong = thought.length > 200;
+    const useMarkdown = thought.length <= MARKDOWN_RENDER_LIMIT;
 
     return (
         <Card className="p-3 text-xs bg-muted/30 border-none shadow-sm">
@@ -51,9 +58,15 @@ function ThoughtCard({ thought }: { thought: string }) {
                 <div className="flex-1 min-w-0">
                     <div className="relative">
                         <div className={`overflow-hidden transition-all ${isLong && !expanded ? 'max-h-[120px]' : ''}`}>
-                            <div className="prose prose-xs dark:prose-invert max-w-none text-muted-foreground/90 leading-relaxed [&_p]:italic [&_p]:my-0.5">
-                                <ReactMarkdown remarkPlugins={[remarkGfm]}>{thought}</ReactMarkdown>
-                            </div>
+                            {useMarkdown ? (
+                                <div className="prose prose-xs dark:prose-invert max-w-none text-muted-foreground/90 leading-relaxed [&_p]:italic [&_p]:my-0.5">
+                                    <ReactMarkdown remarkPlugins={[remarkGfm]}>{thought}</ReactMarkdown>
+                                </div>
+                            ) : (
+                                <div className="text-muted-foreground/90 leading-relaxed italic whitespace-pre-wrap break-words">
+                                    {expanded ? thought : thought.slice(0, MARKDOWN_RENDER_LIMIT)}
+                                </div>
+                            )}
                         </div>
                         {isLong && !expanded && (
                             <div className="absolute inset-x-0 bottom-0 h-10 bg-gradient-to-t from-muted/60 to-transparent pointer-events-none" />
@@ -71,11 +84,42 @@ function ThoughtCard({ thought }: { thought: string }) {
             </div>
         </Card>
     );
-}
+});
+
+/**
+ * Observation 渲染：小文本走 Markdown；大文本降级为纯文本 + 折叠预览，
+ * 避免流式过程中反复解析超大 Markdown 导致页面卡死。
+ */
+const ObservationContent = memo(function ObservationContent({ observation }: { observation: string }) {
+    const [expanded, setExpanded] = useState(false);
+    const useMarkdown = observation.length <= MARKDOWN_RENDER_LIMIT;
+
+    if (useMarkdown) {
+        return (
+            <div className="prose prose-xs dark:prose-invert max-w-none [&_*]:text-inherit [&_pre]:bg-transparent [&_pre]:p-0 [&_code]:bg-transparent [&_p]:my-0.5">
+                <ReactMarkdown remarkPlugins={[remarkGfm]}>{observation}</ReactMarkdown>
+            </div>
+        );
+    }
+
+    return (
+        <div>
+            <pre className="whitespace-pre-wrap break-words font-mono text-[11px] m-0">
+                {expanded ? observation : observation.slice(0, MARKDOWN_RENDER_LIMIT)}
+            </pre>
+            <button
+                onClick={() => setExpanded(v => !v)}
+                className="text-[10px] text-muted-foreground/60 hover:text-muted-foreground mt-1 transition-colors"
+            >
+                {expanded ? '↑ 收起' : `↓ 展开全部（共 ${observation.length} 字符）`}
+            </button>
+        </div>
+    );
+});
 
 // ─── SubTaskPanel: 子 Agent 执行面板（Phase 26）──────────────────────────────
 
-function SubTaskPanel({ subTask }: { subTask: SubTaskInfo }) {
+const SubTaskPanel = memo(function SubTaskPanel({ subTask }: { subTask: SubTaskInfo }) {
     const [collapsed, setCollapsed] = useState(true);
 
     const actionSteps = subTask.steps.filter((s: any) => s.type === 'action' || s.type === 'observation');
@@ -162,7 +206,105 @@ function SubTaskPanel({ subTask }: { subTask: SubTaskInfo }) {
             </AnimatePresence>
         </Card>
     );
-}
+});
+
+// ─── StepBlock: 单个步骤渲染（memo 化，流式追加新步骤时旧步骤不再重渲染）────
+
+const StepBlock = memo(function StepBlock({ step }: { step: ChatStep }) {
+    return (
+        <div className="space-y-2">
+            {/* Thought Bubble */}
+            {step.thought && (
+                <ThoughtCard thought={step.thought} />
+            )}
+
+            {/* Plan Checklist */}
+            {step.plan && step.plan.length > 0 && (
+                <Card className="p-4 text-xs bg-blue-50/50 dark:bg-blue-950/10 border border-blue-100 dark:border-blue-900/30">
+                    <div className="flex items-center gap-2 mb-2 text-blue-600 dark:text-blue-400 font-semibold">
+                        <ListTodo className="w-4 h-4" />
+                        <span>Execution Plan</span>
+                    </div>
+                    <div className="space-y-1.5 pl-1">
+                        {step.plan.map((planStep, pIdx) => (
+                            <div key={pIdx} className="flex gap-2 items-start">
+                                <div className="w-4 h-4 rounded-full bg-blue-100 dark:bg-blue-900/40 text-[10px] flex items-center justify-center text-blue-600 dark:text-blue-400 font-mono shrink-0 mt-0.5">
+                                    {pIdx + 1}
+                                </div>
+                                <span className="text-muted-foreground">{planStep}</span>
+                            </div>
+                        ))}
+                    </div>
+                </Card>
+            )}
+
+            {/* Phase 26: 子 Agent 托管任务面板 */}
+            {step.subTask && (
+                <SubTaskPanel subTask={step.subTask} />
+            )}
+
+            {/* Grader 评分步骤 */}
+            {step.grading && (
+                <Card className="p-2 text-xs bg-amber-50/30 dark:bg-amber-950/10 border border-amber-200 dark:border-amber-800/30">
+                    <div className="flex items-center gap-1.5 text-amber-600 dark:text-amber-400">
+                        <BarChart2 className="w-3.5 h-3.5" />
+                        <span>
+                            {step.grading.type === 'grading'
+                                ? step.grading.content
+                                : (() => {
+                                    try {
+                                        const r = JSON.parse(step.grading.content);
+                                        return `质量评分: ${r.overallScore}/100 — ${r.status}`;
+                                    } catch {
+                                        return step.grading.content;
+                                    }
+                                })()
+                            }
+                        </span>
+                    </div>
+                </Card>
+            )}
+
+            {/* Action & Observation */}
+            {step.action && (
+                <div className="ml-4 pl-4 border-l-2 border-muted space-y-2 py-1">
+                    <div className="flex items-center gap-2 text-xs">
+                        <div className="bg-primary/10 text-primary px-2 py-1 rounded-md font-mono text-[10px] flex items-center gap-1.5">
+                            <ChevronRight className="w-3 h-3" />
+                            {step.action}
+                        </div>
+                        {step.duration !== undefined && (
+                            <span className="text-[10px] text-muted-foreground">
+                                {step.duration >= 1000
+                                    ? `${(step.duration / 1000).toFixed(1)}s`
+                                    : `${step.duration}ms`}
+                            </span>
+                        )}
+                    </div>
+                    {step.observation && (() => {
+                        const isError = isErrorObservation(step.observation);
+                        return (
+                            <div className={cn(
+                                "text-xs p-2 rounded-md overflow-x-auto max-h-[120px] overflow-y-auto",
+                                isError
+                                    ? "text-red-700 dark:text-red-400 bg-red-50 dark:bg-red-950/20 border border-red-200 dark:border-red-900/40"
+                                    : "text-muted-foreground bg-muted/20"
+                            )}>
+                                <div className="flex items-center gap-1.5 mb-1 opacity-80">
+                                    {isError
+                                        ? <><XCircle className="w-3 h-3 text-red-500" /><span>执行失败:</span></>
+                                        : <><CheckCircle2 className="w-3 h-3 text-green-500" /><span>Result:</span></>
+                                    }
+                                </div>
+                                <ObservationContent observation={step.observation} />
+                            </div>
+                        );
+                    })()}
+                </div>
+            )}
+        </div>
+    );
+});
 
 export function ChatThinking({ steps }: { steps: ChatStep[] }) {
     const [collapsed, setCollapsed] = useState(false);
@@ -223,99 +365,7 @@ export function ChatThinking({ steps }: { steps: ChatStep[] }) {
                     >
                         <div className="space-y-3 mt-2">
                             {steps.map((step, idx) => (
-                                <div key={idx} className="space-y-2">
-                                    {/* Thought Bubble */}
-                                    {step.thought && (
-                                        <ThoughtCard thought={step.thought} />
-                                    )}
-
-                                    {/* Plan Checklist */}
-                                    {step.plan && step.plan.length > 0 && (
-                                        <Card className="p-4 text-xs bg-blue-50/50 dark:bg-blue-950/10 border border-blue-100 dark:border-blue-900/30">
-                                            <div className="flex items-center gap-2 mb-2 text-blue-600 dark:text-blue-400 font-semibold">
-                                                <ListTodo className="w-4 h-4" />
-                                                <span>Execution Plan</span>
-                                            </div>
-                                            <div className="space-y-1.5 pl-1">
-                                                {step.plan.map((planStep, pIdx) => (
-                                                    <div key={pIdx} className="flex gap-2 items-start">
-                                                        <div className="w-4 h-4 rounded-full bg-blue-100 dark:bg-blue-900/40 text-[10px] flex items-center justify-center text-blue-600 dark:text-blue-400 font-mono shrink-0 mt-0.5">
-                                                            {pIdx + 1}
-                                                        </div>
-                                                        <span className="text-muted-foreground">{planStep}</span>
-                                                    </div>
-                                                ))}
-                                            </div>
-                                        </Card>
-                                    )}
-
-                                    {/* Phase 26: 子 Agent 托管任务面板 */}
-                                    {step.subTask && (
-                                        <SubTaskPanel subTask={step.subTask} />
-                                    )}
-
-                                    {/* Grader 评分步骤 */}
-                                    {step.grading && (
-                                        <Card className="p-2 text-xs bg-amber-50/30 dark:bg-amber-950/10 border border-amber-200 dark:border-amber-800/30">
-                                            <div className="flex items-center gap-1.5 text-amber-600 dark:text-amber-400">
-                                                <BarChart2 className="w-3.5 h-3.5" />
-                                                <span>
-                                                    {step.grading.type === 'grading'
-                                                        ? step.grading.content
-                                                        : (() => {
-                                                            try {
-                                                                const r = JSON.parse(step.grading.content);
-                                                                return `质量评分: ${r.overallScore}/100 — ${r.status}`;
-                                                            } catch {
-                                                                return step.grading.content;
-                                                            }
-                                                        })()
-                                                    }
-                                                </span>
-                                            </div>
-                                        </Card>
-                                    )}
-
-                                    {/* Action & Observation */}
-                                    {step.action && (
-                                        <div className="ml-4 pl-4 border-l-2 border-muted space-y-2 py-1">
-                                            <div className="flex items-center gap-2 text-xs">
-                                                <div className="bg-primary/10 text-primary px-2 py-1 rounded-md font-mono text-[10px] flex items-center gap-1.5">
-                                                    <ChevronRight className="w-3 h-3" />
-                                                    {step.action}
-                                                </div>
-                                                {step.duration !== undefined && (
-                                                    <span className="text-[10px] text-muted-foreground">
-                                                        {step.duration >= 1000
-                                                            ? `${(step.duration / 1000).toFixed(1)}s`
-                                                            : `${step.duration}ms`}
-                                                    </span>
-                                                )}
-                                            </div>
-                                            {step.observation && (() => {
-                                                const isError = isErrorObservation(step.observation);
-                                                return (
-                                                    <div className={cn(
-                                                        "text-xs p-2 rounded-md overflow-x-auto max-h-[120px] overflow-y-auto",
-                                                        isError
-                                                            ? "text-red-700 dark:text-red-400 bg-red-50 dark:bg-red-950/20 border border-red-200 dark:border-red-900/40"
-                                                            : "text-muted-foreground bg-muted/20"
-                                                    )}>
-                                                        <div className="flex items-center gap-1.5 mb-1 opacity-80">
-                                                            {isError
-                                                                ? <><XCircle className="w-3 h-3 text-red-500" /><span>执行失败:</span></>
-                                                                : <><CheckCircle2 className="w-3 h-3 text-green-500" /><span>Result:</span></>
-                                                            }
-                                                        </div>
-                                                        <div className="prose prose-xs dark:prose-invert max-w-none [&_*]:text-inherit [&_pre]:bg-transparent [&_pre]:p-0 [&_code]:bg-transparent [&_p]:my-0.5">
-                                                            <ReactMarkdown remarkPlugins={[remarkGfm]}>{step.observation}</ReactMarkdown>
-                                                        </div>
-                                                    </div>
-                                                );
-                                            })()}
-                                        </div>
-                                    )}
-                                </div>
+                                <StepBlock key={idx} step={step} />
                             ))}
                         </div>
                     </motion.div>
