@@ -205,6 +205,8 @@ export async function* handleBuiltinToolCall(
                     parentInstanceId: context.traceId,
                     parentSessionId: context.sessionId,
                     trigger: 'chat_delegate',
+                    // 透传父级 abort：Chat 断连时级联终止子 Agent，避免孤儿实例
+                    abortSignal: context.abortSignal,
                 });
                 yield {
                     type: 'meta' as any,

@@ -76,11 +76,16 @@ export async function registerAgentPoolRoutes(app: FastifyInstance, deps: Gatewa
     app.patch<{ Params: { id: string }; Body: { action: string } }>('/api/agents/instances/:id', async (request, reply) => {
         const { id } = request.params;
         const { action } = request.body;
+        let found: boolean;
         switch (action) {
-            case 'pause': pool.pause(id); break;
-            case 'resume': pool.resume(id); break;
-            case 'cancel': pool.cancel(id); break;
+            case 'pause': found = pool.pause(id); break;
+            case 'resume': found = pool.resume(id); break;
+            case 'cancel': found = pool.cancel(id); break;
             default: reply.status(400); return { error: `Unknown action: ${action}` };
+        }
+        if (!found) {
+            reply.status(404);
+            return { error: `Instance not found or not ${action}able: ${id}` };
         }
         return { success: true, action, instanceId: id };
     });

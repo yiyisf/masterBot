@@ -40,6 +40,8 @@ export class AgentPool {
     private steps = new Map<string, ExecutionStep[]>();
     private runningCount = new Map<string, number>();
     private queue: QueueItem[] = [];
+    /** 实例任务描述（供 listInstances 展示，DB 行中同样有存） */
+    private taskById = new Map<string, string>();
 
     constructor(
         private getLLM: (provider?: string) => LLMAdapter,
@@ -241,6 +243,7 @@ export class AgentPool {
 
         this.instances.set(harness.instanceId, harness);
         this.steps.set(harness.instanceId, []);
+        this.taskById.set(harness.instanceId, task);
         this.runningCount.set(spec.id, (this.runningCount.get(spec.id) ?? 0) + 1);
 
         this.logger.info(`[agent-pool] Spawned ${spec.name} instance ${harness.instanceId}`);
@@ -275,6 +278,28 @@ export class AgentPool {
     ): Promise<void> {
         const steps = this.steps.get(harness.instanceId)!;
 
+        // 进度周期性持久化：崩溃/重启后 DB 中不再残留 step_count=0 的 running 行
+        const PERSIST_INTERVAL_MS = 3000;
+        let lastProgressPersist = 0;
+        const persistProgress = () => {
+            const now = Date.now();
+            if (now - lastProgressPersist < PERSIST_INTERVAL_MS) return;
+            lastProgressPersist = now;
+            this.persistInstance({
+                instanceId: harness.instanceId,
+                specId: harness.spec.id,
+                specName: harness.spec.name,
+                state: harness.getState(),
+                task,
+                revision: 0,
+                startedAt: harness.getStartedAt(),
+                completedAt: harness.getCompletedAt(),
+                stepCount: steps.length,
+                lastScore: harness.getLastScore(),
+                error: harness.getError(),
+            });
+        };
+
         // LLM 流式 token 聚合缓冲：将连续的 type='content' chunk 合并为单条步骤，
         // 避免前端展示数百条碎片步骤（每个词一条）。
         let contentBuffer = '';
@@ -291,6 +316,7 @@ export class AgentPool {
             agentBus.publish(`agent.step.${harness.instanceId}`, merged, harness.instanceId);
             contentBuffer = '';
             contentTimestamp = null;
+            persistProgress();
         };
 
         const pushStep = (step: ExecutionStep) => {
@@ -298,6 +324,7 @@ export class AgentPool {
             const safe = sanitizeStepForStream(step);
             steps.push(safe);
             agentBus.publish(`agent.step.${harness.instanceId}`, safe, harness.instanceId);
+            persistProgress();
         };
 
         try {
@@ -445,16 +472,45 @@ export class AgentPool {
     // 生命周期控制
     // ─────────────────────────────────────────────────
 
-    pause(instanceId: string): void {
-        this.instances.get(instanceId)?.pause();
+    /** @returns 是否找到并操作了实例 */
+    pause(instanceId: string): boolean {
+        const harness = this.instances.get(instanceId);
+        if (!harness) return false;
+        harness.pause();
+        return true;
     }
 
-    resume(instanceId: string): void {
-        this.instances.get(instanceId)?.resume();
+    /** @returns 是否找到并操作了实例 */
+    resume(instanceId: string): boolean {
+        const harness = this.instances.get(instanceId);
+        if (!harness) return false;
+        harness.resume();
+        return true;
     }
 
-    cancel(instanceId: string): void {
-        this.instances.get(instanceId)?.cancel();
+    /**
+     * 终止实例。内存实例走 harness.cancel()（abort 底层执行）；
+     * 仅存在于 DB 的残留行（进程重启后）直接更新状态，保证 UI 上可终止。
+     * @returns 是否找到并终止了实例
+     */
+    cancel(instanceId: string): boolean {
+        const harness = this.instances.get(instanceId);
+        if (harness) {
+            harness.cancel();
+            return true;
+        }
+        if (!this.db) return false;
+        try {
+            const result = this.db.prepare(`
+                UPDATE agent_instances
+                SET state = 'cancelled', completed_at = ?, error = COALESCE(error, 'cancelled by user (stale instance)')
+                WHERE id = ? AND state IN ('running', 'queued', 'paused')
+            `).run(Date.now(), instanceId);
+            return Number(result.changes) > 0;
+        } catch (err) {
+            this.logger.warn(`[agent-pool] cancel(${instanceId}) DB update failed: ${(err as Error).message}`);
+            return false;
+        }
     }
 
     // ─────────────────────────────────────────────────
@@ -468,7 +524,7 @@ export class AgentPool {
             specId: h.spec.id,
             specName: h.spec.name,
             state: h.getState(),
-            task: '',
+            task: this.taskById.get(h.instanceId) ?? '',
             revision: 0,
             startedAt: h.getStartedAt(),
             completedAt: h.getCompletedAt(),
@@ -505,6 +561,31 @@ export class AgentPool {
         for (const [id] of done.slice(keepLast)) {
             this.instances.delete(id);
             this.steps.delete(id);
+            this.taskById.delete(id);
+        }
+    }
+
+    /**
+     * 启动时将 DB 中残留的 running/queued/paused 行标记为 failed。
+     * 这些是上次进程退出时未完成的实例（Wake 恢复会创建新实例 ID，
+     * 旧行若不清理会永久显示为"运行中/0 步"且无法终止）。
+     */
+    markOrphanedInstances(): number {
+        if (!this.db) return 0;
+        try {
+            const liveIds = Array.from(this.instances.keys());
+            const placeholders = liveIds.length > 0 ? liveIds.map(() => '?').join(',') : "'__none__'";
+            const result = this.db.prepare(`
+                UPDATE agent_instances
+                SET state = 'failed', completed_at = ?, error = COALESCE(error, 'interrupted by process restart')
+                WHERE state IN ('running', 'queued', 'paused') AND id NOT IN (${placeholders})
+            `).run(Date.now(), ...(liveIds as import('node:sqlite').SQLInputValue[]));
+            const n = Number(result.changes);
+            if (n > 0) this.logger.info(`[agent-pool] Marked ${n} orphaned instance(s) as failed`);
+            return n;
+        } catch (err) {
+            this.logger.warn(`[agent-pool] markOrphanedInstances failed: ${(err as Error).message}`);
+            return 0;
         }
     }
 
@@ -569,6 +650,9 @@ export class AgentPool {
      * 由 index.ts 在服务启动后调用。
      */
     async scanAndWake(): Promise<void> {
+        // 无论是否有 sessionStore，先清理上次进程遗留的孤儿实例行
+        this.markOrphanedInstances();
+
         if (!this.sessionStore) return;
 
         const unfinished = this.sessionStore.getUnfinished();
