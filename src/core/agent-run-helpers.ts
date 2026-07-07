@@ -18,7 +18,7 @@ import type { ISkillGenerator } from './skill-generator.js';
 import type { IKnowledgeGraph } from '../memory/knowledge-graph.js';
 import { taskRepository } from './task-repository.js';
 import { DAGExecutor } from './dag-executor.js';
-import { waitForApproval } from './interrupt-coordinator.js';
+import { waitForApproval, waitForUserDecision } from './interrupt-coordinator.js';
 import { spanRecorder } from './trace.js';
 import { isDangerousToolCall } from './agent-tools.js';
 
@@ -205,6 +205,8 @@ export async function* handleBuiltinToolCall(
                     parentInstanceId: context.traceId,
                     parentSessionId: context.sessionId,
                     trigger: 'chat_delegate',
+                    // 透传父级 abort：Chat 断连时级联终止子 Agent，避免孤儿实例
+                    abortSignal: context.abortSignal,
                 });
                 yield {
                     type: 'meta' as any,
@@ -264,6 +266,41 @@ export async function* handleBuiltinToolCall(
               ).join('\n');
         yield { type: 'observation', content: summary, toolName, timestamp: new Date() };
         messages.push({ role: 'tool', content: summary, toolCallId: toolCall.id });
+
+    } else if (toolName === 'ask_user') {
+        // 向用户提问澄清：挂起等待文本应答（Human-in-the-Loop question interrupt）
+        const { question, options } = params as { question: string; options?: string[] };
+        const interruptId = nanoid();
+        yield {
+            type: 'interrupt',
+            interruptId,
+            interruptKind: 'question',
+            interruptReason: question,
+            toolName,
+            toolInput: params,
+            content: question,
+            // 前端必须用该 sessionId 应答（子 Agent 场景下与 Chat sessionId 不同）
+            sessionId: context.sessionId,
+            timestamp: new Date(),
+        };
+
+        let resultStr: string;
+        try {
+            const decision = await waitForUserDecision(context.sessionId, {
+                interruptId,
+                actionName: toolName,
+                actionParams: JSON.stringify({ question, options }).slice(0, 1000),
+            }, context.abortSignal);
+            resultStr = decision.response?.trim()
+                ? `用户回答: ${decision.response.trim()}`
+                : decision.approved
+                    ? '用户确认了该问题，但未提供文字回答。'
+                    : '用户拒绝回答该问题，请基于已有信息继续或调整方案。';
+        } catch {
+            resultStr = '未能获得用户回答（连接中断），请基于已有信息继续。';
+        }
+        yield { type: 'observation', content: resultStr, toolName, timestamp: new Date() };
+        messages.push({ role: 'tool', content: resultStr, toolCallId: toolCall.id });
     }
 }
 
@@ -321,10 +358,13 @@ export async function* handleExternalToolCalls(
         yield {
             type: 'interrupt',
             interruptId,
+            interruptKind: 'approval',
             interruptReason: firstDangerous.reason!,
             toolName: firstDangerous.toolName,
             toolInput: firstDangerous.params,
             content: `需要确认：${firstDangerous.reason}`,
+            // 前端必须用该 sessionId 应答（子 Agent 场景下与 Chat sessionId 不同）
+            sessionId: context.sessionId,
             timestamp: new Date(),
         };
 
@@ -335,7 +375,7 @@ export async function* handleExternalToolCalls(
                 actionName: firstDangerous.toolName,
                 actionParams: JSON.stringify(firstDangerous.params).slice(0, 1000),
                 dangerReason: firstDangerous.reason ?? undefined,
-            });
+            }, context.abortSignal);
         } catch {
             approved = false;
         }

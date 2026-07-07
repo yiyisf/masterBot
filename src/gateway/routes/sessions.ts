@@ -64,18 +64,19 @@ export async function registerSessionsRoutes(app: FastifyInstance, deps: Gateway
         }
     });
 
-    // Human-in-the-Loop: user approves or rejects a pending interrupt
-    app.post<{ Params: { id: string }; Body: { approved: boolean } }>(
+    // Human-in-the-Loop: user approves/rejects a pending interrupt,
+    // or answers an ask_user question via the optional `response` text
+    app.post<{ Params: { id: string }; Body: { approved: boolean; response?: string } }>(
         '/api/sessions/:id/interrupt-response',
         async (request, reply) => {
             const { id: sessionId } = request.params;
-            const { approved } = request.body;
-            const resolved = resolveInterrupt(sessionId, approved === true);
+            const { approved, response } = request.body;
+            const resolved = resolveInterrupt(sessionId, approved === true, response ? { response } : undefined);
             if (!resolved) {
                 reply.status(404);
                 return { error: 'No pending interrupt for this session' };
             }
-            deps.logger.info(`Interrupt resolved for session ${sessionId}: approved=${approved}`);
+            deps.logger.info(`Interrupt resolved for session ${sessionId}: approved=${approved}${response ? ' (with text response)' : ''}`);
             return { ok: true };
         }
     );

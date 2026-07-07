@@ -55,6 +55,8 @@ export class AgentHarness {
     private startedAt: Date = new Date();
     private completedAt?: Date;
     private error?: string;
+    /** cancel() 时中断底层 LLM 流/工具调用，而非等待下一个步骤边界 */
+    private abortController = new AbortController();
 
     /** U16: 执行引擎（native = 现有 Agent.run()；claude-agent-sdk = Claude Code Harness）*/
     private engine: IAgentEngine;
@@ -144,7 +146,10 @@ export class AgentHarness {
     }
 
     cancel(): void {
+        if (this.state === 'completed' || this.state === 'failed' || this.state === 'cancelled') return;
         this.state = 'cancelled';
+        // 立即中断进行中的 LLM 流式调用/工具执行
+        this.abortController.abort();
     }
 
     // ─────────────────────────────────────────────────
@@ -155,6 +160,8 @@ export class AgentHarness {
         task: string,
         context: HarnessExecutionContext
     ): AsyncGenerator<ExecutionStep> {
+        // 已被取消的实例不允许重新进入运行态
+        if (this.state === 'cancelled') return;
         this.state = 'running';
         this.startedAt = new Date();
 
@@ -203,12 +210,16 @@ export class AgentHarness {
                 revision++;
 
                 // ── 执行 Agent（经 IAgentEngine 抽象，U16）──
+                // 合并外部 abortSignal（如父 Chat 断连）与内部 cancel 信号
+                const effectiveSignal = context.abortSignal
+                    ? AbortSignal.any([context.abortSignal, this.abortController.signal])
+                    : this.abortController.signal;
                 for await (const step of this.engine.run(currentTask, {
                     sessionId: context.sessionId,
                     userId: context.userId,
                     memory: context.memory,
                     history: revision === 1 ? (context.history ?? []) : [],
-                    abortSignal: context.abortSignal,
+                    abortSignal: effectiveSignal,
                     traceId: context.traceId,
                 })) {
                     if (this.getState() === 'cancelled') break;
@@ -334,12 +345,25 @@ ${failedCriteria ? `各维度具体问题：\n${failedCriteria}` : ''}`;
                 yield this.makeStep('meta', `🔄 评分 ${graderResult.overallScore}/100（${statusLabel}），正在根据 Grader 建议进行第 ${revision + 1} 次修订...`);
             }
 
-            this.state = 'completed';
+            // cancelled 状态不可被覆写为 completed
+            if (this.getState() !== 'cancelled') {
+                this.state = 'completed';
+            }
             this.completedAt = new Date();
-            this.emit('session_end', { status: 'completed', instanceId: this.instanceId });
+            this.emit('session_end', { status: this.state, instanceId: this.instanceId });
             await this.hookRunner.run(this.spec.hooks.onComplete ?? [], hookCtx);
 
         } catch (err) {
+            // cancel()/外部 abort 触发的 AbortError 属于正常终止，归为 cancelled 而非 failed
+            const isAbort = this.getState() === 'cancelled'
+                || (err as Error).name === 'AbortError'
+                || /abort/i.test((err as Error).message ?? '');
+            if (isAbort) {
+                this.state = 'cancelled';
+                this.completedAt = new Date();
+                this.emit('session_end', { status: 'cancelled', instanceId: this.instanceId });
+                return;
+            }
             this.state = 'failed';
             this.completedAt = new Date();
             this.error = (err as Error).message;
