@@ -12,6 +12,7 @@ import { Thread } from "@/components/assistant-ui/thread";
 import { MyRuntimeAdapter } from "@/lib/assistant-runtime";
 import { allToolUIs, FallbackToolUI } from "@/components/tool-ui";
 import { Skeleton } from "@/components/ui/skeleton";
+import { fetchApi } from "@/lib/api";
 import { Suspense, useMemo, useState } from "react";
 import { useSearchParams } from "next/navigation";
 
@@ -73,8 +74,32 @@ function ChatSession({ sessionId }: { sessionId?: string }) {
         new SimpleImageAttachmentAdapter(),
         new SimpleTextAttachmentAdapter(),
     ]), []);
+    // 点赞/点踩 → 后端反馈接口（messageId 由 runtime 从 meta chunk 记录到 metadata.custom）
+    const feedbackAdapter = useMemo(() => ({
+        submit({ message, type }: { message: { metadata?: { custom?: Record<string, unknown> } }; type: "positive" | "negative" }) {
+            const messageId = message.metadata?.custom?.assistantMessageId;
+            if (!messageId) return;
+            fetchApi('/api/feedback', {
+                method: 'POST',
+                body: JSON.stringify({ messageId, sessionId: sessionId ?? '', rating: type }),
+            }).catch((err) => console.error('Feedback failed:', err));
+        },
+    }), [sessionId]);
+    // 后端 suggestions chunk → 官方 ThreadFollowupSuggestions（thread.suggestions 状态）
+    const suggestionAdapter = useMemo(() => ({
+        async generate({ messages }: { messages: readonly { metadata?: { custom?: Record<string, unknown> } }[] }) {
+            const last = messages[messages.length - 1];
+            const items = last?.metadata?.custom?.suggestions;
+            if (!Array.isArray(items)) return [];
+            return items.map((prompt) => ({ prompt: String(prompt) }));
+        },
+    }), []);
     const runtime = useLocalRuntime(adapter, {
-        adapters: { attachments: attachmentAdapter },
+        adapters: {
+            attachments: attachmentAdapter,
+            feedback: feedbackAdapter,
+            suggestion: suggestionAdapter,
+        },
     });
 
     const handleLoaded = useMemo(() => () => setHistoryLoaded(true), []);

@@ -37,6 +37,7 @@ import {
   ThreadPrimitive,
   type ToolCallMessagePartComponent,
   useAuiState,
+  useComposerRuntime,
 } from "@assistant-ui/react";
 import {
   ArrowDownIcon,
@@ -51,14 +52,20 @@ import {
   PencilIcon,
   RefreshCwIcon,
   SquareIcon,
+  ThumbsDownIcon,
+  ThumbsUpIcon,
 } from "lucide-react";
 import {
   createContext,
+  useCallback,
   useContext,
+  useState,
   type ComponentType,
   type FC,
   type PropsWithChildren,
 } from "react";
+import { useRouter } from "next/navigation";
+import { SlashPanel, type SlashCommand } from "@/components/chat/slash-panel";
 
 export type ThreadGroupPart = MessagePrimitive.GroupedParts.GroupPart;
 
@@ -179,7 +186,7 @@ const ThreadScrollToBottom: FC = () => {
   return (
     <ThreadPrimitive.ScrollToBottom asChild>
       <TooltipIconButton
-        tooltip="Scroll to bottom"
+        tooltip="回到底部"
         variant="outline"
         className="aui-thread-scroll-to-bottom dark:border-border dark:bg-background dark:hover:bg-accent absolute -top-12 z-10 self-center rounded-full p-4 disabled:invisible"
       >
@@ -193,7 +200,7 @@ const ThreadWelcome: FC = () => {
   return (
     <div className="aui-thread-welcome-root mb-6 flex flex-col items-center px-4 text-center">
       <h1 className="aui-thread-welcome-message-inner fade-in slide-in-from-bottom-1 animate-in fill-mode-both text-2xl font-semibold duration-200">
-        How can I help you today?
+        今天需要我帮您做什么？
       </h1>
     </div>
   );
@@ -226,8 +233,43 @@ const ThreadSuggestionItem: FC = () => {
 };
 
 const Composer: FC = () => {
+  const router = useRouter();
+  const composerRuntime = useComposerRuntime();
+  const [slashQuery, setSlashQuery] = useState<string | null>(null);
+
+  // 输入以 "/" 开头时弹出斜杠命令面板
+  const handleChange = useCallback(
+    (e: React.ChangeEvent<HTMLTextAreaElement>) => {
+      const val = e.target.value;
+      if (val === "/" || (val.startsWith("/") && !val.includes("\n") && val.length < 20)) {
+        setSlashQuery(val.slice(1));
+      } else {
+        setSlashQuery(null);
+      }
+    },
+    [],
+  );
+
+  const handleSelect = useCallback(
+    (cmd: SlashCommand) => {
+      setSlashQuery(null);
+      if (cmd.href) {
+        composerRuntime.setText("");
+        router.push(cmd.href);
+      } else if (cmd.text !== undefined) {
+        composerRuntime.setText(cmd.text);
+      }
+    },
+    [composerRuntime, router],
+  );
+
+  const handleClose = useCallback(() => setSlashQuery(null), []);
+
   return (
     <ComposerPrimitive.Root className="aui-composer-root relative flex w-full flex-col">
+      {slashQuery !== null && (
+        <SlashPanel query={slashQuery} onSelect={handleSelect} onClose={handleClose} />
+      )}
       <ComposerPrimitive.AttachmentDropzone asChild>
         <div
           data-slot="aui_composer-shell"
@@ -235,12 +277,13 @@ const Composer: FC = () => {
         >
           <ComposerAttachments />
           <ComposerPrimitive.Input
-            placeholder="Send a message..."
+            placeholder="输入消息… 按 / 打开命令"
             className="aui-composer-input caret-primary placeholder:text-muted-foreground/80 max-h-32 min-h-10 w-full resize-none bg-transparent px-2.5 py-1 text-base outline-none"
             rows={1}
             autoFocus
             enterKeyHint="send"
             aria-label="Message input"
+            onChange={handleChange}
           />
           <ComposerAction />
         </div>
@@ -258,7 +301,7 @@ const ComposerAction: FC = () => {
           <AuiIf condition={(s) => s.composer.dictation == null}>
             <ComposerPrimitive.Dictate asChild>
               <TooltipIconButton
-                tooltip="Voice input"
+                tooltip="语音输入"
                 side="bottom"
                 type="button"
                 variant="ghost"
@@ -273,7 +316,7 @@ const ComposerAction: FC = () => {
           <AuiIf condition={(s) => s.composer.dictation != null}>
             <ComposerPrimitive.StopDictation asChild>
               <TooltipIconButton
-                tooltip="Stop dictation"
+                tooltip="停止语音"
                 side="bottom"
                 type="button"
                 variant="ghost"
@@ -289,7 +332,7 @@ const ComposerAction: FC = () => {
         <AuiIf condition={(s) => !s.thread.isRunning}>
           <ComposerPrimitive.Send asChild>
             <TooltipIconButton
-              tooltip="Send message"
+              tooltip="发送"
               side="bottom"
               type="button"
               variant="default"
@@ -308,7 +351,7 @@ const ComposerAction: FC = () => {
               variant="default"
               size="icon"
               className="aui-composer-cancel size-7 rounded-full"
-              aria-label="Stop generating"
+              aria-label="终止生成"
             >
               <SquareIcon className="aui-composer-cancel-icon size-3.5 fill-current" />
             </Button>
@@ -438,7 +481,7 @@ const AssistantActionBar: FC = () => {
       className="aui-assistant-action-bar-root text-muted-foreground animate-in fade-in col-start-3 row-start-2 -ms-1 flex gap-1 duration-200"
     >
       <ActionBarPrimitive.Copy asChild>
-        <TooltipIconButton tooltip="Copy">
+        <TooltipIconButton tooltip="复制">
           <AuiIf condition={(s) => s.message.isCopied}>
             <CheckIcon className="animate-in zoom-in-50 fade-in duration-200 ease-out" />
           </AuiIf>
@@ -448,14 +491,38 @@ const AssistantActionBar: FC = () => {
         </TooltipIconButton>
       </ActionBarPrimitive.Copy>
       <ActionBarPrimitive.Reload asChild>
-        <TooltipIconButton tooltip="Refresh">
+        <TooltipIconButton tooltip="重新生成">
           <RefreshCwIcon />
         </TooltipIconButton>
       </ActionBarPrimitive.Reload>
+      <ActionBarPrimitive.FeedbackPositive asChild>
+        <TooltipIconButton
+          tooltip="有帮助"
+          className={cn(
+            useAuiState(
+              (s) => s.message.metadata.submittedFeedback?.type === "positive",
+            ) && "text-green-500 bg-green-500/10",
+          )}
+        >
+          <ThumbsUpIcon />
+        </TooltipIconButton>
+      </ActionBarPrimitive.FeedbackPositive>
+      <ActionBarPrimitive.FeedbackNegative asChild>
+        <TooltipIconButton
+          tooltip="没帮助"
+          className={cn(
+            useAuiState(
+              (s) => s.message.metadata.submittedFeedback?.type === "negative",
+            ) && "text-red-500 bg-red-500/10",
+          )}
+        >
+          <ThumbsDownIcon />
+        </TooltipIconButton>
+      </ActionBarPrimitive.FeedbackNegative>
       <ActionBarMorePrimitive.Root>
         <ActionBarMorePrimitive.Trigger asChild>
           <TooltipIconButton
-            tooltip="More"
+            tooltip="更多"
             className="data-[state=open]:bg-accent"
           >
             <MoreHorizontalIcon />
@@ -470,7 +537,7 @@ const AssistantActionBar: FC = () => {
           <ActionBarPrimitive.ExportMarkdown asChild>
             <ActionBarMorePrimitive.Item className="aui-action-bar-more-item hover:bg-accent hover:text-accent-foreground focus:bg-accent focus:text-accent-foreground flex cursor-pointer items-center gap-2 rounded-lg px-2.5 py-1.5 text-sm outline-none select-none">
               <DownloadIcon className="size-4" />
-              Export as Markdown
+              导出为 Markdown
             </ActionBarMorePrimitive.Item>
           </ActionBarPrimitive.ExportMarkdown>
         </ActionBarMorePrimitive.Content>
@@ -513,7 +580,7 @@ const UserActionBar: FC = () => {
       className="aui-user-action-bar-root flex flex-col items-end"
     >
       <ActionBarPrimitive.Edit asChild>
-        <TooltipIconButton tooltip="Edit" className="aui-user-action-edit">
+        <TooltipIconButton tooltip="编辑" className="aui-user-action-edit">
           <PencilIcon />
         </TooltipIconButton>
       </ActionBarPrimitive.Edit>
@@ -539,12 +606,12 @@ const EditComposer: FC = () => {
               size="sm"
               className="h-8 rounded-full px-3.5"
             >
-              Cancel
+              取消
             </Button>
           </ComposerPrimitive.Cancel>
           <ComposerPrimitive.Send asChild>
             <Button size="sm" className="h-8 rounded-full px-3.5">
-              Update
+              重新发送
             </Button>
           </ComposerPrimitive.Send>
         </div>
@@ -567,7 +634,7 @@ const BranchPicker: FC<BranchPickerPrimitive.Root.Props> = ({
       {...rest}
     >
       <BranchPickerPrimitive.Previous asChild>
-        <TooltipIconButton tooltip="Previous">
+        <TooltipIconButton tooltip="上一个分支">
           <ChevronLeftIcon />
         </TooltipIconButton>
       </BranchPickerPrimitive.Previous>
@@ -575,7 +642,7 @@ const BranchPicker: FC<BranchPickerPrimitive.Root.Props> = ({
         <BranchPickerPrimitive.Number /> / <BranchPickerPrimitive.Count />
       </span>
       <BranchPickerPrimitive.Next asChild>
-        <TooltipIconButton tooltip="Next">
+        <TooltipIconButton tooltip="下一个分支">
           <ChevronRightIcon />
         </TooltipIconButton>
       </BranchPickerPrimitive.Next>
