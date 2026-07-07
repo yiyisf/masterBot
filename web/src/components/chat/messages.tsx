@@ -14,7 +14,7 @@ import { useSearchParams } from "next/navigation";
 import { ChatThinking } from "@/components/chat-thinking";
 import { DagView } from "@/components/dag-view";
 import { ConductorWorkflowCard } from "@/components/conductor-workflow-dialog";
-import { MarkdownText } from "./code-block";
+import { MarkdownText } from "@/components/assistant-ui/markdown-text";
 import { CopyButton, ReloadButton, FeedbackButton, SuggestionButtons, InlineCopyButton } from "./message-actions";
 import { InterruptCard } from "./interrupt-card";
 
