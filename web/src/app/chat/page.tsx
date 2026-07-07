@@ -15,7 +15,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Suspense, useMemo, useState } from "react";
 import { useSearchParams } from "next/navigation";
 
-import { CustomAssistantMessage } from "@/components/chat/messages";
+import { allDataUIs } from "@/components/chat/data-renderers";
 import { ThreadHydrator, PromptAutoSender } from "@/components/chat/thread-utils";
 import { CheckpointPanel } from "@/components/chat/checkpoint-panel";
 
@@ -86,6 +86,10 @@ function ChatSession({ sessionId }: { sessionId?: string }) {
                 {allToolUIs.map((ToolUI, i) => (
                     <ToolUI key={i} />
                 ))}
+                {/* 注册 plan/tasks/subTask/grading/workflow/interrupt 等 data part 渲染器 */}
+                {allDataUIs.map((DataUI, i) => (
+                    <DataUI key={`data-${i}`} />
+                ))}
 
                 {!historyLoaded && sessionId && (
                     <ThreadHydrator sessionId={sessionId} onLoaded={handleLoaded} />
@@ -127,7 +131,6 @@ function ChatSession({ sessionId }: { sessionId?: string }) {
 
                     <Thread
                         components={{
-                            AssistantMessage: CustomAssistantMessage,
                             Welcome: ChatWelcome,
                             ToolFallback: FallbackToolUI,
                         }}

@@ -1,9 +1,39 @@
-import { ChatModelAdapter, ChatModelRunOptions, ChatModelRunResult } from "@assistant-ui/react";
+import {
+    ChatModelAdapter,
+    ChatModelRunOptions,
+    ChatModelRunResult,
+    ThreadAssistantMessagePart,
+} from "@assistant-ui/react";
 import { streamApi } from "./api";
 import { nanoid } from "nanoid";
 
+/** 子 Agent 托管任务的聚合状态（data part: name="subTask"） */
+export interface SubTaskData {
+    delegatedFrom: string;
+    instanceId: string;
+    steps: Array<Record<string, unknown>>;
+    status: 'running' | 'completed' | 'failed';
+    startTime: number;
+    endTime?: number;
+    graderScore?: number;
+}
+
+/** DAG 任务事件的聚合状态（data part: name="tasks"） */
+export interface TasksData {
+    events: Array<{ type: string; taskId?: string; content: string }>;
+}
+
 /**
- * Custom Runtime adapter connecting to backend SSE service
+ * Custom Runtime adapter connecting to backend SSE service.
+ *
+ * 后端 SSE chunk 映射为 assistant-ui 标准 message parts：
+ * - thought → reasoning part（官方 Reasoning/GroupedParts 折叠渲染）
+ * - action/observation → tool-call part（observation 回填 result，
+ *   具名工具走 tool-ui.tsx 注册的富 UI，其余走 ToolFallback）
+ * - plan/tasks/subTask/grading/workflow/contextCompressed/interrupt →
+ *   data part（chat/data-renderers.tsx 注册的 renderer 内联渲染）
+ * - content/answer → text part
+ * meta/suggestions 保留在 metadata.custom。
  */
 export class MyRuntimeAdapter implements ChatModelAdapter {
     private sessionId: string;
@@ -39,28 +69,35 @@ export class MyRuntimeAdapter implements ChatModelAdapter {
             return { type: "text" as const, text: p.text ?? "" };
         }) : undefined;
 
-        // Transform history for backend
+        // Transform history for backend（工具调用/思考过程不回传，正文优先取 text part）
         const history = messages.slice(0, -1).map(m => ({
             role: m.role,
-            content: m.content[0]?.type === "text" ? m.content[0].text : "",
+            content: (m.content.find((c: any) => c.type === "text") as any)?.text ?? "",
         }));
 
-        let currentContent = "";
-        const currentSteps: any[] = [];
+        // 按到达顺序累积的 message parts。每次 yield 全量替换（assistant-ui 协议要求）。
+        const parts: ThreadAssistantMessagePart[] = [];
+        let textIdx = -1;          // 流式正文 text part 的位置
+        let pendingToolIdx = -1;   // 最近一个等待 observation 回填的 tool-call
+        let tasksIdx = -1;         // DAG 任务事件聚合 data part 的位置
+        const subTaskIdxByInstance = new Map<string, number>();
         let assistantMessageId: string | null = null;
         let suggestions: string[] | null = null;
 
-        // Helper: build a yield payload with current state
-        // NOTE: content array only contains text to avoid confusing @assistant-ui/react's
-        // tool-call state machine, which prevents real-time text streaming when
-        // tool-call/tool-result parts are present. Tool display is handled by ChatThinking
-        // via metadata.custom.steps.
         const buildYield = (): ChatModelRunResult => ({
-            content: currentContent
-                ? [{ type: "text" as const, text: currentContent }]
-                : [],
-            metadata: { custom: { steps: [...currentSteps], assistantMessageId, suggestions } },
+            content: [...parts],
+            metadata: { custom: { assistantMessageId, suggestions } },
         });
+
+        const appendContent = (delta: string) => {
+            if (textIdx < 0) {
+                textIdx = parts.length;
+                parts.push({ type: "text", text: delta });
+            } else {
+                const prev = parts[textIdx] as { type: "text"; text: string };
+                parts[textIdx] = { type: "text", text: prev.text + delta };
+            }
+        };
 
         // 渲染节流：content token 高频到达时按最小间隔合并 yield，
         // 避免每个 token 触发一次全量 re-render 导致大输出场景页面卡死。
@@ -88,8 +125,10 @@ export class MyRuntimeAdapter implements ChatModelAdapter {
                 if (chunk.type === "interrupt") {
                     // Human-in-the-Loop: agent 挂起等待用户应答（危险操作确认 / ask_user 提问）。
                     // 必须排在 delegatedFrom 之前：子 Agent 的 interrupt 也要弹出顶层应答卡片。
-                    currentSteps.push({
-                        interrupt: {
+                    parts.push({
+                        type: "data",
+                        name: "interrupt",
+                        data: {
                             id: chunk.interruptId,
                             tool: chunk.toolName,
                             args: chunk.toolInput ?? {},
@@ -99,49 +138,50 @@ export class MyRuntimeAdapter implements ChatModelAdapter {
                             kind: chunk.interruptKind ?? 'approval',
                             options: chunk.toolInput?.options,
                             resolved: null, // null = pending user response
-                        }
+                        },
                     });
                     yield buildYield();
 
                 } else if (chunk.delegatedFrom && chunk.harnessInstanceId) {
-                    // 子 Agent 步骤：聚合到子任务分组。
+                    // 子 Agent 步骤：聚合到子任务 data part。
                     // 必须排在 content/thought/action 等类型分支之前，
                     // 否则子 Agent 步骤会被父级分支拦截（content 混入父回答正文、
                     // thought/action/observation 混入父步骤列表），子任务面板只剩 answer。
-                    const instanceId = chunk.harnessInstanceId;
-                    const subTaskIdx = currentSteps.findIndex(
-                        (s: any) => s.subTask?.instanceId === instanceId
-                    );
-                    if (subTaskIdx >= 0) {
+                    const instanceId = chunk.harnessInstanceId as string;
+                    const idx = subTaskIdxByInstance.get(instanceId) ?? -1;
+                    if (idx >= 0) {
                         // 不可变更新，保证下游 memo 组件能感知变化
-                        const prev = currentSteps[subTaskIdx].subTask;
-                        const nextSubTask = { ...prev, steps: [...prev.steps, chunk] };
+                        const prev = (parts[idx] as { type: "data"; name: string; data: SubTaskData }).data;
+                        const next: SubTaskData = { ...prev, steps: [...prev.steps, chunk] };
                         if (chunk.type === 'answer') {
-                            nextSubTask.status = 'completed';
-                            nextSubTask.endTime = new Date();
+                            next.status = 'completed';
+                            next.endTime = Date.now();
                         }
                         if (chunk.type === 'grade_result') {
                             try {
                                 const graderResult = JSON.parse(chunk.content ?? '{}');
-                                nextSubTask.graderScore = graderResult.overallScore;
+                                next.graderScore = graderResult.overallScore;
                             } catch { /* ignore */ }
                         }
-                        currentSteps[subTaskIdx] = { subTask: nextSubTask };
+                        parts[idx] = { type: "data", name: "subTask", data: next };
                     } else {
-                        currentSteps.push({
-                            subTask: {
+                        subTaskIdxByInstance.set(instanceId, parts.length);
+                        parts.push({
+                            type: "data",
+                            name: "subTask",
+                            data: {
                                 delegatedFrom: chunk.delegatedFrom,
                                 instanceId,
                                 steps: [chunk],
                                 status: 'running',
-                                startTime: new Date(),
-                            }
+                                startTime: Date.now(),
+                            } satisfies SubTaskData,
                         });
                     }
                     yield buildYield();
 
                 } else if (chunk.type === "content") {
-                    currentContent += chunk.content;
+                    appendContent(chunk.content);
                     const now = Date.now();
                     if (now - lastYieldTime >= YIELD_MIN_INTERVAL_MS) {
                         lastYieldTime = now;
@@ -149,39 +189,56 @@ export class MyRuntimeAdapter implements ChatModelAdapter {
                     }
 
                 } else if (chunk.type === "thought") {
-                    currentSteps.push({ thought: chunk.content });
+                    parts.push({ type: "reasoning", text: chunk.content });
                     yield buildYield();
 
                 } else if (chunk.type === "plan") {
                     try {
                         const planSteps = typeof chunk.content === 'string' ? JSON.parse(chunk.content) : chunk.content;
-                        currentSteps.push({ plan: planSteps });
-                    } catch (e) {
+                        parts.push({ type: "data", name: "plan", data: planSteps });
+                    } catch {
                         console.warn("Failed to parse plan:", chunk.content);
-                        currentSteps.push({ plan: ["Detail hidden"] });
+                        parts.push({ type: "data", name: "plan", data: ["Detail hidden"] });
                     }
                     yield buildYield();
 
                 } else if (chunk.type === "action") {
-                    // Use toolName as the action label (chunk.tool doesn't exist on the payload)
-                    currentSteps.push({ action: chunk.toolName || chunk.content || "tool" });
+                    const args = chunk.toolInput ?? {};
+                    pendingToolIdx = parts.length;
+                    parts.push({
+                        type: "tool-call",
+                        toolCallId: nanoid(),
+                        toolName: chunk.toolName || "tool",
+                        args,
+                        argsText: JSON.stringify(args),
+                    });
                     yield buildYield();
 
                 } else if (chunk.type === "observation") {
-                    if (currentSteps.length > 0) {
+                    if (pendingToolIdx >= 0) {
                         // 用新对象替换而非原地修改，保证下游 memo 组件能感知变化
-                        const last = currentSteps[currentSteps.length - 1];
-                        currentSteps[currentSteps.length - 1] = {
-                            ...last,
-                            // Prefer chunk.content (always set by backend), fall back to chunk.result
-                            observation: chunk.content ?? chunk.result ?? chunk.toolOutput ?? "",
-                            ...(chunk.duration !== undefined ? { duration: chunk.duration } : {}),
+                        const prev = parts[pendingToolIdx] as Extract<ThreadAssistantMessagePart, { type: "tool-call" }>;
+                        const result = chunk.content ?? chunk.result ?? chunk.toolOutput ?? "";
+                        parts[pendingToolIdx] = {
+                            ...prev,
+                            result,
+                            ...(chunk.duration !== undefined
+                                ? { artifact: { duration: chunk.duration } }
+                                : {}),
                         };
+                        pendingToolIdx = -1;
                     }
                     yield buildYield();
 
                 } else if (chunk.type === "task_created" || chunk.type === "task_completed" || chunk.type === "task_failed") {
-                    currentSteps.push({ task: { type: chunk.type, taskId: chunk.taskId, content: chunk.content } });
+                    const event = { type: chunk.type, taskId: chunk.taskId, content: chunk.content };
+                    if (tasksIdx < 0) {
+                        tasksIdx = parts.length;
+                        parts.push({ type: "data", name: "tasks", data: { events: [event] } satisfies TasksData });
+                    } else {
+                        const prev = (parts[tasksIdx] as { type: "data"; name: string; data: TasksData }).data;
+                        parts[tasksIdx] = { type: "data", name: "tasks", data: { events: [...prev.events, event] } };
+                    }
                     yield buildYield();
 
                 } else if (chunk.type === "meta") {
@@ -196,39 +253,47 @@ export class MyRuntimeAdapter implements ChatModelAdapter {
 
                 } else if (chunk.type === "context_compressed") {
                     // 上下文压缩通知
-                    currentSteps.push({
-                        contextCompressed: {
+                    parts.push({
+                        type: "data",
+                        name: "contextCompressed",
+                        data: {
                             droppedCount: chunk.droppedCount ?? 0,
                             summary: chunk.content ?? '对话历史已压缩',
-                        }
+                        },
                     });
                     yield buildYield();
 
                 } else if (chunk.type === "workflow_generated") {
-                    currentSteps.push({
-                        workflow_generated: {
+                    parts.push({
+                        type: "data",
+                        name: "workflow",
+                        data: {
                             workflow: chunk.workflow,
                             subWorkflows: chunk.subWorkflows,
                             validation: chunk.validation,
                             allValid: chunk.allValid,
                             explanation: chunk.explanation,
-                        }
+                        },
                     });
                     yield buildYield();
 
                 } else if (chunk.type === "grading" || chunk.type === "grade_result") {
                     // Harness Grader 评分步骤
-                    currentSteps.push({
-                        grading: {
-                            type: chunk.type,
-                            content: chunk.content,
-                        }
+                    parts.push({
+                        type: "data",
+                        name: "grading",
+                        data: { type: chunk.type, content: chunk.content },
                     });
                     yield buildYield();
 
                 } else if (chunk.type === "answer") {
                     // Final answer replaces any partial content chunks
-                    currentContent = chunk.content;
+                    if (textIdx < 0) {
+                        textIdx = parts.length;
+                        parts.push({ type: "text", text: chunk.content });
+                    } else {
+                        parts[textIdx] = { type: "text", text: chunk.content };
+                    }
                     yield buildYield();
                 }
             }
@@ -240,7 +305,7 @@ export class MyRuntimeAdapter implements ChatModelAdapter {
             } else {
                 console.error("MyRuntimeAdapter Error:", error);
                 yield {
-                    content: [{ type: "text", text: "抱歉，发生了错误。请检查后端连接。" }],
+                    content: [...parts, { type: "text", text: "抱歉，发生了错误。请检查后端连接。" }],
                 };
             }
         }
