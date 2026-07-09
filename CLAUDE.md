@@ -72,9 +72,11 @@ npm run lint         # ESLint
 
 ### 前端（`web/src/`）
 
-基于 Next.js 16（App Router）、React 19、Tailwind CSS 4、shadcn/ui 组件库。
+基于 Next.js 16（App Router）、React 19、Tailwind CSS 4、shadcn/ui 组件库、@assistant-ui/react 0.14。
 
-**核心集成**：`web/src/lib/assistant-runtime.ts` — 为 @assistant-ui/react 实现的自定义 `ChatModelAdapter`，消费后端 SSE 流（`/api/chat/stream`）。处理 content、thought、plan、action、observation、answer、task_created、task_completed、task_failed 等 chunk 类型。
+**核心集成**：`web/src/lib/assistant-runtime.ts` — 为 @assistant-ui/react 实现的自定义 `ChatModelAdapter`，消费后端 SSE 流（`/api/chat/stream`），把 chunk 映射为标准 message parts：thought→reasoning、action/observation→tool-call（result 回填）、plan/tasks/subTask/grading/workflow/contextCompressed/interrupt→data part、content/answer→text（50ms 节流）。
+
+**聊天 UI**：`web/src/components/assistant-ui/` 存放官方 shadcn registry 组件（thread/attachment/reasoning/tool-group/markdown-text 等，可直接修改定制）；`web/src/components/chat/data-renderers.tsx` 用 `makeAssistantDataUI` 注册各 data part 渲染器；`web/src/components/tool-ui.tsx` 用 `makeAssistantToolUI` 注册具名工具富 UI。
 
 **页面**（`web/src/app/`）：chat（聊天）、skills（技能）、memory（记忆）、settings（设置）、dashboard（首页）。
 

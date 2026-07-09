@@ -1,5 +1,6 @@
 @import "tailwindcss";
 @import "tw-animate-css";
+@import "tw-shimmer";
 
 @custom-variant dark (&:is(.dark *));
 
@@ -123,23 +124,4 @@
   body {
     @apply bg-background text-foreground;
   }
-}
-
-/* Assistant UI Claude Style Overrides */
-.aui-thread--composer {
-  max-width: 50rem !important;
-  width: 100% !important;
-  margin-left: auto !important;
-  margin-right: auto !important;
-}
-
-/* Ensure message content doesn't break layout */
-.aui-message--content {
-  max-width: none !important;
-}
-
-/* Code block: always use dark background for readability */
-.aui-md-pre {
-  background-color: #282c34 !important;
-  color: #abb2bf !important;
 }
