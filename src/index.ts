@@ -22,6 +22,8 @@ import { initMemoryRouter } from './memory/memory-router.js';
 import { SoulLoader } from './core/soul-loader.js';
 import { AgentPool, SessionEventStore, CredentialVault } from './core/harness/agent-pool.js';
 import { CheckpointManager } from './core/checkpoint-manager.js';
+import { syncSourceRegistry } from './core/requirement-sync.js';
+import { GitHubSyncSource } from './core/requirement-sync-github.js';
 
 async function main() {
     // U4: 在所有其他初始化之前启动 OTel（仅当 OTEL_EXPORTER_OTLP_ENDPOINT 配置时生效）
@@ -85,6 +87,10 @@ async function main() {
         await skillRegistry.registerSource(source);
         logger.info(`Connector "${source.name}" loaded`);
     }
+
+    // 研发流程管理模块：默认 GitHub 需求同步适配器注册（spec §2.5）
+    syncSourceRegistry.register(new GitHubSyncSource());
+    logger.info('Requirement sync source "github" registered');
 
     const getLlm = () => {
         const provider = config.models.default;

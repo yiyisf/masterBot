@@ -17,6 +17,10 @@ export function initDatabase(): DatabaseSync {
     }
 
     const db = new DatabaseSync(DB_PATH);
+    // 多个进程/worker 并发首次 import 时都会执行本函数的建表/迁移语句，
+    // 若无 busy_timeout，node:sqlite 遇锁会立即抛 SQLITE_BUSY（"database is locked"）
+    // 而不是排队等待，在测试并行度较高时会必现（而非偶发）。
+    db.exec('PRAGMA busy_timeout = 5000');
     db.exec('PRAGMA journal_mode = WAL');
 
     // 创建表结构
