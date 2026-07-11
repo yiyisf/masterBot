@@ -24,6 +24,8 @@ import { AgentPool, SessionEventStore, CredentialVault } from './core/harness/ag
 import { CheckpointManager } from './core/checkpoint-manager.js';
 import { syncSourceRegistry } from './core/requirement-sync.js';
 import { GitHubSyncSource } from './core/requirement-sync-github.js';
+import { requirementRepository } from './core/requirement-repository.js';
+import { requirementRunRepository } from './core/requirement-run-repository.js';
 
 async function main() {
     // U4: 在所有其他初始化之前启动 OTel（仅当 OTEL_EXPORTER_OTLP_ENDPOINT 配置时生效）
@@ -187,6 +189,16 @@ async function main() {
 
     // Phase 24: 启动时扫描未完成 session，自动 wake（Harness as Cattle）
     await agentPool.scanAndWake();
+
+    // 研发流程管理模块：启动时扫描 in_progress/waiting_input 的需求与 run，
+    // 统一标 failed（v1 不做跨进程真 resume，人工重试复用 worktree 现场，spec §5.6）
+    {
+        const stuckRuns = requirementRunRepository.markStuckAsFailed('服务重启，执行中断');
+        const stuckRequirements = requirementRepository.markStuckAsFailed();
+        if (stuckRuns.length > 0 || stuckRequirements.length > 0) {
+            logger.warn(`[dev-workflow] 服务启动扫描：标记 ${stuckRequirements.length} 个需求、${stuckRuns.length} 个 run 为 failed`);
+        }
+    }
 
     // Phase 26: Agent 在 agentPool 创建后初始化，确保 agentPool 和 sessionStore 可直接注入
     const agent = new Agent({

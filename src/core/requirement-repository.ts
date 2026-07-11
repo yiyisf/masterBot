@@ -182,6 +182,27 @@ export class RequirementRepository {
         return result.changes > 0;
     }
 
+    /** 跨项目按状态查询（如启动扫描 in_progress/waiting_input，spec §5.6） */
+    listByStatuses(statuses: RequirementStatus[]): Requirement[] {
+        if (statuses.length === 0) return [];
+        const placeholders = statuses.map(() => '?').join(',');
+        const rows = this.db.prepare(`SELECT * FROM requirements WHERE status IN (${placeholders}) ORDER BY updated_at`)
+            .all(...(statuses as unknown as import('node:sqlite').SQLInputValue[])) as unknown as RequirementRow[];
+        return rows.map(rowToRequirement);
+    }
+
+    /**
+     * 服务启动时扫描 in_progress/waiting_input 的需求 → 统一标 failed（spec §5.6）。
+     * 返回被标记的需求列表，供调用方进一步处理（如同步标记对应 run 并写 error_message）。
+     */
+    markStuckAsFailed(): Requirement[] {
+        const stuck = this.listByStatuses(['in_progress', 'waiting_input']);
+        for (const req of stuck) {
+            this.updateStatus(req.id, 'failed');
+        }
+        return stuck;
+    }
+
     /**
      * 手动需求的项目内自增序列（spec §2.2：高位段/前缀避免与 issue 号撞车，如 M10001）。
      * 返回完整的数字段（含前缀），调用方拼接为 req_key = `{project_name}#{数字段}`。

@@ -245,7 +245,9 @@ export type SessionEventType =
     | 'memory_read'         // M3: 记忆读取审计（memory_recall）
     | 'user_message'        // D1: 用户消息记录
     | 'grader_evaluation'   // D6: Grader 评分结果持久化
-    | 'grader_revision';    // D6: Grader 修订循环持久化
+    | 'grader_revision'     // D6: Grader 修订循环持久化
+    | 'interrupt_raised'    // 研发流程管理：人机中断发起（question/approval）
+    | 'interrupt_resolved'; // 研发流程管理：人机中断已解决
 
 export interface SessionEvent {
     id: string;

@@ -145,6 +145,27 @@ export class RequirementRunRepository {
             retryNo: previousRun.retryNo + 1,
         });
     }
+
+    /** 跨项目按状态查询（如启动扫描 running/waiting_input，spec §5.6） */
+    listByStatuses(statuses: RequirementRunStatus[]): RequirementRun[] {
+        if (statuses.length === 0) return [];
+        const placeholders = statuses.map(() => '?').join(',');
+        const rows = this.db.prepare(`SELECT * FROM requirement_runs WHERE status IN (${placeholders}) ORDER BY started_at`)
+            .all(...(statuses as unknown as import('node:sqlite').SQLInputValue[])) as unknown as RequirementRunRow[];
+        return rows.map(rowToRun);
+    }
+
+    /**
+     * 服务启动时扫描 running/waiting_input 的 run → 统一标 failed（spec §5.6）。
+     * 返回被标记的 run 列表。
+     */
+    markStuckAsFailed(errorMessage: string): RequirementRun[] {
+        const stuck = this.listByStatuses(['running', 'waiting_input']);
+        for (const run of stuck) {
+            this.updateStatus(run.id, 'failed', { errorMessage, finished: true });
+        }
+        return stuck;
+    }
 }
 
 export const requirementRunRepository = new RequirementRunRepository();

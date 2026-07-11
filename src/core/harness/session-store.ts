@@ -9,6 +9,7 @@
 
 import type { DatabaseSync } from 'node:sqlite';
 import { nanoid } from 'nanoid';
+import { db } from '../database.js';
 import type { SessionEvent, SessionEventType, Message } from '../../types.js';
 
 export type { SessionEvent };
@@ -248,6 +249,12 @@ export class SessionEventStore {
         };
     }
 }
+
+/**
+ * 模块级单例，供不便走依赖注入的调用方使用（如 interrupt-coordinator.ts）。
+ * 与 AgentPool 构造时另建的 SessionEventStore 实例共享同一个 `db`，数据一致。
+ */
+export const sessionEventStore = new SessionEventStore(db);
 
 // ─────────────────────────────────────────────────
 // 工具函数

@@ -32,6 +32,7 @@ function createTestDb(): DatabaseSync {
         CREATE INDEX IF NOT EXISTS idx_req_project_status ON requirements(project_id, status);
     `);
     db.exec(`INSERT INTO projects (id, name, dir, created_at, updated_at) VALUES ('p1', 'cmasterBot', '/repo', '2026-01-01', '2026-01-01')`);
+    db.exec(`INSERT INTO projects (id, name, dir, created_at, updated_at) VALUES ('p2', 'otherRepo', '/repo2', '2026-01-01', '2026-01-01')`);
     return db;
 }
 
@@ -125,5 +126,34 @@ describe('RequirementRepository', () => {
         const req = repo.create({ projectId: 'p1', reqKey: 'cmasterBot#1', source: 'github', sourceKey: '1', title: 'A' });
         expect(repo.delete(req.id)).toBe(true);
         expect(repo.getById(req.id)).toBeNull();
+    });
+
+    it('listByStatuses queries across projects (启动扫描用)', () => {
+        const a = repo.create({ projectId: 'p1', reqKey: 'cmasterBot#1', source: 'github', sourceKey: '1', title: 'A' });
+        const b = repo.create({ projectId: 'p2', reqKey: 'otherRepo#1', source: 'github', sourceKey: '1', title: 'B' });
+        repo.create({ projectId: 'p1', reqKey: 'cmasterBot#2', source: 'github', sourceKey: '2', title: 'C' });
+        repo.updateStatus(a.id, 'in_progress');
+        repo.updateStatus(b.id, 'waiting_input');
+
+        const stuck = repo.listByStatuses(['in_progress', 'waiting_input']);
+        expect(stuck.map(r => r.id).sort()).toEqual([a.id, b.id].sort());
+    });
+
+    it('listByStatuses returns empty array for an empty statuses list', () => {
+        expect(repo.listByStatuses([])).toEqual([]);
+    });
+
+    it('markStuckAsFailed 把 in_progress/waiting_input 的需求统一标 failed（spec §5.6）', () => {
+        const stuck1 = repo.create({ projectId: 'p1', reqKey: 'cmasterBot#1', source: 'github', sourceKey: '1', title: 'A' });
+        const stuck2 = repo.create({ projectId: 'p1', reqKey: 'cmasterBot#2', source: 'github', sourceKey: '2', title: 'B' });
+        const untouched = repo.create({ projectId: 'p1', reqKey: 'cmasterBot#3', source: 'github', sourceKey: '3', title: 'C' });
+        repo.updateStatus(stuck1.id, 'in_progress');
+        repo.updateStatus(stuck2.id, 'waiting_input');
+
+        const marked = repo.markStuckAsFailed();
+        expect(marked.map(r => r.id).sort()).toEqual([stuck1.id, stuck2.id].sort());
+        expect(repo.getById(stuck1.id)!.status).toBe('failed');
+        expect(repo.getById(stuck2.id)!.status).toBe('failed');
+        expect(repo.getById(untouched.id)!.status).toBe('synced');
     });
 });
