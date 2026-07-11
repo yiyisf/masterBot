@@ -84,7 +84,7 @@ describe('RequirementExecutionService', () => {
         projectId = projects.create({ name: 'cmasterBot', dir: '/repo/cmasterBot' }).id;
     });
 
-    function makeService(createEngine: (spec: any, logger: any) => IAgentEngine) {
+    function makeService(createEngine: (engineKind: any, spec: any, logger: any) => IAgentEngine) {
         return new RequirementExecutionService({
             projects, requirements, runs, worktree,
             logger: { debug() {}, info() {}, warn() {}, error() {} },
@@ -231,5 +231,27 @@ describe('RequirementExecutionService', () => {
         const { runId } = await service.start(requirement.id);
         expect(runId).toBeTruthy();
         expect(worktree.ensure).toHaveBeenCalled();
+    });
+
+    it('start() 默认引擎为 claude-code，run.engine 记为 claude-agent-sdk', async () => {
+        const createEngine = vi.fn(() => engineYielding([{ type: 'answer', content: 'done', timestamp: new Date() }]));
+        const service = makeService(createEngine);
+        const requirement = requirements.create({
+            projectId, reqKey: 'cmasterBot#8', source: 'github', sourceKey: '8', title: 'Add feature',
+        });
+        const { runId } = await service.start(requirement.id);
+        expect(createEngine).toHaveBeenCalledWith('claude-code', expect.anything(), expect.anything());
+        expect(runs.getById(runId)!.engine).toBe('claude-agent-sdk');
+    });
+
+    it('start({ engine: "codex" }) 走 codex 分支，run.engine 记为 codex', async () => {
+        const createEngine = vi.fn(() => engineYielding([{ type: 'answer', content: 'done', timestamp: new Date() }]));
+        const service = makeService(createEngine);
+        const requirement = requirements.create({
+            projectId, reqKey: 'cmasterBot#9', source: 'github', sourceKey: '9', title: 'Add feature',
+        });
+        const { runId } = await service.start(requirement.id, { engine: 'codex' });
+        expect(createEngine).toHaveBeenCalledWith('codex', expect.anything(), expect.anything());
+        expect(runs.getById(runId)!.engine).toBe('codex');
     });
 });
