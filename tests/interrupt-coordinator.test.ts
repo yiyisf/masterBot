@@ -11,6 +11,13 @@ import {
     cancelInterrupt,
     hasPendingInterrupt,
 } from '../src/core/interrupt-coordinator.js';
+import { db } from '../src/core/database.js';
+
+function lastSessionEvent(sessionId: string, type: string): { payload: string } | undefined {
+    return db.prepare(
+        'SELECT payload FROM session_events WHERE session_id = ? AND type = ? ORDER BY timestamp DESC LIMIT 1'
+    ).get(sessionId, type) as { payload: string } | undefined;
+}
 
 describe('interrupt-coordinator', () => {
     it('waitForApproval 由 resolveInterrupt(approved=true) 释放', async () => {
@@ -44,5 +51,28 @@ describe('interrupt-coordinator', () => {
         cancelInterrupt('sess-d');
         await expect(p).rejects.toThrow(/disconnected/i);
         expect(hasPendingInterrupt('sess-d')).toBe(false);
+    });
+
+    // 研发流程管理：interrupt 双写 session_events（回放）+ audit_approvals（审计台账，已有测试覆盖 resolveInterrupt 返回值）
+    it('resolveInterrupt 追加一条 interrupt_resolved session_events（spec §6.2）', async () => {
+        const p = waitForUserDecision('sess-e', { interruptId: 'int-e' });
+        resolveInterrupt('sess-e', true, { interruptId: 'int-e', response: '用 PostgreSQL' });
+        await p;
+
+        const event = lastSessionEvent('sess-e', 'interrupt_resolved');
+        expect(event).toBeDefined();
+        const payload = JSON.parse(event!.payload);
+        expect(payload).toMatchObject({ interruptId: 'int-e', approved: true, response: '用 PostgreSQL' });
+    });
+
+    it('cancelInterrupt 追加一条 interrupt_resolved session_events（标注 cancelled）', async () => {
+        const p = waitForApproval('sess-f', { interruptId: 'int-f' });
+        cancelInterrupt('sess-f');
+        await expect(p).rejects.toThrow();
+
+        const event = lastSessionEvent('sess-f', 'interrupt_resolved');
+        expect(event).toBeDefined();
+        const payload = JSON.parse(event!.payload);
+        expect(payload).toMatchObject({ interruptId: 'int-f', approved: false, cancelled: true });
     });
 });

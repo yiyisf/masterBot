@@ -11,6 +11,7 @@
  */
 
 import { auditRepository } from './audit-repository.js';
+import { sessionEventStore } from './harness/session-store.js';
 
 export interface InterruptMeta {
     interruptId?: string;
@@ -96,6 +97,22 @@ export function resolveInterrupt(sessionId: string, approved: boolean, opts?: Re
         // Non-fatal: audit failure should not block HitL resolution
     }
 
+    // 研发流程管理：interrupt 双写 session_events（回放用）+ audit_approvals（上面已写，审计台账用）
+    try {
+        sessionEventStore.append({
+            sessionId,
+            timestamp: Date.now(),
+            type: 'interrupt_resolved',
+            payload: {
+                interruptId: opts?.interruptId ?? meta?.interruptId ?? sessionId,
+                approved,
+                response: opts?.response,
+            },
+        });
+    } catch {
+        // Non-fatal: session_events 写入失败不应阻塞 HitL 恢复
+    }
+
     pending.resolve({ approved, response: opts?.response });
     pendingInterrupts.delete(sessionId);
     return true;
@@ -116,6 +133,16 @@ export function cancelInterrupt(sessionId: string): void {
                 dangerReason: pending.meta?.dangerReason,
                 decision: 'cancelled',
                 operatorChannel: 'web',
+            });
+        } catch {
+            // Non-fatal
+        }
+        try {
+            sessionEventStore.append({
+                sessionId,
+                timestamp: Date.now(),
+                type: 'interrupt_resolved',
+                payload: { interruptId: pending.meta?.interruptId ?? sessionId, approved: false, cancelled: true },
             });
         } catch {
             // Non-fatal

@@ -18,7 +18,17 @@ import type {
 } from '../../types.js';
 
 /** 引擎种类（AgentSpec.engine 字段取值）*/
-export type AgentEngineKind = 'native' | 'claude-agent-sdk';
+export type AgentEngineKind = 'native' | 'claude-agent-sdk' | 'codex' | 'opencode' | 'pi';
+
+/**
+ * 引擎能力声明（研发流程管理模块，spec §5.2）。
+ * interactiveApproval：执行中能否编程式向人提问/请求审批（codex exec = false）。
+ * resume：能否跨进程恢复会话（v1 全部 false；未来 Claude `--resume` 等）。
+ */
+export interface EngineCapabilities {
+    interactiveApproval: boolean;
+    resume: boolean;
+}
 
 export interface EngineRunContext {
     sessionId: string;
@@ -27,10 +37,15 @@ export interface EngineRunContext {
     history?: Message[];
     abortSignal?: AbortSignal;
     traceId?: string;
+    /** 运行时工作目录（如需求的 worktree 路径），优先于 spec.engineOptions.cwd（spec §5.2）*/
+    cwd?: string;
+    /** 审批模式：'auto' 沙箱自动判定（默认）；'ask-on-risky' 危险操作转人工审批（spec §5.4）*/
+    approvalMode?: 'auto' | 'ask-on-risky';
 }
 
 export interface IAgentEngine {
     readonly kind: AgentEngineKind;
+    readonly capabilities: EngineCapabilities;
     run(input: string, context: EngineRunContext): AsyncGenerator<ExecutionStep>;
 }
 
@@ -39,6 +54,8 @@ export interface IAgentEngine {
  */
 export class NativeAgentEngine implements IAgentEngine {
     readonly kind = 'native' as const;
+    // 自研 ReAct 循环已支持 ask_user / danger-approval 中断（agent-run-helpers.ts），无 resume 能力
+    readonly capabilities: EngineCapabilities = { interactiveApproval: true, resume: false };
 
     constructor(private agent: Agent) {}
 

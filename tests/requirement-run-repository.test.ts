@@ -105,4 +105,31 @@ describe('RequirementRunRepository', () => {
         expect(retry.status).toBe('running');
         expect(repo.listByRequirement('r1')).toHaveLength(2);
     });
+
+    it('listByStatuses queries across projects/requirements (启动扫描用)', () => {
+        const a = repo.create({ requirementId: 'r1', projectId: 'p1', engine: 'claude-code', sessionId: 's1' });
+        const b = repo.create({ requirementId: 'r2', projectId: 'p2', engine: 'claude-code', sessionId: 's2' });
+        const c = repo.create({ requirementId: 'r3', projectId: 'p1', engine: 'claude-code', sessionId: 's3' });
+        repo.updateStatus(b.id, 'waiting_input');
+        repo.updateStatus(c.id, 'succeeded', { finished: true });
+
+        const stuck = repo.listByStatuses(['running', 'waiting_input']);
+        expect(stuck.map(r => r.id).sort()).toEqual([a.id, b.id].sort());
+    });
+
+    it('markStuckAsFailed 把 running/waiting_input 的 run 统一标 failed 并写 error_message（spec §5.6）', () => {
+        const stuck1 = repo.create({ requirementId: 'r1', projectId: 'p1', engine: 'claude-code', sessionId: 's1' });
+        const stuck2 = repo.create({ requirementId: 'r2', projectId: 'p1', engine: 'claude-code', sessionId: 's2' });
+        const untouched = repo.create({ requirementId: 'r3', projectId: 'p1', engine: 'claude-code', sessionId: 's3' });
+        repo.updateStatus(stuck2.id, 'waiting_input');
+        repo.updateStatus(untouched.id, 'succeeded', { finished: true });
+
+        const marked = repo.markStuckAsFailed('服务重启，执行中断');
+        expect(marked.map(r => r.id).sort()).toEqual([stuck1.id, stuck2.id].sort());
+        const fetched1 = repo.getById(stuck1.id)!;
+        expect(fetched1.status).toBe('failed');
+        expect(fetched1.errorMessage).toBe('服务重启，执行中断');
+        expect(fetched1.finishedAt).not.toBeNull();
+        expect(repo.getById(untouched.id)!.status).toBe('succeeded');
+    });
 });

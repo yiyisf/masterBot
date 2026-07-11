@@ -229,6 +229,16 @@ export class AgentHarness {
                         await new Promise(r => setTimeout(r, 200));
                     }
 
+                    // 研发流程管理：interrupt 双写 session_events 的"raised"一半
+                    // （"resolved"一半由 interrupt-coordinator.ts 的 resolveInterrupt/cancelInterrupt 写）
+                    if (step.type === 'interrupt') {
+                        this.emit('interrupt_raised', {
+                            interruptId: step.interruptId,
+                            interruptKind: step.interruptKind,
+                            reason: step.interruptReason,
+                        });
+                    }
+
                     // onToolCall hooks
                     if (step.type === 'action') {
                         this.emit('tool_call', {

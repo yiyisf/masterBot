@@ -13,17 +13,26 @@
  * 纯内网/内部模型部署不受影响。
  */
 
+import { nanoid } from 'nanoid';
+import { z } from 'zod';
 import type { Logger } from '../../types.js';
 import type { ExecutionStep } from '../../types.js';
 import type { AgentSpec } from './agent-spec.js';
-import type { IAgentEngine, EngineRunContext } from './agent-engine.js';
+import type { IAgentEngine, EngineRunContext, EngineCapabilities } from './agent-engine.js';
 import { CommandSandbox } from '../../skills/sandbox.js';
+import { InterruptRelay } from './interrupt-relay.js';
+import { waitForUserDecision, waitForApproval } from '../interrupt-coordinator.js';
 // P2-6: type-only 导入不产生运行时依赖（SDK 本身仍是动态 import，未安装时保留降级路径），
 // 用于替换 `sdk: any` / `_translateMessage(message: any)`，消除类型逃逸。
 import type { SDKMessage } from '@anthropic-ai/claude-agent-sdk';
 
 /** coder 场景默认放行的 SDK 内建工具 */
 const DEFAULT_ALLOWED_TOOLS = ['Read', 'Write', 'Edit', 'Glob', 'Grep', 'Bash', 'TodoWrite'];
+
+/** ask_user 工具挂载的 SDK MCP server 名 + 工具名（fully-qualified: mcp__<server>__<tool>）*/
+const ASK_USER_SERVER_NAME = 'ask_user_server';
+const ASK_USER_TOOL_NAME = 'ask_user';
+const ASK_USER_QUALIFIED_NAME = `mcp__${ASK_USER_SERVER_NAME}__${ASK_USER_TOOL_NAME}`;
 
 /** 与 FilteredSkillRegistry 保持一致的 glob 匹配器（* 通配所有字符）*/
 function matchGlob(name: string, pattern: string): boolean {
@@ -49,6 +58,8 @@ export interface ClaudeSdkEngineOptions {
 
 export class ClaudeAgentSdkEngine implements IAgentEngine {
     readonly kind = 'claude-agent-sdk' as const;
+    // canUseTool 支持 ask-on-risky 转人工审批；ask_user MCP 工具支持编程式提问；v1 无 resume
+    readonly capabilities: EngineCapabilities = { interactiveApproval: true, resume: false };
     private sandbox: CommandSandbox;
     private allowedTools: string[];
 
@@ -97,17 +108,55 @@ export class ClaudeAgentSdkEngine implements IAgentEngine {
         };
         if (this.options.baseUrl) env.ANTHROPIC_BASE_URL = this.options.baseUrl;
 
-        const allowedSet = new Set(this.allowedTools);
+        // question 通道（常开，spec §5.4）：ask_user 工具通过 canUseTool 之外的 MCP handler
+        // 回调触发；handler 与 canUseTool 都在 run() 的 async generator 之外被 SDK 内部调用，
+        // 无法直接 yield —— 用 InterruptRelay 桥接回主循环。
+        const relay = new InterruptRelay();
+        const allowedToolsForRun = [...this.allowedTools, ASK_USER_QUALIFIED_NAME];
+        const allowedSet = new Set(allowedToolsForRun);
+
+        const askUserServer = sdk.createSdkMcpServer({
+            name: ASK_USER_SERVER_NAME,
+            version: '1.0.0',
+            tools: [
+                sdk.tool(
+                    ASK_USER_TOOL_NAME,
+                    '向人类提问以澄清需求或获取决策；调用后会阻塞直到人类回答',
+                    { question: z.string().describe('要问用户的问题，应具体、可回答') },
+                    async (args: { question: string }) => {
+                        const interruptId = nanoid();
+                        relay.push({
+                            type: 'interrupt',
+                            interruptKind: 'question',
+                            interruptId,
+                            interruptReason: args.question,
+                            content: args.question,
+                            sessionId: context.sessionId,
+                            timestamp: new Date(),
+                        });
+                        const decision = await waitForUserDecision(context.sessionId, { interruptId }, context.abortSignal);
+                        const text = decision.response?.trim()
+                            ? decision.response
+                            : (decision.approved ? '(用户已确认，无补充文字说明)' : '(用户拒绝/未提供说明)');
+                        return { content: [{ type: 'text' as const, text }] };
+                    }
+                ),
+            ],
+        });
 
         const queryOptions: Record<string, unknown> = {
-            cwd: this.spec.engineOptions?.cwd ?? this.options.cwd ?? process.cwd(),
+            // context.cwd（如需求的 worktree 路径）优先于 spec.engineOptions.cwd（spec §5.2）
+            cwd: context.cwd ?? this.spec.engineOptions?.cwd ?? this.options.cwd ?? process.cwd(),
             // 直接遵守 spec 声明的预算（最低 1 轮），不静默覆盖用户配置
             maxTurns: Math.max(this.spec.resources.maxIterations, 1),
             systemPrompt: { type: 'preset', preset: 'claude_code', append: this.spec.systemPrompt },
-            allowedTools: this.allowedTools,
+            allowedTools: allowedToolsForRun,
+            mcpServers: { [ASK_USER_SERVER_NAME]: askUserServer },
             abortController,
             env,
             // 第二道闸：spec.tools.deny 模式 + allowedTools 白名单 + Bash 沙箱
+            // + approval 通道（默认关，spec §5.4）：approvalMode==='ask-on-risky' 时
+            // 沙箱判定为危险的命令转人工审批，而不是直接 deny
             canUseTool: async (toolName: string, toolInput: Record<string, unknown>) => {
                 // spec.tools.deny 优先（与 FilteredSkillRegistry 语义一致）
                 for (const pattern of (this.spec.tools?.deny ?? [])) {
@@ -124,6 +173,28 @@ export class ClaudeAgentSdkEngine implements IAgentEngine {
                     const command = String(toolInput?.command ?? '');
                     const verdict = this.sandbox.validate(command);
                     if (!verdict.allowed) {
+                        if (context.approvalMode === 'ask-on-risky') {
+                            const interruptId = nanoid();
+                            relay.push({
+                                type: 'interrupt',
+                                interruptKind: 'approval',
+                                interruptId,
+                                interruptReason: verdict.reason,
+                                content: `危险命令待人工审批：${command.slice(0, 200)}`,
+                                sessionId: context.sessionId,
+                                timestamp: new Date(),
+                            });
+                            const approved = await waitForApproval(context.sessionId, {
+                                interruptId,
+                                actionName: 'Bash',
+                                actionParams: command,
+                                dangerReason: verdict.reason,
+                            }, context.abortSignal);
+                            if (approved) {
+                                return { behavior: 'allow', updatedInput: toolInput };
+                            }
+                            return { behavior: 'deny', message: `Command rejected by human reviewer: ${verdict.reason}` };
+                        }
                         this.logger.warn(`[claude-sdk-engine] Bash command blocked by sandbox: ${command.slice(0, 100)}`);
                         return { behavior: 'deny', message: `Command blocked by sandbox: ${verdict.reason}` };
                     }
@@ -139,11 +210,28 @@ export class ClaudeAgentSdkEngine implements IAgentEngine {
 
         let sawResult = false;
         try {
-            for await (const message of sdk.query({ prompt: input, options: queryOptions })) {
-                for (const step of this._translateMessage(message)) {
+            const iterator = (sdk.query({ prompt: input, options: queryOptions }) as AsyncIterable<SDKMessage>)[Symbol.asyncIterator]();
+            let sdkPromise = iterator.next();
+            let relayPromise = relay.next();
+
+            while (true) {
+                const winner = await Promise.race([
+                    sdkPromise.then(r => ({ kind: 'sdk' as const, r })),
+                    relayPromise.then(step => ({ kind: 'relay' as const, step })),
+                ]);
+
+                if (winner.kind === 'relay') {
+                    yield winner.step;
+                    relayPromise = relay.next();
+                    continue;
+                }
+
+                if (winner.r.done) break;
+                for (const step of this._translateMessage(winner.r.value)) {
                     yield step;
                 }
-                if (message?.type === 'result') sawResult = true;
+                if (winner.r.value?.type === 'result') sawResult = true;
+                sdkPromise = iterator.next();
             }
         } catch (err) {
             // SDK 启动期失败（如 CLI 二进制缺失）且还没产出任何结果 → 降级
