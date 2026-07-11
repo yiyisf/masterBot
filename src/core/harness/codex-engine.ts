@@ -3,20 +3,29 @@
  *
  * 驱动方式：`codex exec --json`（headless/结构化输出模式，非 PTY 全交互黑盒）。
  *
- * 实测记录（实施地图 #61 ticket #65）：用真实 codex-cli 0.39.0 二进制、极简只读 prompt
- * 实测确认了以下事实：
+ * 实测记录（实施地图 #61 ticket #65）：
+ *
+ * 第一轮，用真实 codex-cli 0.39.0 二进制、aicoding provider（测试账号无 API 额度，
+ * 402 Payment Required，只跑出了启动失败路径）：
  * - `codex exec --help` 不暴露 `-a/--ask-for-approval`（该参数只在交互式顶层 `codex` 命令下有效），
  *   非交互模式本就没有"运行中途转人工"的编程接口——印证 capabilities.interactiveApproval = false。
  * - `--json` 输出的 JSONL 里，前两行是配置回显（含 model/workdir/sandbox 等字段，无 `msg` 包装）
  *   和 prompt 回显（`{"prompt": "..."}`，同样无 `msg` 包装）；之后每行是
  *   `{"id": "<turn-id>", "msg": {"type": "<event-type>", ...}}` 的信封。
- * - 已验证的 `msg.type`：`task_started`（带 `model_context_window`）、`stream_error`（瞬时重试，
- *   非终态失败）、`error`（终态失败）。
- * - 受限于测试账号无可用 API 额度（402 Payment Required），未能跑出成功路径的完整事件序列——
- *   `agent_message`/`agent_reasoning`/`exec_command_begin`/`exec_command_end`/`task_complete`/
- *   `token_count` 等事件类型的字段名是基于 Codex 协议的一般性认知**推断**，不是实测确认。
- *   `_translateLine()` 对任何未识别的 `msg.type` 一律降级为 meta 步骤透出原始 payload
- *   （不静默丢弃），实测/真实调用时如与推断不符，据此调整映射即可，不影响整体骨架。
+ * - 确认 `msg.type`：`task_started`（带 `model_context_window`，可能是 null）、`stream_error`
+ *   （瞬时重试，非终态失败）、`error`（终态失败）。
+ *
+ * 第二轮，改用 `-c model_provider` 覆写指向一个 OpenAI 协议兼容、有真实额度的 provider
+ * （用户在 PR review 里指出并授权），跑出了完整的成功路径：
+ * - 确认 `agent_message`：`{"type":"agent_message","message":"pong"}`——字段名与第一轮的推断一致。
+ * - 确认 `token_count`：`{"type":"token_count","info":null}`——纯用量信息，不产出用户可见步骤。
+ * - **没有观察到 `task_complete` 事件**：成功路径就是 `task_started` → `agent_message` →
+ *   `token_count`，随后进程直接退出（exit code 0）——完成由进程退出信号，不是靠专门的事件。
+ *   下面仍保留 `task_complete` 分支作为兜底（万一更复杂/多轮场景里真的会出现），但不是必经路径。
+ * - `agent_reasoning`/`exec_command_begin`/`exec_command_end` 仍未观察到（这次的 prompt 刻意
+ *   要求不调用任何工具），字段名沿用第一轮基于 Codex 协议一般认知的推断，未经实测确认。
+ * `_translateLine()` 对任何未识别的 `msg.type` 一律降级为 meta 步骤透出原始 payload（不静默
+ * 丢弃），后续如与推断不符，据此调整映射即可，不影响整体骨架。
  */
 
 import { spawn } from 'child_process';
@@ -135,7 +144,7 @@ export class CodexEngine implements IAgentEngine {
 
         const msg = parsed.msg;
         switch (msg.type) {
-            // ── 已用真实二进制验证 ──
+            // ── 已用真实二进制验证（两轮实测，见文件头注释）──
             case 'task_started':
                 yield { type: 'meta', content: `codex 任务已启动（context window: ${msg.model_context_window ?? '-'}）`, timestamp: now() };
                 break;
@@ -150,8 +159,16 @@ export class CodexEngine implements IAgentEngine {
                 yield { type: 'meta', content: '❌ codex 执行失败', timestamp: now() };
                 break;
 
-            // ── 未用真实二进制验证，基于 Codex 协议一般认知推断（见文件头注释）──
             case 'agent_message':
+                if (typeof msg.message === 'string') {
+                    yield { type: 'content', content: msg.message, timestamp: now() };
+                }
+                break;
+
+            case 'token_count':
+                break; // 纯用量信息，不产出用户可见步骤
+
+            // ── 未用真实二进制验证，基于 Codex 协议一般认知推断（见文件头注释）──
             case 'agent_message_delta':
                 if (typeof msg.message === 'string') {
                     yield { type: 'content', content: msg.message, timestamp: now() };
@@ -187,9 +204,8 @@ export class CodexEngine implements IAgentEngine {
                 break;
             }
 
-            case 'token_count':
-                break; // 纯用量信息，不产出用户可见步骤
-
+            // 实测的成功路径里没有出现过这个事件（进程直接退出表示完成）；保留作为兜底，
+            // 以防更复杂/多轮场景里真的会有一个显式的完成事件
             case 'task_complete':
                 yield { type: 'answer', content: String(msg.last_agent_message ?? msg.message ?? ''), timestamp: now() };
                 yield { type: 'meta', content: '✅ codex 会话完成', timestamp: now() };

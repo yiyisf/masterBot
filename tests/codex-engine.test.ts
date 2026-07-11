@@ -89,6 +89,33 @@ describe('CodexEngine', () => {
         expect(steps.some(s => s.type === 'answer' && s.content.includes('402'))).toBe(true);
     });
 
+    it('完整成功路径（第二轮实测，改用 OpenAI 兼容 provider 拿到真实额度）：task_started → agent_message → token_count，无 task_complete', async () => {
+        // 真实抓到的 JSONL（prompt: "Just reply with the single word: pong."）：
+        // {"id":"0","msg":{"type":"task_started","model_context_window":null}}
+        // {"id":"0","msg":{"type":"agent_message","message":"pong"}}
+        // {"id":"0","msg":{"type":"token_count","info":null}}
+        // 进程随后直接退出（code 0）——完成靠进程退出，不是靠专门的事件。
+        process.env.FAKE_CODEX_OUTPUT = [
+            JSON.stringify({ workdir: '/repo', provider: 'mistral_probe', approval: 'never', sandbox: 'read-only', model: 'mistral-large-latest' }),
+            JSON.stringify({ prompt: 'Just reply with the single word: pong. Do not run any commands.' }),
+            JSON.stringify({ id: '0', msg: { type: 'task_started', model_context_window: null } }),
+            JSON.stringify({ id: '0', msg: { type: 'agent_message', message: 'pong' } }),
+            JSON.stringify({ id: '0', msg: { type: 'token_count', info: null } }),
+        ].join('\n') + '\n';
+
+        const engine = new CodexEngine(mockLogger, { binaryPath: fakeBinPath });
+        const steps = await drain(engine.run('Just reply with the single word: pong.', { sessionId: 's1b', memory: mockMemory }));
+
+        // 配置回显 1 条 meta（prompt 回显不产出）+ task_started 1 条 meta + agent_message 1 条
+        // content（token_count 不产出步骤）= 3 步
+        expect(steps).toHaveLength(3);
+        expect(steps[0].type).toBe('meta');
+        expect(steps[0].content).toContain('mistral-large-latest');
+        expect(steps[1]).toMatchObject({ type: 'meta' });
+        expect(steps[1].content).toContain('context window: -'); // model_context_window: null → '-'
+        expect(steps[2]).toMatchObject({ type: 'content', content: 'pong' });
+    });
+
     it('未识别的事件类型不静默丢弃，降级为 meta 透出原始 payload', async () => {
         process.env.FAKE_CODEX_OUTPUT = JSON.stringify({ id: '0', msg: { type: 'some_future_event', foo: 'bar' } }) + '\n';
         const engine = new CodexEngine(mockLogger, { binaryPath: fakeBinPath });
@@ -109,13 +136,11 @@ describe('CodexEngine', () => {
         expect(steps[0].content).toContain('1000');
     });
 
-    it('推断事件映射（未实测，基于协议一般认知）：agent_message→content, agent_reasoning→thought, exec_command_begin/end→action/observation, token_count 静默, task_complete→answer+meta', async () => {
+    it('推断事件映射（仍未实测——两轮实测的 prompt 都没有触发工具调用/多轮）：agent_reasoning→thought, exec_command_begin/end→action/observation, task_complete→answer+meta（未在真实成功路径里出现，兜底分支）', async () => {
         process.env.FAKE_CODEX_OUTPUT = [
             JSON.stringify({ id: '0', msg: { type: 'agent_reasoning', text: '思考中...' } }),
-            JSON.stringify({ id: '0', msg: { type: 'agent_message', message: '我来处理这个任务' } }),
             JSON.stringify({ id: '0', msg: { type: 'exec_command_begin', command: ['ls', '-la'] } }),
             JSON.stringify({ id: '0', msg: { type: 'exec_command_end', stdout: 'file1\nfile2' } }),
-            JSON.stringify({ id: '0', msg: { type: 'token_count', input_tokens: 100 } }),
             JSON.stringify({ id: '0', msg: { type: 'task_complete', last_agent_message: '完成了' } }),
         ].join('\n') + '\n';
 
@@ -123,12 +148,10 @@ describe('CodexEngine', () => {
         const steps = await drain(engine.run('task', { sessionId: 's4', memory: mockMemory }));
 
         expect(steps.find(s => s.type === 'thought')?.content).toBe('思考中...');
-        expect(steps.find(s => s.type === 'content')?.content).toBe('我来处理这个任务');
         const action = steps.find(s => s.type === 'action');
         expect(action?.toolName).toBe('Bash');
         expect(action?.content).toContain('ls -la');
         expect(steps.find(s => s.type === 'observation')?.content).toContain('file1');
-        expect(steps.some(s => s.content?.includes('input_tokens'))).toBe(false);
         expect(steps.find(s => s.type === 'answer')?.content).toBe('完成了');
     });
 
