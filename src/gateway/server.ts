@@ -22,6 +22,7 @@ import { registerWorkflowRoutes } from './routes/workflows.js';
 import { registerAuditRoutes } from './routes/audit.js';
 import { registerImRoutes } from './routes/im.js';
 import { registerAgentPoolRoutes } from './routes/agents.js';
+import { registerProjectRoutes } from './routes/projects.js';
 
 /**
  * Gateway 服务器
@@ -223,6 +224,7 @@ export class GatewayServer {
         registerAuditRoutes(this.app, deps);
         registerImRoutes(this.app, deps);
         registerAgentPoolRoutes(this.app, deps);
+        registerProjectRoutes(this.app, deps);
 
         // ===== AGENT GATEWAY =====
         this.agentGateway.registerRoutes(this.app);
