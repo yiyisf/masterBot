@@ -306,6 +306,63 @@ export function initDatabase(): DatabaseSync {
         CREATE INDEX IF NOT EXISTS idx_se_type    ON session_events(type);
     `);
 
+    // 研发流程管理模块：projects / requirements / requirement_runs（实施地图 #61 ticket #62）
+    db.exec(`
+        CREATE TABLE IF NOT EXISTS projects (
+            id                  TEXT PRIMARY KEY,
+            name                TEXT NOT NULL UNIQUE,
+            dir                 TEXT NOT NULL,
+            description         TEXT,
+            sync_source         TEXT NOT NULL DEFAULT 'github',
+            sync_config         TEXT,
+            last_synced_at      TEXT,
+            max_concurrent_runs INTEGER NOT NULL DEFAULT 2,
+            skills_installed_at TEXT,
+            created_at          TEXT NOT NULL,
+            updated_at          TEXT NOT NULL
+        );
+
+        CREATE TABLE IF NOT EXISTS requirements (
+            id             TEXT PRIMARY KEY,
+            project_id     TEXT NOT NULL,
+            req_key        TEXT NOT NULL,
+            source         TEXT NOT NULL,
+            source_key     TEXT NOT NULL,
+            title          TEXT NOT NULL,
+            description    TEXT,
+            labels         TEXT,
+            status         TEXT NOT NULL DEFAULT 'synced',
+            source_url     TEXT,
+            source_closed  INTEGER NOT NULL DEFAULT 0,
+            created_at     TEXT NOT NULL,
+            updated_at     TEXT NOT NULL,
+            FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE
+        );
+        CREATE UNIQUE INDEX IF NOT EXISTS uq_req_key       ON requirements(req_key);
+        CREATE UNIQUE INDEX IF NOT EXISTS uq_req_dedup     ON requirements(project_id, source, source_key);
+        CREATE INDEX IF NOT EXISTS idx_req_project_status  ON requirements(project_id, status);
+
+        CREATE TABLE IF NOT EXISTS requirement_runs (
+            id              TEXT PRIMARY KEY,
+            requirement_id  TEXT NOT NULL,
+            project_id      TEXT NOT NULL,
+            engine          TEXT NOT NULL,
+            worktree_path   TEXT,
+            branch          TEXT,
+            session_id      TEXT NOT NULL,
+            status          TEXT NOT NULL DEFAULT 'running',
+            retry_no        INTEGER NOT NULL DEFAULT 0,
+            pr_url          TEXT,
+            error_message   TEXT,
+            token_cost      TEXT,
+            started_at      TEXT NOT NULL,
+            finished_at     TEXT,
+            FOREIGN KEY (requirement_id) REFERENCES requirements(id) ON DELETE CASCADE
+        );
+        CREATE INDEX IF NOT EXISTS idx_req_runs_requirement ON requirement_runs(requirement_id, started_at);
+        CREATE INDEX IF NOT EXISTS idx_req_runs_project     ON requirement_runs(project_id, started_at);
+    `);
+
     // Phase 25: credential_vault — 凭证隔离存储（Gap 4）
     // 凭证以 AES-256-GCM 加密存储；skill 只持有 sessionToken，proxy 换取真实凭证
     db.exec(`
