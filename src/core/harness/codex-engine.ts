@@ -26,6 +26,11 @@
  *   要求不调用任何工具），字段名沿用第一轮基于 Codex 协议一般认知的推断，未经实测确认。
  * `_translateLine()` 对任何未识别的 `msg.type` 一律降级为 meta 步骤透出原始 payload（不静默
  * 丢弃），后续如与推断不符，据此调整映射即可，不影响整体骨架。
+ *
+ * 防御性修复（研发流程管理 ticket #67 联调时在 opencode 引擎上真实踩中同一类 bug 后回头排查）：
+ * `codex exec --help` 同样暴露 `-C/--cd <DIR>`（"Tell the agent to use the specified
+ * directory as its working root"），说明 codex 内部可能不是单纯依赖进程级 cwd 判定工作目录。
+ * 之前只靠 `child_process.spawn()` 的 `cwd` 选项，现在显式加上 `-C`，两边双保险。
  */
 
 import { spawn } from 'child_process';
@@ -62,7 +67,10 @@ export class CodexEngine implements IAgentEngine {
         const cwd = context.cwd ?? this.options.cwd ?? process.cwd();
         const binary = this.options.binaryPath ?? 'codex';
         const sandbox = this.options.sandbox ?? 'workspace-write';
-        const args = ['exec', '--json', '--sandbox', sandbox, '--skip-git-repo-check', input];
+        // -C/--cd 显式声明"working root"（同一类问题在 opencode 引擎上被真实用例踩中过：
+        // 只靠 spawn() 的 cwd 选项，工具自己内部的目录解析可能不认——codex --help 里这个参数
+        // 的说明原文就是 "Tell the agent to use the specified directory as its working root"）
+        const args = ['exec', '--json', '--sandbox', sandbox, '--skip-git-repo-check', '-C', cwd, input];
 
         this.logger.info(`[codex-engine] Starting "${binary} exec" (cwd: ${cwd}, sandbox: ${sandbox})`);
 

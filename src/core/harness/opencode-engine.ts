@@ -23,6 +23,13 @@
  * - `error`（认证失败等场景实测确认）：`{"type":"error","timestamp":...,"sessionID":...,
  *   "error":{"name":"APIError","data":{"message":...,"statusCode":...}}}`，无 `part` 字段。
  * - 进程退出码：成功 0，认证/模型错误时非 0（沿用"非零退出码即失败"的通用判定）。
+ *
+ * 真实使用中发现的 bug（研发流程管理 ticket #67 联调反馈，非本文件原实测环境能复现——
+ * 复现环境本机后台已有一个 opencode server/session 在跑）：opencode 是 daemon 式架构，
+ * `opencode run` 可能自动发现并复用本机已在跑的 server，而不是在给定 cwd 里新起一个；
+ * 此时 `child_process.spawn()` 的 `cwd` 选项只影响新 spawn 出来的这个客户端进程，管不到
+ * 被复用的那个 server 进程，导致实际操作目录/需求都不对。修复：显式传 `--dir <cwd>`，
+ * 不管是新起的还是被复用的 server，都会被这个参数正确定向。
  */
 
 import { spawn } from 'child_process';
@@ -71,7 +78,10 @@ export class OpenCodeEngine implements IAgentEngine {
     async *run(input: string, context: EngineRunContext): AsyncGenerator<ExecutionStep> {
         const cwd = context.cwd ?? this.options.cwd ?? process.cwd();
         const binary = this.options.binaryPath ?? 'opencode';
-        const args = ['run', '--format', 'json'];
+        // 真实使用中发现：opencode 会自动发现/复用本机已在跑的 opencode server（daemon 式架构），
+        // 此时新 spawn 的进程只是连去那个已有 server，spawn() 的 cwd 选项管不到它——
+        // 必须显式传 --dir 告诉（新起的或被复用的）server 用哪个目录，不能只依赖进程级 cwd。
+        const args = ['run', '--format', 'json', '--dir', cwd];
         if (this.options.model) args.push('-m', this.options.model);
         args.push(input);
 
