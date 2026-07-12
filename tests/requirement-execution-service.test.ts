@@ -254,4 +254,15 @@ describe('RequirementExecutionService', () => {
         expect(createEngine).toHaveBeenCalledWith('codex', expect.anything(), expect.anything());
         expect(runs.getById(runId)!.engine).toBe('codex');
     });
+
+    it.each(['opencode', 'pi'] as const)('start({ engine: "%s" }) 走对应分支，run.engine 记为 %s', async (engineKind) => {
+        const createEngine = vi.fn(() => engineYielding([{ type: 'answer', content: 'done', timestamp: new Date() }]));
+        const service = makeService(createEngine);
+        const requirement = requirements.create({
+            projectId, reqKey: `cmasterBot#${engineKind}`, source: 'github', sourceKey: engineKind, title: 'Add feature',
+        });
+        const { runId } = await service.start(requirement.id, { engine: engineKind });
+        expect(createEngine).toHaveBeenCalledWith(engineKind, expect.anything(), expect.anything());
+        expect(runs.getById(runId)!.engine).toBe(engineKind);
+    });
 });
