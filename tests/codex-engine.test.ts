@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeAll, afterAll, afterEach } from 'vitest';
-import { writeFileSync, mkdtempSync, chmodSync, rmSync, readFileSync } from 'fs';
+import { writeFileSync, mkdtempSync, mkdirSync, chmodSync, rmSync, readFileSync } from 'fs';
 import { tmpdir } from 'os';
 import path from 'path';
 import { CodexEngine } from '../src/core/harness/codex-engine.js';
@@ -51,13 +51,25 @@ describe('CodexEngine', () => {
         expect(engine.capabilities).toEqual({ interactiveApproval: false, resume: false });
     });
 
-    it('拼装的 CLI 参数包含 exec/--json/--sandbox/--skip-git-repo-check 与 prompt（不含 -a/--ask-for-approval，实测确认 exec 不支持该参数）', async () => {
+    it('拼装的 CLI 参数包含 exec/--json/--sandbox/-C/--skip-git-repo-check 与 prompt（不含 -a/--ask-for-approval，实测确认 exec 不支持该参数）', async () => {
         const argsFile = path.join(tmpDir, 'args.json');
         process.env.FAKE_CODEX_ARGS_FILE = argsFile;
         const engine = new CodexEngine(mockLogger, { binaryPath: fakeBinPath, sandbox: 'read-only' });
         await drain(engine.run('implement X', { sessionId: 's8', memory: mockMemory, cwd: tmpDir }));
         const args = JSON.parse(readFileSync(argsFile, 'utf-8'));
-        expect(args).toEqual(['exec', '--json', '--sandbox', 'read-only', '--skip-git-repo-check', 'implement X']);
+        expect(args).toEqual(['exec', '--json', '--sandbox', 'read-only', '--skip-git-repo-check', '-C', tmpDir, 'implement X']);
+    });
+
+    it('-C 显式传给 CLI，不依赖进程级 cwd（防御性修复，同一类 bug 在 opencode 引擎上被真实踩中过）', async () => {
+        const argsFile = path.join(tmpDir, 'args.json');
+        process.env.FAKE_CODEX_ARGS_FILE = argsFile;
+        const engine = new CodexEngine(mockLogger, { binaryPath: fakeBinPath });
+        const otherDir = path.join(tmpDir, 'a-different-project-dir');
+        mkdirSync(otherDir);
+        await drain(engine.run('task', { sessionId: 's8b', memory: mockMemory, cwd: otherDir }));
+        const args = JSON.parse(readFileSync(argsFile, 'utf-8'));
+        expect(args).toContain('-C');
+        expect(args[args.indexOf('-C') + 1]).toBe(otherDir);
     });
 
     it('解析真实实测过的事件形状：配置回显 → meta，task_started → meta（实施地图 #61 ticket #65 实测记录）', async () => {

@@ -28,6 +28,7 @@ import {
   ShieldCheck,
   Search,
   X,
+  GitBranch,
 } from "lucide-react";
 
 
@@ -215,6 +216,14 @@ const data: SidebarData = {
       icon: Bot,
       items: [
         { title: "Agent 管理台", url: "/agents", badge: "NEW" },
+      ],
+    },
+    {
+      title: "研发流程",
+      url: "/projects",
+      icon: GitBranch,
+      items: [
+        { title: "项目看板", url: "/projects", badge: "NEW" },
       ],
     },
     {

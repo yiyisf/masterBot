@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeAll, afterAll, afterEach } from 'vitest';
-import { writeFileSync, mkdtempSync, chmodSync, rmSync, readFileSync } from 'fs';
+import { writeFileSync, mkdtempSync, mkdirSync, chmodSync, rmSync, readFileSync } from 'fs';
 import { tmpdir } from 'os';
 import path from 'path';
 import { OpenCodeEngine } from '../src/core/harness/opencode-engine.js';
@@ -48,13 +48,25 @@ describe('OpenCodeEngine', () => {
         expect(engine.capabilities).toEqual({ interactiveApproval: false, resume: false });
     });
 
-    it('拼装的 CLI 参数包含 run/--format/json 与 prompt', async () => {
+    it('拼装的 CLI 参数包含 run/--format/json/--dir 与 prompt', async () => {
         const argsFile = path.join(tmpDir, 'args.json');
         process.env.FAKE_OPENCODE_ARGS_FILE = argsFile;
         const engine = new OpenCodeEngine(mockLogger, { binaryPath: fakeBinPath, model: 'opencode/deepseek-v4-flash-free' });
         await drain(engine.run('implement X', { sessionId: 's1', memory: mockMemory, cwd: tmpDir }));
         const args = JSON.parse(readFileSync(argsFile, 'utf-8'));
-        expect(args).toEqual(['run', '--format', 'json', '-m', 'opencode/deepseek-v4-flash-free', 'implement X']);
+        expect(args).toEqual(['run', '--format', 'json', '--dir', tmpDir, '-m', 'opencode/deepseek-v4-flash-free', 'implement X']);
+    });
+
+    it('--dir 显式传给 CLI，不依赖 opencode 自己发现/复用已在跑的 server（真实联调踩过的 bug）', async () => {
+        const argsFile = path.join(tmpDir, 'args.json');
+        process.env.FAKE_OPENCODE_ARGS_FILE = argsFile;
+        const engine = new OpenCodeEngine(mockLogger, { binaryPath: fakeBinPath });
+        const otherDir = path.join(tmpDir, 'a-different-project-dir');
+        mkdirSync(otherDir);
+        await drain(engine.run('task', { sessionId: 's1b', memory: mockMemory, cwd: otherDir }));
+        const args = JSON.parse(readFileSync(argsFile, 'utf-8'));
+        expect(args).toContain('--dir');
+        expect(args[args.indexOf('--dir') + 1]).toBe(otherDir);
     });
 
     it('真实成功路径（实测，纯文本回复）：step_start → text → step_finish', async () => {
