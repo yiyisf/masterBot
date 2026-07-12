@@ -346,6 +346,22 @@ export function initDatabase(): DatabaseSync {
         CREATE UNIQUE INDEX IF NOT EXISTS uq_req_dedup     ON requirements(project_id, source, source_key);
         CREATE INDEX IF NOT EXISTS idx_req_project_status  ON requirements(project_id, status);
 
+        CREATE TABLE IF NOT EXISTS pending_questions (
+            id              TEXT PRIMARY KEY,
+            requirement_id  TEXT NOT NULL,
+            run_id          TEXT NOT NULL,
+            session_id      TEXT NOT NULL,
+            phase           TEXT NOT NULL,
+            questions       TEXT NOT NULL,
+            status          TEXT NOT NULL DEFAULT 'pending',
+            answers         TEXT,
+            created_at      TEXT NOT NULL,
+            answered_at     TEXT,
+            FOREIGN KEY (requirement_id) REFERENCES requirements(id) ON DELETE CASCADE
+        );
+        CREATE INDEX IF NOT EXISTS idx_pending_q_requirement ON pending_questions(requirement_id);
+        CREATE INDEX IF NOT EXISTS idx_pending_q_status      ON pending_questions(status);
+
         CREATE TABLE IF NOT EXISTS requirement_runs (
             id              TEXT PRIMARY KEY,
             requirement_id  TEXT NOT NULL,
@@ -445,6 +461,33 @@ export function initDatabase(): DatabaseSync {
         }
         if (!taskColNames.has('trace_id')) {
             db.prepare('ALTER TABLE tasks ADD COLUMN trace_id TEXT').run();
+        }
+    }
+
+    // Auto-migration: 研发流程两阶段自动化 — requirements 表新增 4 列（spec: dev-workflow two-phase）
+    {
+        const reqColumns = db.prepare('PRAGMA table_info(requirements)').all() as Array<{ name: string }>;
+        const reqColNames = new Set(reqColumns.map(c => c.name));
+        if (!reqColNames.has('phase')) {
+            db.prepare('ALTER TABLE requirements ADD COLUMN phase TEXT').run();
+        }
+        if (!reqColNames.has('analysis_spec')) {
+            db.prepare('ALTER TABLE requirements ADD COLUMN analysis_spec TEXT').run();
+        }
+        if (!reqColNames.has('parent_id')) {
+            db.prepare('ALTER TABLE requirements ADD COLUMN parent_id TEXT').run();
+        }
+        if (!reqColNames.has('card_no')) {
+            db.prepare('ALTER TABLE requirements ADD COLUMN card_no INTEGER').run();
+        }
+    }
+    db.exec('CREATE INDEX IF NOT EXISTS idx_req_parent ON requirements(parent_id, card_no)');
+
+    // Auto-migration: 研发流程两阶段自动化 — requirement_runs 表新增 resume_token 列
+    {
+        const runColumns = db.prepare('PRAGMA table_info(requirement_runs)').all() as Array<{ name: string }>;
+        if (!runColumns.some(c => c.name === 'resume_token')) {
+            db.prepare('ALTER TABLE requirement_runs ADD COLUMN resume_token TEXT').run();
         }
     }
 
