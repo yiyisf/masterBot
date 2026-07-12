@@ -5,6 +5,7 @@ import { requirementRepository, type RequirementRepository, type Requirement } f
 import { requirementRunRepository, type RequirementRunRepository, type RequirementRun } from './requirement-run-repository.js';
 import { worktreeManager, type WorktreeManager } from './worktree-manager.js';
 import { ClaudeAgentSdkEngine } from './harness/claude-sdk-engine.js';
+import { CodexEngine } from './harness/codex-engine.js';
 import type { IAgentEngine } from './harness/agent-engine.js';
 import { defaultAgentSpec, type AgentSpec } from './harness/agent-spec.js';
 
@@ -15,10 +16,20 @@ const noopMemory: MemoryAccess = {
     async search() { return []; },
 };
 
-/** v1 只支持默认 claude-code 引擎；codex/opencode/pi 留给后续 ticket（实施地图 #61 #65/#66） */
+/** opencode/pi 留给后续 ticket（实施地图 #61 #66） */
+export type ExecutionEngineKind = 'claude-code' | 'codex';
+
 const STARTABLE_STATUSES: Requirement['status'][] = ['synced', 'queued', 'failed'];
 
+/** ExecutionEngineKind → requirement_runs.engine 列存的值（对齐 AgentEngineKind） */
+const RUN_ENGINE_LABEL: Record<ExecutionEngineKind, string> = {
+    'claude-code': 'claude-agent-sdk',
+    codex: 'codex',
+};
+
 export interface StartRunOptions {
+    /** 默认 claude-code；codex 无 interactiveApproval，approvalMode 对其无效（spec §5.5） */
+    engine?: ExecutionEngineKind;
     approvalMode?: 'auto' | 'ask-on-risky';
 }
 
@@ -28,8 +39,8 @@ export interface RequirementExecutionServiceDeps {
     runs?: RequirementRunRepository;
     worktree?: WorktreeManager;
     logger?: Logger;
-    /** 依赖注入：测试用 fake engine 替换真实 SDK 引擎 */
-    createEngine?: (spec: AgentSpec, logger: Logger) => IAgentEngine;
+    /** 依赖注入：测试用 fake engine 替换真实引擎 */
+    createEngine?: (engineKind: ExecutionEngineKind, spec: AgentSpec, logger: Logger) => IAgentEngine;
 }
 
 const consoleLogger: Logger = {
@@ -52,7 +63,7 @@ export class RequirementExecutionService {
     private runs: RequirementRunRepository;
     private worktree: WorktreeManager;
     private logger: Logger;
-    private createEngine: (spec: AgentSpec, logger: Logger) => IAgentEngine;
+    private createEngine: (engineKind: ExecutionEngineKind, spec: AgentSpec, logger: Logger) => IAgentEngine;
 
     constructor(deps: RequirementExecutionServiceDeps = {}) {
         this.projects = deps.projects ?? projectRepository;
@@ -60,7 +71,10 @@ export class RequirementExecutionService {
         this.runs = deps.runs ?? requirementRunRepository;
         this.worktree = deps.worktree ?? worktreeManager;
         this.logger = deps.logger ?? consoleLogger;
-        this.createEngine = deps.createEngine ?? ((spec, logger) => new ClaudeAgentSdkEngine(spec, logger, {}));
+        this.createEngine = deps.createEngine ?? ((engineKind, spec, logger) =>
+            engineKind === 'codex'
+                ? new CodexEngine(logger, {})
+                : new ClaudeAgentSdkEngine(spec, logger, {}));
     }
 
     /**
@@ -76,12 +90,13 @@ export class RequirementExecutionService {
         const project = this.projects.getById(requirement.projectId);
         if (!project) throw new Error(`Project not found: ${requirement.projectId}`);
 
+        const engineKind = options.engine ?? 'claude-code';
         const { path: worktreePath, branch } = await this.worktree.ensure(project, requirement);
         const sessionId = nanoid();
         const run = this.runs.create({
             requirementId: requirement.id,
             projectId: project.id,
-            engine: 'claude-agent-sdk',
+            engine: RUN_ENGINE_LABEL[engineKind],
             sessionId,
             worktreePath,
             branch,
@@ -111,7 +126,7 @@ export class RequirementExecutionService {
                 '请实现该需求、提交代码并开 PR。若需要澄清需求或做出只有人类才能决定的选择，调用 ask_user 工具向人类提问。',
             ].filter(Boolean).join('\n\n'),
         });
-        const engine = this.createEngine(spec, this.logger);
+        const engine = this.createEngine(options.engine ?? 'claude-code', spec, this.logger);
         const task = `实现需求 ${requirement.reqKey}：${requirement.title}`;
 
         let awaitingResume = false;

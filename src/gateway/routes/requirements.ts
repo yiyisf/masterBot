@@ -68,12 +68,13 @@ export async function registerRequirementRoutes(app: FastifyInstance, deps: Gate
         return requirement;
     });
 
-    // 发起研发（v1 仅默认 claude-code 引擎；点火即走，异步执行，状态变化通过 requirement/run 轮询）
-    app.post<{ Params: { id: string }; Body: { approvalMode?: 'auto' | 'ask-on-risky' } }>(
+    // 发起研发（默认 claude-code 引擎，可选 codex；点火即走，异步执行，状态变化通过 requirement/run 轮询）
+    app.post<{ Params: { id: string }; Body: { engine?: 'claude-code' | 'codex'; approvalMode?: 'auto' | 'ask-on-risky' } }>(
         '/api/requirements/:id/start',
         async (request, reply) => {
             try {
                 const result = await requirementExecutionService.start(request.params.id, {
+                    engine: request.body?.engine,
                     approvalMode: request.body?.approvalMode,
                 });
                 reply.status(202);
