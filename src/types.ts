@@ -212,6 +212,12 @@ export interface ExecutionStep {
     droppedCount?: number;
     // Phase 26: Harness instance tracking（供前端关联子任务面板）
     harnessInstanceId?: string;
+    /**
+     * 研发流程两阶段自动化：引擎侧会话续接凭据（capabilities.resume=true 时，run() 结束前
+     * 在最后一个 meta step 上携带）。codex=rollout uuid，opencode/pi=首行 session id。
+     * 调用方（RequirementExecutionService）捕获后存入 requirement_runs.resume_token。
+     */
+    resumeToken?: string;
     timestamp: Date;
 }
 

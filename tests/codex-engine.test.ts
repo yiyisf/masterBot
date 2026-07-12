@@ -1,5 +1,5 @@
-import { describe, it, expect, beforeAll, afterAll, afterEach } from 'vitest';
-import { writeFileSync, mkdtempSync, mkdirSync, chmodSync, rmSync, readFileSync } from 'fs';
+import { describe, it, expect, beforeAll, beforeEach, afterAll, afterEach } from 'vitest';
+import { writeFileSync, mkdtempSync, mkdirSync, chmodSync, rmSync, readFileSync, utimesSync } from 'fs';
 import { tmpdir } from 'os';
 import path from 'path';
 import { CodexEngine } from '../src/core/harness/codex-engine.js';
@@ -10,6 +10,8 @@ const mockMemory: MemoryAccess = { get: async () => undefined, set: async () => 
 
 let tmpDir: string;
 let fakeBinPath: string;
+/** 大部分测试无关 resume 反查，指向一个空目录，避免误扫到本机真实 ~/.codex/sessions */
+let emptySessionsRoot: string;
 
 async function drain(gen: AsyncGenerator<ExecutionStep>): Promise<ExecutionStep[]> {
     const steps: ExecutionStep[] = [];
@@ -32,6 +34,7 @@ if (stderrOut) process.stderr.write(stderrOut);
 process.exitCode = parseInt(process.env.FAKE_CODEX_EXIT_CODE || '0', 10);
 `);
     chmodSync(fakeBinPath, 0o755);
+    emptySessionsRoot = mkdtempSync(path.join(tmpdir(), 'fake-codex-sessions-empty-'));
 });
 
 afterAll(() => {
@@ -46,15 +49,15 @@ afterEach(() => {
 });
 
 describe('CodexEngine', () => {
-    it('capabilities: interactiveApproval=false, resume=false（显式降级，spec §5.5）', () => {
-        const engine = new CodexEngine(mockLogger, { binaryPath: fakeBinPath });
-        expect(engine.capabilities).toEqual({ interactiveApproval: false, resume: false });
+    it('capabilities: interactiveApproval=false（显式降级，spec §5.5），resume=true（原生会话续接，spec #85）', () => {
+        const engine = new CodexEngine(mockLogger, { binaryPath: fakeBinPath, sessionsRoot: emptySessionsRoot });
+        expect(engine.capabilities).toEqual({ interactiveApproval: false, resume: true });
     });
 
     it('拼装的 CLI 参数包含 exec/--json/--sandbox/-C/--skip-git-repo-check 与 prompt（不含 -a/--ask-for-approval，实测确认 exec 不支持该参数）', async () => {
         const argsFile = path.join(tmpDir, 'args.json');
         process.env.FAKE_CODEX_ARGS_FILE = argsFile;
-        const engine = new CodexEngine(mockLogger, { binaryPath: fakeBinPath, sandbox: 'read-only' });
+        const engine = new CodexEngine(mockLogger, { binaryPath: fakeBinPath, sandbox: 'read-only', sessionsRoot: emptySessionsRoot });
         await drain(engine.run('implement X', { sessionId: 's8', memory: mockMemory, cwd: tmpDir }));
         const args = JSON.parse(readFileSync(argsFile, 'utf-8'));
         expect(args).toEqual(['exec', '--json', '--sandbox', 'read-only', '--skip-git-repo-check', '-C', tmpDir, 'implement X']);
@@ -63,7 +66,7 @@ describe('CodexEngine', () => {
     it('-C 显式传给 CLI，不依赖进程级 cwd（防御性修复，同一类 bug 在 opencode 引擎上被真实踩中过）', async () => {
         const argsFile = path.join(tmpDir, 'args.json');
         process.env.FAKE_CODEX_ARGS_FILE = argsFile;
-        const engine = new CodexEngine(mockLogger, { binaryPath: fakeBinPath });
+        const engine = new CodexEngine(mockLogger, { binaryPath: fakeBinPath, sessionsRoot: emptySessionsRoot });
         const otherDir = path.join(tmpDir, 'a-different-project-dir');
         mkdirSync(otherDir);
         await drain(engine.run('task', { sessionId: 's8b', memory: mockMemory, cwd: otherDir }));
@@ -79,7 +82,7 @@ describe('CodexEngine', () => {
             JSON.stringify({ id: '0', msg: { type: 'task_started', model_context_window: 272000 } }),
         ].join('\n') + '\n';
 
-        const engine = new CodexEngine(mockLogger, { binaryPath: fakeBinPath });
+        const engine = new CodexEngine(mockLogger, { binaryPath: fakeBinPath, sessionsRoot: emptySessionsRoot });
         const steps = await drain(engine.run('do the task', { sessionId: 's1', memory: mockMemory }));
 
         expect(steps).toHaveLength(2);
@@ -94,7 +97,7 @@ describe('CodexEngine', () => {
             JSON.stringify({ id: '0', msg: { type: 'error', message: 'unexpected status 402' } }),
         ].join('\n') + '\n';
 
-        const engine = new CodexEngine(mockLogger, { binaryPath: fakeBinPath });
+        const engine = new CodexEngine(mockLogger, { binaryPath: fakeBinPath, sessionsRoot: emptySessionsRoot });
         const steps = await drain(engine.run('task', { sessionId: 's2', memory: mockMemory }));
 
         expect(steps.some(s => s.type === 'meta' && s.content.includes('重试中'))).toBe(true);
@@ -115,7 +118,7 @@ describe('CodexEngine', () => {
             JSON.stringify({ id: '0', msg: { type: 'token_count', info: null } }),
         ].join('\n') + '\n';
 
-        const engine = new CodexEngine(mockLogger, { binaryPath: fakeBinPath });
+        const engine = new CodexEngine(mockLogger, { binaryPath: fakeBinPath, sessionsRoot: emptySessionsRoot });
         const steps = await drain(engine.run('Just reply with the single word: pong.', { sessionId: 's1b', memory: mockMemory }));
 
         // 配置回显 1 条 meta（prompt 回显不产出）+ task_started 1 条 meta + agent_message 1 条
@@ -130,7 +133,7 @@ describe('CodexEngine', () => {
 
     it('未识别的事件类型不静默丢弃，降级为 meta 透出原始 payload', async () => {
         process.env.FAKE_CODEX_OUTPUT = JSON.stringify({ id: '0', msg: { type: 'some_future_event', foo: 'bar' } }) + '\n';
-        const engine = new CodexEngine(mockLogger, { binaryPath: fakeBinPath });
+        const engine = new CodexEngine(mockLogger, { binaryPath: fakeBinPath, sessionsRoot: emptySessionsRoot });
         const steps = await drain(engine.run('task', { sessionId: 's3', memory: mockMemory }));
         expect(steps).toHaveLength(1);
         expect(steps[0].content).toContain('some_future_event');
@@ -142,7 +145,7 @@ describe('CodexEngine', () => {
             'not json at all',
             JSON.stringify({ id: '0', msg: { type: 'task_started', model_context_window: 1000 } }),
         ].join('\n') + '\n';
-        const engine = new CodexEngine(mockLogger, { binaryPath: fakeBinPath });
+        const engine = new CodexEngine(mockLogger, { binaryPath: fakeBinPath, sessionsRoot: emptySessionsRoot });
         const steps = await drain(engine.run('task', { sessionId: 's3b', memory: mockMemory }));
         expect(steps).toHaveLength(1);
         expect(steps[0].content).toContain('1000');
@@ -156,7 +159,7 @@ describe('CodexEngine', () => {
             JSON.stringify({ id: '0', msg: { type: 'task_complete', last_agent_message: '完成了' } }),
         ].join('\n') + '\n';
 
-        const engine = new CodexEngine(mockLogger, { binaryPath: fakeBinPath });
+        const engine = new CodexEngine(mockLogger, { binaryPath: fakeBinPath, sessionsRoot: emptySessionsRoot });
         const steps = await drain(engine.run('task', { sessionId: 's4', memory: mockMemory }));
 
         expect(steps.find(s => s.type === 'thought')?.content).toBe('思考中...');
@@ -170,7 +173,7 @@ describe('CodexEngine', () => {
     it('非零退出码抛错，携带 stderr', async () => {
         process.env.FAKE_CODEX_EXIT_CODE = '1';
         process.env.FAKE_CODEX_STDERR = 'boom';
-        const engine = new CodexEngine(mockLogger, { binaryPath: fakeBinPath });
+        const engine = new CodexEngine(mockLogger, { binaryPath: fakeBinPath, sessionsRoot: emptySessionsRoot });
         await expect(drain(engine.run('task', { sessionId: 's5', memory: mockMemory })))
             .rejects.toThrow(/exited with code 1/);
     });
@@ -193,5 +196,73 @@ describe('CodexEngine', () => {
         controller.abort();
         // kill 后进程以信号终止（非 0 退出码），run() 应该 reject 而不是永久挂起
         await expect(runPromise).rejects.toThrow();
+    });
+
+    // ─────────────────────────── Resume（两阶段自动化 spec #85，实测记录 #75）───────────────────────────
+
+    describe('resume', () => {
+        let sessionsRoot: string;
+
+        function writeRollout(uuid: string, cwd: string, mtimeMs: number): void {
+            const dayDir = path.join(sessionsRoot, '2026', '07', '12');
+            mkdirSync(dayDir, { recursive: true });
+            const file = path.join(dayDir, `rollout-2026-07-12T10-00-00-${uuid}.jsonl`);
+            writeFileSync(file, JSON.stringify({
+                timestamp: '2026-07-12T02:00:00.000Z',
+                type: 'session_meta',
+                payload: { id: uuid, timestamp: '2026-07-12T02:00:00.000Z', cwd, originator: 'codex_cli_rs', cli_version: '0.39.0' },
+            }) + '\n');
+            const now = new Date(mtimeMs);
+            utimesSync(file, now, now);
+        }
+
+        beforeEach(() => {
+            // 每个用例独立的 sessionsRoot，避免上一个用例写的 rollout 文件在时间窗内被下一个误认
+            sessionsRoot = mkdtempSync(path.join(tmpdir(), 'fake-codex-sessions-'));
+        });
+
+        it('成功结束后按 cwd + 时间窗反查 rollout uuid，作为最后一步 meta 的 resumeToken 携带', async () => {
+            process.env.FAKE_CODEX_OUTPUT = JSON.stringify({ id: '0', msg: { type: 'agent_message', message: 'ok' } }) + '\n';
+            const engine = new CodexEngine(mockLogger, { binaryPath: fakeBinPath, sessionsRoot });
+            const runStart = Date.now();
+            writeRollout('019f553e-aaaa-bbbb-cccc-000000000001', tmpDir, runStart + 500);
+
+            const steps = await drain(engine.run('task', { sessionId: 'sr1', memory: mockMemory, cwd: tmpDir }));
+            const resumeStep = steps.find(s => s.resumeToken);
+            expect(resumeStep?.resumeToken).toBe('019f553e-aaaa-bbbb-cccc-000000000001');
+        });
+
+        it('cwd 不匹配的 rollout 文件不会被误认成本轮会话', async () => {
+            process.env.FAKE_CODEX_OUTPUT = JSON.stringify({ id: '0', msg: { type: 'agent_message', message: 'ok' } }) + '\n';
+            const otherDir = path.join(tmpDir, 'unrelated-project');
+            mkdirSync(otherDir, { recursive: true });
+            const engine = new CodexEngine(mockLogger, { binaryPath: fakeBinPath, sessionsRoot });
+            const runStart = Date.now();
+            writeRollout('019f553e-aaaa-bbbb-cccc-000000000002', otherDir, runStart + 500);
+
+            const steps = await drain(engine.run('task', { sessionId: 'sr2', memory: mockMemory, cwd: tmpDir }));
+            expect(steps.some(s => s.resumeToken)).toBe(false);
+        });
+
+        it('resume 时 flags 前置于 resume 子命令，携带 --sandbox 重传（resume 轮默认回显 read-only）', async () => {
+            const argsFile = path.join(tmpDir, 'resume-args.json');
+            process.env.FAKE_CODEX_ARGS_FILE = argsFile;
+            process.env.FAKE_CODEX_OUTPUT = JSON.stringify({ id: '0', msg: { type: 'agent_message', message: 'ok' } }) + '\n';
+            const engine = new CodexEngine(mockLogger, { binaryPath: fakeBinPath, sessionsRoot });
+            const uuid = '019f553e-aaaa-bbbb-cccc-000000000003';
+            writeRollout(uuid, tmpDir, Date.now() - 60000); // 早于本轮 run，只用于校验存在性，不参与本轮反查
+
+            await drain(engine.run('刚才的暗号是什么？', { sessionId: 'sr3', memory: mockMemory, cwd: tmpDir, resumeToken: uuid }));
+            const args = JSON.parse(readFileSync(argsFile, 'utf-8'));
+            expect(args).toEqual(['exec', '--json', '--sandbox', 'workspace-write', '--skip-git-repo-check', '-C', tmpDir, 'resume', uuid, '刚才的暗号是什么？']);
+        });
+
+        it('resumeToken 对应的 rollout 文件不存在时直接抛错，不静默新建（codex 已知坑：伪 id exit 0）', async () => {
+            const engine = new CodexEngine(mockLogger, { binaryPath: fakeBinPath, sessionsRoot });
+            await expect(drain(engine.run('task', {
+                sessionId: 'sr4', memory: mockMemory, cwd: tmpDir,
+                resumeToken: '00000000-0000-0000-0000-000000000000',
+            }))).rejects.toThrow(/rollout 文件不存在/);
+        });
     });
 });
