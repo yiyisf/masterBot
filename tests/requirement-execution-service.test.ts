@@ -7,6 +7,8 @@ import { RequirementExecutionService } from '../src/core/requirement-execution-s
 import type { WorktreeManager } from '../src/core/worktree-manager.js';
 import type { IAgentEngine } from '../src/core/harness/agent-engine.js';
 import type { ExecutionStep } from '../src/types.js';
+import { sessionEventStore } from '../src/core/harness/session-store.js';
+import { nanoid } from 'nanoid';
 
 function createTestDb(): DatabaseSync {
     const db = new DatabaseSync(':memory:');
@@ -138,6 +140,33 @@ describe('RequirementExecutionService', () => {
         expect(requirements.getById(requirement.id)!.status).toBe('implemented');
     });
 
+    it('drive(): 把每个 ExecutionStep 写进 session_events（agent_step），供前端执行时间线回放', async () => {
+        const service = makeService(() => engineYielding([
+            { type: 'content', content: 'working...', timestamp: new Date() },
+            { type: 'action', content: '调用 Bash', toolName: 'Bash', toolInput: { command: 'ls' }, timestamp: new Date() },
+            { type: 'observation', content: 'file1', timestamp: new Date() },
+            { type: 'answer', content: 'done', timestamp: new Date() },
+        ]));
+
+        const requirement = requirements.create({
+            projectId, reqKey: 'cmasterBot#events1', source: 'github', sourceKey: 'events1', title: 'Add feature',
+        });
+        const project = projects.getById(projectId)!;
+        const sessionId = `sess-events-${nanoid()}`; // session_events 是真实持久化的表，用随机 id 避免重复跑测试时累积
+        const run = runs.create({ requirementId: requirement.id, projectId, engine: 'claude-agent-sdk', sessionId });
+
+        await (service as any).drive(project, requirement, run, {});
+
+        const events = sessionEventStore.getEvents(sessionId);
+        expect(events.some(e => e.type === 'session_start')).toBe(true);
+        expect(events.some(e => e.type === 'session_end' && (e.payload as any).status === 'succeeded')).toBe(true);
+
+        const stepEvents = events.filter(e => e.type === 'agent_step');
+        expect(stepEvents).toHaveLength(4);
+        expect(stepEvents.map(e => (e.payload as any).type)).toEqual(['content', 'action', 'observation', 'answer']);
+        expect((stepEvents[1].payload as any).toolName).toBe('Bash');
+    });
+
     it('drive(): interrupt 步骤 → 需求/run 转 waiting_input，恢复后转回 in_progress/running，结束后 implemented', async () => {
         const service = makeService(() => engineYielding([
             { type: 'content', content: 'thinking...', timestamp: new Date() },
@@ -264,5 +293,97 @@ describe('RequirementExecutionService', () => {
         const { runId } = await service.start(requirement.id, { engine: engineKind });
         expect(createEngine).toHaveBeenCalledWith(engineKind, expect.anything(), expect.anything());
         expect(runs.getById(runId)!.engine).toBe(engineKind);
+    });
+
+    it('retry() 复用 worktree、沿用上次引擎、retry_no 递增，需求从 failed 转回 in_progress→implemented', async () => {
+        const createEngine = vi.fn(() => engineYielding([{ type: 'answer', content: 'done', timestamp: new Date() }]));
+        const service = makeService(createEngine);
+        const requirement = requirements.create({
+            projectId, reqKey: 'cmasterBot#r1', source: 'github', sourceKey: 'r1', title: 'Add feature',
+        });
+        await service.start(requirement.id, { engine: 'codex' });
+        await new Promise(r => setTimeout(r, 0));
+        expect(requirements.getById(requirement.id)!.status).toBe('implemented');
+
+        // 手动模拟"这次执行失败了"，再重试
+        requirements.updateStatus(requirement.id, 'failed');
+        createEngine.mockClear();
+        const { runId: retryRunId } = await service.retry(requirement.id);
+        await new Promise(r => setTimeout(r, 0));
+
+        expect(createEngine).toHaveBeenCalledWith('codex', expect.anything(), expect.anything());
+        expect(worktree.ensure).toHaveBeenCalledTimes(2); // start 一次，retry 一次
+        const retryRun = runs.getById(retryRunId)!;
+        expect(retryRun.retryNo).toBe(1);
+        expect(requirements.getById(requirement.id)!.status).toBe('implemented');
+    });
+
+    it('retry() 拒绝非 failed 状态', async () => {
+        const service = makeService(() => engineYielding([]));
+        const requirement = requirements.create({
+            projectId, reqKey: 'cmasterBot#r2', source: 'github', sourceKey: 'r2', title: 'Add feature',
+        });
+        await expect(service.retry(requirement.id)).rejects.toThrow(/retryable state/);
+    });
+
+    it('cancel() 中止运行中的 run：requirement/run 转 cancelled（不是 failed），引擎收到 abortSignal', async () => {
+        let sawAbort = false;
+        const service = makeService(() => ({
+            kind: 'claude-agent-sdk',
+            capabilities: { interactiveApproval: true, resume: false },
+            run: async function* (_input: string, context: any) {
+                yield { type: 'content', content: 'working...', timestamp: new Date() };
+                await new Promise<void>((resolve, reject) => {
+                    context.abortSignal?.addEventListener('abort', () => {
+                        sawAbort = true;
+                        reject(new Error('aborted'));
+                    }, { once: true });
+                });
+            },
+        }));
+        const requirement = requirements.create({
+            projectId, reqKey: 'cmasterBot#c1', source: 'github', sourceKey: 'c1', title: 'Add feature',
+        });
+        requirements.updateStatus(requirement.id, 'queued');
+
+        const { runId } = await service.start(requirement.id);
+        await new Promise(r => setTimeout(r, 0));
+        expect(requirements.getById(requirement.id)!.status).toBe('in_progress');
+
+        await service.cancel(requirement.id);
+        await new Promise(r => setTimeout(r, 0));
+
+        expect(sawAbort).toBe(true);
+        expect(requirements.getById(requirement.id)!.status).toBe('cancelled');
+        expect(runs.getById(runId)!.status).toBe('cancelled');
+    });
+
+    it('cancel() 拒绝非活跃状态', async () => {
+        const service = makeService(() => engineYielding([]));
+        const requirement = requirements.create({
+            projectId, reqKey: 'cmasterBot#c2', source: 'github', sourceKey: 'c2', title: 'Add feature',
+        });
+        await expect(service.cancel(requirement.id)).rejects.toThrow(/cancellable state/);
+    });
+
+    it('merge() 把 implemented 需求标为 merged 并清理 worktree', async () => {
+        const service = makeService(() => engineYielding([]));
+        const requirement = requirements.create({
+            projectId, reqKey: 'cmasterBot#m1', source: 'github', sourceKey: 'm1', title: 'Add feature',
+        });
+        requirements.updateStatus(requirement.id, 'implemented');
+
+        await service.merge(requirement.id);
+
+        expect(requirements.getById(requirement.id)!.status).toBe('merged');
+        expect(worktree.remove).toHaveBeenCalled();
+    });
+
+    it('merge() 拒绝非 implemented 状态', async () => {
+        const service = makeService(() => engineYielding([]));
+        const requirement = requirements.create({
+            projectId, reqKey: 'cmasterBot#m2', source: 'github', sourceKey: 'm2', title: 'Add feature',
+        });
+        await expect(service.merge(requirement.id)).rejects.toThrow(/mergeable state/);
     });
 });

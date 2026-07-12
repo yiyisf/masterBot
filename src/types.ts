@@ -247,7 +247,8 @@ export type SessionEventType =
     | 'grader_evaluation'   // D6: Grader 评分结果持久化
     | 'grader_revision'     // D6: Grader 修订循环持久化
     | 'interrupt_raised'    // 研发流程管理：人机中断发起（question/approval）
-    | 'interrupt_resolved'; // 研发流程管理：人机中断已解决
+    | 'interrupt_resolved'  // 研发流程管理：人机中断已解决
+    | 'agent_step';         // 研发流程管理：完整 ExecutionStep 快照（执行时间线静态回放用）
 
 export interface SessionEvent {
     id: string;
