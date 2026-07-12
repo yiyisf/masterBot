@@ -2,7 +2,7 @@ import type { FastifyInstance } from 'fastify';
 import { requirementRepository, type RequirementStatus } from '../../core/requirement-repository.js';
 import { requirementRunRepository } from '../../core/requirement-run-repository.js';
 import { requirementSyncService } from '../../core/requirement-sync-service.js';
-import { requirementExecutionService } from '../../core/requirement-execution-service.js';
+import { requirementExecutionService, type ExecutionEngineKind } from '../../core/requirement-execution-service.js';
 import type { GatewayDeps } from '../route-deps.js';
 
 /**
@@ -68,8 +68,8 @@ export async function registerRequirementRoutes(app: FastifyInstance, deps: Gate
         return requirement;
     });
 
-    // 发起研发（默认 claude-code 引擎，可选 codex；点火即走，异步执行，状态变化通过 requirement/run 轮询）
-    app.post<{ Params: { id: string }; Body: { engine?: 'claude-code' | 'codex'; approvalMode?: 'auto' | 'ask-on-risky' } }>(
+    // 发起研发（默认 claude-code 引擎，可选 codex/opencode/pi；点火即走，异步执行，状态变化通过 requirement/run 轮询）
+    app.post<{ Params: { id: string }; Body: { engine?: ExecutionEngineKind; approvalMode?: 'auto' | 'ask-on-risky' } }>(
         '/api/requirements/:id/start',
         async (request, reply) => {
             try {

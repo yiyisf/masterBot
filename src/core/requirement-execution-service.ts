@@ -6,6 +6,8 @@ import { requirementRunRepository, type RequirementRunRepository, type Requireme
 import { worktreeManager, type WorktreeManager } from './worktree-manager.js';
 import { ClaudeAgentSdkEngine } from './harness/claude-sdk-engine.js';
 import { CodexEngine } from './harness/codex-engine.js';
+import { OpenCodeEngine } from './harness/opencode-engine.js';
+import { PiEngine } from './harness/pi-engine.js';
 import type { IAgentEngine } from './harness/agent-engine.js';
 import { defaultAgentSpec, type AgentSpec } from './harness/agent-spec.js';
 
@@ -16,8 +18,7 @@ const noopMemory: MemoryAccess = {
     async search() { return []; },
 };
 
-/** opencode/pi 留给后续 ticket（实施地图 #61 #66） */
-export type ExecutionEngineKind = 'claude-code' | 'codex';
+export type ExecutionEngineKind = 'claude-code' | 'codex' | 'opencode' | 'pi';
 
 const STARTABLE_STATUSES: Requirement['status'][] = ['synced', 'queued', 'failed'];
 
@@ -25,10 +26,12 @@ const STARTABLE_STATUSES: Requirement['status'][] = ['synced', 'queued', 'failed
 const RUN_ENGINE_LABEL: Record<ExecutionEngineKind, string> = {
     'claude-code': 'claude-agent-sdk',
     codex: 'codex',
+    opencode: 'opencode',
+    pi: 'pi',
 };
 
 export interface StartRunOptions {
-    /** 默认 claude-code；codex 无 interactiveApproval，approvalMode 对其无效（spec §5.5） */
+    /** 默认 claude-code；codex/opencode/pi 均无 interactiveApproval（v1 一次性非交互模式），approvalMode 对其无效 */
     engine?: ExecutionEngineKind;
     approvalMode?: 'auto' | 'ask-on-risky';
 }
@@ -71,10 +74,14 @@ export class RequirementExecutionService {
         this.runs = deps.runs ?? requirementRunRepository;
         this.worktree = deps.worktree ?? worktreeManager;
         this.logger = deps.logger ?? consoleLogger;
-        this.createEngine = deps.createEngine ?? ((engineKind, spec, logger) =>
-            engineKind === 'codex'
-                ? new CodexEngine(logger, {})
-                : new ClaudeAgentSdkEngine(spec, logger, {}));
+        this.createEngine = deps.createEngine ?? ((engineKind, spec, logger) => {
+            switch (engineKind) {
+                case 'codex': return new CodexEngine(logger, {});
+                case 'opencode': return new OpenCodeEngine(logger, {});
+                case 'pi': return new PiEngine(logger, {});
+                default: return new ClaudeAgentSdkEngine(spec, logger, {});
+            }
+        });
     }
 
     /**
