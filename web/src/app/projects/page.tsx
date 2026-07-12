@@ -26,6 +26,7 @@ import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sh
 import { Textarea } from "@/components/ui/textarea";
 import { Loader2, Plus, RefreshCw } from "lucide-react";
 import { fetchApi } from "@/lib/api";
+import { TwoPhasePrototype } from "./two-phase-prototype";
 
 // ─────────────────────────── 领域模型（对齐后端 repository） ───────────────────────────
 
@@ -462,6 +463,16 @@ function RequirementDetailSheet({ requirement, onOpenChange, onChanged }: {
 }
 
 export default function ProjectsPage() {
+    // PROTOTYPE（ticket #82）：?variant=A|B|C 打开两阶段详情面板原型，评审后整体移除
+    const [prototypeVariant, setPrototypeVariant] = useState<string | null>(() =>
+        typeof window === "undefined" ? null : new URLSearchParams(window.location.search).get("variant"));
+    const changePrototypeVariant = (v: string | null) => {
+        setPrototypeVariant(v);
+        const url = new URL(window.location.href);
+        if (v) url.searchParams.set("variant", v); else url.searchParams.delete("variant");
+        window.history.replaceState(null, "", url.toString());
+    };
+
     const [projects, setProjects] = useState<Project[]>([]);
     const [activeProjectId, setActiveProjectId] = useState<string | null>(null);
     const [requirements, setRequirements] = useState<Requirement[]>([]);
@@ -525,8 +536,15 @@ export default function ProjectsPage() {
         }
     };
 
+    // PROTOTYPE（ticket #82）：有 ?variant 时叠加原型面板，宿主页其余行为不变
+    const prototypeOverlay = prototypeVariant ? (
+        <TwoPhasePrototype variant={prototypeVariant}
+            onVariantChange={changePrototypeVariant}
+            onClose={() => changePrototypeVariant(null)} />
+    ) : null;
+
     if (loading) {
-        return <div className="flex h-[calc(100vh-3rem)] items-center justify-center text-muted-foreground"><Loader2 className="size-5 animate-spin" /></div>;
+        return <div className="flex h-[calc(100vh-3rem)] items-center justify-center text-muted-foreground"><Loader2 className="size-5 animate-spin" />{prototypeOverlay}</div>;
     }
 
     if (!activeProject) {
@@ -535,6 +553,7 @@ export default function ProjectsPage() {
                 <p>还没有项目，创建一个开始使用研发流程管理。</p>
                 <Button onClick={() => setNewProjectOpen(true)}><Plus className="mr-1 size-4" />新建项目</Button>
                 <NewProjectDialog open={newProjectOpen} onOpenChange={setNewProjectOpen} onCreated={(p) => { setProjects((ps) => [p, ...ps]); setActiveProjectId(p.id); }} />
+                {prototypeOverlay}
             </div>
         );
     }
@@ -620,6 +639,7 @@ export default function ProjectsPage() {
                     onCreated={loadRequirements}
                 />
             )}
+            {prototypeOverlay}
         </div>
     );
 }
