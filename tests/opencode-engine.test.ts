@@ -43,9 +43,9 @@ afterEach(() => {
 });
 
 describe('OpenCodeEngine', () => {
-    it('capabilities: interactiveApproval=false（v1 一次性非交互模式，opencode serve 双向通道留后续）, resume=false', () => {
+    it('capabilities: interactiveApproval=false（v1 一次性非交互模式，opencode serve 双向通道留后续）, resume=true（原生 --session 续接，spec #85）', () => {
         const engine = new OpenCodeEngine(mockLogger, { binaryPath: fakeBinPath });
-        expect(engine.capabilities).toEqual({ interactiveApproval: false, resume: false });
+        expect(engine.capabilities).toEqual({ interactiveApproval: false, resume: true });
     });
 
     it('拼装的 CLI 参数包含 run/--format/json/--dir 与 prompt', async () => {
@@ -80,11 +80,13 @@ describe('OpenCodeEngine', () => {
         const engine = new OpenCodeEngine(mockLogger, { binaryPath: fakeBinPath });
         const steps = await drain(engine.run('reply pong', { sessionId: 's2', memory: mockMemory }));
 
-        // step-start 不产出步骤；text → content；step-finish(reason=stop) → meta
-        expect(steps).toHaveLength(2);
+        // step-start 不产出步骤；text → content；step-finish(reason=stop) → meta；
+        // 成功结束后追加一条携带 resumeToken 的 meta（sessionID 全程都是 's'）
+        expect(steps).toHaveLength(3);
         expect(steps[0]).toMatchObject({ type: 'content', content: 'pong' });
         expect(steps[1]).toMatchObject({ type: 'meta' });
         expect(steps[1].content).toContain('stop');
+        expect(steps[2].resumeToken).toBe('s');
     });
 
     it('真实成功路径（实测，含工具调用）：tool_use（glob）拆成 action+observation，step_finish(reason=tool-calls) 不产出步骤', async () => {
@@ -113,8 +115,10 @@ describe('OpenCodeEngine', () => {
         const observation = steps.find(s => s.type === 'observation');
         expect(observation?.content).toContain('a.txt');
         expect(steps.find(s => s.type === 'content')?.content).toBe('Found 2 files.');
-        // tool-calls 阶段的 step_finish 不产出 meta（只有最终 stop 阶段才产出）
-        expect(steps.filter(s => s.type === 'meta')).toHaveLength(1);
+        // tool-calls 阶段的 step_finish 不产出 meta（只有最终 stop 阶段才产出）；
+        // 排除成功结束后追加的 resumeToken meta，业务性的 meta 只有 1 条
+        expect(steps.filter(s => s.type === 'meta' && !s.resumeToken)).toHaveLength(1);
+        expect(steps.some(s => s.resumeToken === 's')).toBe(true);
     });
 
     it('error 事件（实测确认，无 part 包装）：answer + meta', async () => {
@@ -137,9 +141,11 @@ describe('OpenCodeEngine', () => {
         }) + '\n';
         const engine = new OpenCodeEngine(mockLogger, { binaryPath: fakeBinPath });
         const steps = await drain(engine.run('task', { sessionId: 's5', memory: mockMemory }));
-        expect(steps).toHaveLength(1);
-        expect(steps[0].content).toContain('some-future-part');
-        expect(steps[0].content).toContain('bar');
+        // 成功结束后追加一条 resumeToken meta（sessionID='s'），业务性输出只有 1 条
+        const businessSteps = steps.filter(s => !s.resumeToken);
+        expect(businessSteps).toHaveLength(1);
+        expect(businessSteps[0].content).toContain('some-future-part');
+        expect(businessSteps[0].content).toContain('bar');
     });
 
     it('工具执行失败（state.status=error）产出带 ❌ 前缀的 observation', async () => {
@@ -177,5 +183,52 @@ describe('OpenCodeEngine', () => {
         const runPromise = drain(engine.run('task', { sessionId: 's9', memory: mockMemory, abortSignal: controller.signal }));
         controller.abort();
         await expect(runPromise).rejects.toThrow();
+    });
+
+    // ─────────────────────────── Resume（两阶段自动化 spec #85，实测记录 #76）───────────────────────────
+
+    describe('resume', () => {
+        it('传入 resumeToken 时 CLI 参数包含 --session，且仍复用相同 --dir', async () => {
+            const argsFile = path.join(tmpDir, 'resume-args.json');
+            process.env.FAKE_OPENCODE_ARGS_FILE = argsFile;
+            process.env.FAKE_OPENCODE_OUTPUT = JSON.stringify({ type: 'text', timestamp: 1, sessionID: 'ses_abc', part: { type: 'text', text: '暗号' } }) + '\n';
+            const engine = new OpenCodeEngine(mockLogger, { binaryPath: fakeBinPath });
+            await drain(engine.run('刚才的暗号是什么？', { sessionId: 'sr1', memory: mockMemory, cwd: tmpDir, resumeToken: 'ses_abc' }));
+            const args = JSON.parse(readFileSync(argsFile, 'utf-8'));
+            expect(args).toEqual(['run', '--format', 'json', '--dir', tmpDir, '--session', 'ses_abc', '刚才的暗号是什么？']);
+        });
+
+        it('resumeToken 直接取自 JSONL 每行都带的 sessionID，无需像 codex 那样反查文件', async () => {
+            process.env.FAKE_OPENCODE_OUTPUT = JSON.stringify({ type: 'text', timestamp: 1, sessionID: 'ses_xyz', part: { type: 'text', text: 'ok' } }) + '\n';
+            const engine = new OpenCodeEngine(mockLogger, { binaryPath: fakeBinPath });
+            const steps = await drain(engine.run('task', { sessionId: 'sr2', memory: mockMemory }));
+            expect(steps.find(s => s.resumeToken)?.resumeToken).toBe('ses_xyz');
+        });
+
+        it('resume 时看门狗超时兜底：目录不一致会挂死且不报错，watchdogMs 内无任何输出则主动判定失败', async () => {
+            const hangScript = path.join(tmpDir, 'hang-opencode.cjs');
+            writeFileSync(hangScript, `#!/usr/bin/env node\n// 模拟 --dir 不一致：既不输出也不退出\n`);
+            chmodSync(hangScript, 0o755);
+
+            const engine = new OpenCodeEngine(mockLogger, { binaryPath: hangScript, resumeWatchdogMs: 100 });
+            await expect(drain(engine.run('task', {
+                sessionId: 'sr3', memory: mockMemory, cwd: tmpDir, resumeToken: 'ses_stale',
+            }))).rejects.toThrow(/挂死/);
+        });
+
+        it('首轮（无 resumeToken）不受看门狗影响：即使输出较慢也不会被误杀', async () => {
+            const delayedScript = path.join(tmpDir, 'delayed-opencode.cjs');
+            writeFileSync(delayedScript, `#!/usr/bin/env node
+setTimeout(() => {
+    process.stdout.write(${JSON.stringify(JSON.stringify({ type: 'text', timestamp: 1, sessionID: 's', part: { type: 'text', text: 'ok' } }) + '\n')});
+    process.exit(0);
+}, 50);
+`);
+            chmodSync(delayedScript, 0o755);
+            // resumeWatchdogMs 故意设得比延迟还短：首轮不应受影响（看门狗只在 resumeToken 场景生效）
+            const engine = new OpenCodeEngine(mockLogger, { binaryPath: delayedScript, resumeWatchdogMs: 10 });
+            const steps = await drain(engine.run('task', { sessionId: 'sr4', memory: mockMemory }));
+            expect(steps.some(s => s.type === 'content' && s.content === 'ok')).toBe(true);
+        });
     });
 });

@@ -31,10 +31,24 @@
  * `codex exec --help` 同样暴露 `-C/--cd <DIR>`（"Tell the agent to use the specified
  * directory as its working root"），说明 codex 内部可能不是单纯依赖进程级 cwd 判定工作目录。
  * 之前只靠 `child_process.spawn()` 的 `cwd` 选项，现在显式加上 `-C`，两边双保险。
+ *
+ * Resume 接入（两阶段自动化 spec #85，实测记录见地图 ticket #75）：
+ * - `--json` 输出**不含**会话 id；id 只在 `~/.codex/sessions/<yyyy/mm/dd>/rollout-*-<uuid>.jsonl`
+ *   的文件名（或文件首行 `session_meta.payload.id`）里，run() 结束后按 cwd 匹配 + 时间窗反查。
+ * - resume 命令形态：所有 flags 必须在 `resume` 子命令**之前**，形如
+ *   `codex exec --json --sandbox <mode> -C <cwd> resume <uuid> "<prompt>"`；resume 轮 sandbox
+ *   默认回显 read-only，必须显式重传 `--sandbox`。
+ * - **关键坑**：传入不存在的 uuid 不报错——exit 0，静默新建一个不带上下文的新会话。
+ *   本引擎在使用调用方传入的 resumeToken 前会先校验对应 rollout 文件是否存在，不存在则
+ *   直接抛错，不让"丢现场"被误判为"续接成功"。
  */
 
 import { spawn } from 'child_process';
 import { createInterface } from 'readline';
+import { readdir, readFile, stat } from 'fs/promises';
+import { existsSync } from 'fs';
+import path from 'path';
+import os from 'os';
 import type { ExecutionStep, Logger } from '../../types.js';
 import type { IAgentEngine, EngineRunContext, EngineCapabilities } from './agent-engine.js';
 
@@ -45,6 +59,8 @@ export interface CodexEngineOptions {
     binaryPath?: string;
     /** 沙箱策略（默认 workspace-write，与 spec §5.3 一致）*/
     sandbox?: 'read-only' | 'workspace-write' | 'danger-full-access';
+    /** `~/.codex/sessions` 根目录覆盖（测试用，指向临时目录）*/
+    sessionsRoot?: string;
 }
 
 interface CodexJsonLine {
@@ -58,21 +74,41 @@ interface CodexJsonLine {
 export class CodexEngine implements IAgentEngine {
     readonly kind = 'codex' as const;
     // codex exec 非交互模式无编程式转人工的接口（-a/--ask-for-approval 只在交互式顶层命令下有效，
-    // 已实测确认 `codex exec --help` 不暴露该参数）；不做 PTY 文本匹配兜底（spec §5.5）；v1 无 resume
-    readonly capabilities: EngineCapabilities = { interactiveApproval: false, resume: false };
+    // 已实测确认 `codex exec --help` 不暴露该参数）；不做 PTY 文本匹配兜底（spec §5.5）。
+    // resume=true：接 codex 原生会话续接（见文件头注释，实测记录 #75）
+    readonly capabilities: EngineCapabilities = { interactiveApproval: false, resume: true };
 
     constructor(private logger: Logger, private options: CodexEngineOptions = {}) {}
+
+    private get sessionsRoot(): string {
+        return this.options.sessionsRoot ?? path.join(os.homedir(), '.codex', 'sessions');
+    }
 
     async *run(input: string, context: EngineRunContext): AsyncGenerator<ExecutionStep> {
         const cwd = context.cwd ?? this.options.cwd ?? process.cwd();
         const binary = this.options.binaryPath ?? 'codex';
         const sandbox = this.options.sandbox ?? 'workspace-write';
+
+        // 续接：resumeToken 必须先校验 rollout 文件仍存在，否则 codex 会静默新建一个不带
+        // 上下文的新会话（exit 0，无任何报错信号）——那样"丢现场"会被误判为"续接成功"。
+        if (context.resumeToken) {
+            const exists = await this._rolloutFileExists(context.resumeToken);
+            if (!exists) {
+                throw new Error(`codex resume 失败：会话 ${context.resumeToken} 对应的 rollout 文件不存在（可能已被清理），无法安全续接`);
+            }
+        }
+
         // -C/--cd 显式声明"working root"（同一类问题在 opencode 引擎上被真实用例踩中过：
         // 只靠 spawn() 的 cwd 选项，工具自己内部的目录解析可能不认——codex --help 里这个参数
-        // 的说明原文就是 "Tell the agent to use the specified directory as its working root"）
-        const args = ['exec', '--json', '--sandbox', sandbox, '--skip-git-repo-check', '-C', cwd, input];
+        // 的说明原文就是 "Tell the agent to use the specified directory as its working root"）。
+        // resume 子命令的 flags 必须前置（含 --sandbox，resume 轮默认回显 read-only 必须重传）。
+        const configFlags = ['--json', '--sandbox', sandbox, '--skip-git-repo-check', '-C', cwd];
+        const args = context.resumeToken
+            ? ['exec', ...configFlags, 'resume', context.resumeToken, input]
+            : ['exec', ...configFlags, input];
+        const runStartedAt = Date.now();
 
-        this.logger.info(`[codex-engine] Starting "${binary} exec" (cwd: ${cwd}, sandbox: ${sandbox})`);
+        this.logger.info(`[codex-engine] Starting "${binary} exec${context.resumeToken ? ' resume' : ''}" (cwd: ${cwd}, sandbox: ${sandbox})`);
 
         const child = spawn(binary, args, { cwd, stdio: ['ignore', 'pipe', 'pipe'] });
 
@@ -124,9 +160,76 @@ export class CodexEngine implements IAgentEngine {
         if (exitCode !== 0) {
             throw new Error(`codex exec exited with code ${exitCode}${stderrBuf ? `: ${stderrBuf.slice(0, 500)}` : ''}`);
         }
+
+        // 成功结束后反查本轮 rollout uuid 作为 resumeToken（--json 输出本身不含会话 id）
+        const resumeToken = await this._findResumeToken(cwd, runStartedAt);
+        if (resumeToken) {
+            yield { type: 'meta', content: '💾 codex 会话已记录，可续接', resumeToken, timestamp: new Date() };
+        }
     }
 
     // ─────────────────────────────── private ───────────────────────────────
+
+    /** 按 cwd + 时间窗扫描 sessions 目录，反查本轮 run 对应的 rollout uuid */
+    private async _findResumeToken(cwd: string, sinceMs: number): Promise<string | undefined> {
+        try {
+            const candidates = await this._listRolloutFiles();
+            let best: { file: string; mtime: number; id: string } | undefined;
+            for (const file of candidates) {
+                let st;
+                try {
+                    st = await stat(file);
+                } catch { continue; }
+                if (st.mtimeMs < sinceMs - 2000) continue; // 允许 2s 时钟误差
+                const meta = await this._readSessionMeta(file);
+                if (!meta || meta.cwd !== cwd) continue;
+                if (!best || st.mtimeMs > best.mtime) best = { file, mtime: st.mtimeMs, id: meta.id };
+            }
+            return best?.id;
+        } catch {
+            return undefined; // best-effort：反查失败不影响主流程（下轮就没有 resume 能力而已）
+        }
+    }
+
+    /** 校验调用方传入的 resumeToken 对应的 rollout 文件是否仍存在（伪 id 防御） */
+    private async _rolloutFileExists(resumeToken: string): Promise<boolean> {
+        const candidates = await this._listRolloutFiles();
+        return candidates.some(f => f.includes(resumeToken));
+    }
+
+    private async _listRolloutFiles(): Promise<string[]> {
+        const root = this.sessionsRoot;
+        if (!existsSync(root)) return [];
+        const results: string[] = [];
+        const walk = async (dir: string, depth: number) => {
+            let entries;
+            try {
+                entries = await readdir(dir, { withFileTypes: true });
+            } catch { return; }
+            for (const entry of entries) {
+                const full = path.join(dir, entry.name);
+                if (entry.isDirectory() && depth < 3) await walk(full, depth + 1);
+                else if (entry.isFile() && entry.name.endsWith('.jsonl')) results.push(full);
+            }
+        };
+        await walk(root, 0);
+        return results;
+    }
+
+    private async _readSessionMeta(file: string): Promise<{ id: string; cwd: string } | undefined> {
+        try {
+            const content = await readFile(file, 'utf-8');
+            const firstLine = content.split('\n', 1)[0];
+            if (!firstLine) return undefined;
+            const parsed = JSON.parse(firstLine);
+            if (parsed?.type === 'session_meta' && parsed?.payload?.id && parsed?.payload?.cwd) {
+                return { id: parsed.payload.id, cwd: parsed.payload.cwd };
+            }
+            return undefined;
+        } catch {
+            return undefined;
+        }
+    }
 
     private *_translateLine(raw: string): Generator<ExecutionStep> {
         let parsed: CodexJsonLine;
