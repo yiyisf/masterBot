@@ -3,7 +3,9 @@ import { DatabaseSync } from 'node:sqlite';
 import { ProjectRepository } from '../src/core/project-repository.js';
 import { RequirementRepository } from '../src/core/requirement-repository.js';
 import { RequirementRunRepository } from '../src/core/requirement-run-repository.js';
+import { PendingQuestionsRepository } from '../src/core/pending-questions-repository.js';
 import { RequirementExecutionService } from '../src/core/requirement-execution-service.js';
+import { waitForUserDecision } from '../src/core/interrupt-coordinator.js';
 import type { WorktreeManager } from '../src/core/worktree-manager.js';
 import type { IAgentEngine } from '../src/core/harness/agent-engine.js';
 import type { ExecutionStep } from '../src/types.js';
@@ -34,6 +36,11 @@ function createTestDb(): DatabaseSync {
             worktree_path TEXT, branch TEXT, session_id TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'running',
             retry_no INTEGER NOT NULL DEFAULT 0, pr_url TEXT, error_message TEXT, token_cost TEXT, resume_token TEXT,
             started_at TEXT NOT NULL, finished_at TEXT
+        );
+        CREATE TABLE IF NOT EXISTS pending_questions (
+            id TEXT PRIMARY KEY, requirement_id TEXT NOT NULL, run_id TEXT NOT NULL, session_id TEXT NOT NULL,
+            phase TEXT NOT NULL, questions TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'pending',
+            answers TEXT, created_at TEXT NOT NULL, answered_at TEXT
         );
     `);
     return db;
@@ -72,10 +79,29 @@ function engineThrowing(message: string): IAgentEngine {
     };
 }
 
+/** 两阶段自动化（spec #85）：phase 已设置的 startAnalysis/startImplementation 成功路径
+ * 必须携带 cmaster:done 标记块，否则会被判协议违约——这里统一生成一个带指定 payload 的步骤 */
+function doneStep(content: string, payload: Record<string, unknown> = {}): ExecutionStep {
+    return {
+        type: 'answer',
+        content: `${content}\n\`\`\`cmaster:done\n${JSON.stringify(payload)}\n\`\`\``,
+        timestamp: new Date(),
+    };
+}
+
+function questionsStep(questions: Array<{ id: string; question: string }>): ExecutionStep {
+    return {
+        type: 'content',
+        content: `\`\`\`cmaster:questions\n${JSON.stringify({ questions })}\n\`\`\``,
+        timestamp: new Date(),
+    };
+}
+
 describe('RequirementExecutionService', () => {
     let projects: ProjectRepository;
     let requirements: RequirementRepository;
     let runs: RequirementRunRepository;
+    let pendingQuestions: PendingQuestionsRepository;
     let worktree: WorktreeManager;
     let projectId: string;
 
@@ -84,13 +110,14 @@ describe('RequirementExecutionService', () => {
         projects = new ProjectRepository(db as any);
         requirements = new RequirementRepository(db as any);
         runs = new RequirementRunRepository(db as any);
+        pendingQuestions = new PendingQuestionsRepository(db as any);
         worktree = fakeWorktreeManager();
         projectId = projects.create({ name: 'cmasterBot', dir: '/repo/cmasterBot' }).id;
     });
 
     function makeService(createEngine: (engineKind: any, spec: any, logger: any) => IAgentEngine) {
         return new RequirementExecutionService({
-            projects, requirements, runs, worktree,
+            projects, requirements, runs, pendingQuestions, worktree,
             logger: { debug() {}, info() {}, warn() {}, error() {} },
             createEngine,
         });
@@ -393,7 +420,7 @@ describe('RequirementExecutionService', () => {
 
     describe('startAnalysis', () => {
         it('建 worktree、建 run，phase=analysis，成功结束后转 analyzed（不是 implemented）', async () => {
-            const service = makeService(() => engineYielding([{ type: 'answer', content: 'spec drafted', timestamp: new Date() }]));
+            const service = makeService(() => engineYielding([doneStep('spec drafted')]));
             const requirement = requirements.create({
                 projectId, reqKey: 'cmasterBot#a1', source: 'github', sourceKey: 'a1', title: 'Add feature',
             });
@@ -421,7 +448,7 @@ describe('RequirementExecutionService', () => {
         it('interrupt 步骤 → waiting_input，恢复后 → in_progress，最终 analyzed', async () => {
             const service = makeService(() => engineYielding([
                 { type: 'interrupt', interruptKind: 'question', interruptId: 'i1', content: 'q?', timestamp: new Date() },
-                { type: 'answer', content: 'spec drafted', timestamp: new Date() },
+                doneStep('spec drafted'),
             ]));
             const requirement = requirements.create({
                 projectId, reqKey: 'cmasterBot#a3', source: 'github', sourceKey: 'a3', title: 'Add feature',
@@ -441,7 +468,7 @@ describe('RequirementExecutionService', () => {
         });
 
         it('reanalyze=true 允许从 analyzed 重新发起，并把尚未 implemented 的卡片标记 cancelled（已实现卡片不受影响）', async () => {
-            const service = makeService(() => engineYielding([{ type: 'answer', content: 'redone', timestamp: new Date() }]));
+            const service = makeService(() => engineYielding([doneStep('redone')]));
             const requirement = requirements.create({
                 projectId, reqKey: 'cmasterBot#a5', source: 'github', sourceKey: 'a5', title: 'Add feature',
             });
@@ -501,7 +528,7 @@ describe('RequirementExecutionService', () => {
 
         it('按 card_no 顺序串行驱动全部卡片，全部完成后父需求转 implemented，共用同一 worktree', async () => {
             const { requirement, cards } = makeAnalyzedWithCards(2, 'i3');
-            const service = makeService(() => engineYielding([{ type: 'answer', content: 'done', timestamp: new Date() }]));
+            const service = makeService(() => engineYielding([doneStep('done')]));
 
             await service.startImplementation(requirement.id);
             await new Promise(r => setTimeout(r, 0));
@@ -519,7 +546,7 @@ describe('RequirementExecutionService', () => {
             const service = makeService(() => {
                 call += 1;
                 if (call === 2) return engineThrowing('card 2 boom');
-                return engineYielding([{ type: 'answer', content: 'done', timestamp: new Date() }]);
+                return engineYielding([doneStep('done')]);
             });
 
             await service.startImplementation(requirement.id);
@@ -537,7 +564,7 @@ describe('RequirementExecutionService', () => {
             const service = makeService(() => {
                 firstAttemptCall += 1;
                 if (firstAttemptCall === 2) return engineThrowing('card 2 boom');
-                return engineYielding([{ type: 'answer', content: 'done', timestamp: new Date() }]);
+                return engineYielding([doneStep('done')]);
             });
             await service.startImplementation(requirement.id);
             await new Promise(r => setTimeout(r, 0));
@@ -545,7 +572,7 @@ describe('RequirementExecutionService', () => {
             expect(requirements.getById(requirement.id)!.status).toBe('failed');
 
             // 重试：第二次调用换一个总是成功的引擎
-            const retryService = makeService(() => engineYielding([{ type: 'answer', content: 'done on retry', timestamp: new Date() }]));
+            const retryService = makeService(() => engineYielding([doneStep('done on retry')]));
             await retryService.startImplementation(requirement.id);
             await new Promise(r => setTimeout(r, 0));
 
@@ -560,7 +587,7 @@ describe('RequirementExecutionService', () => {
             const service = makeService(() => {
                 call += 1;
                 if (call === 1) return engineThrowing('card 1 boom');
-                return engineYielding([{ type: 'answer', content: 'done', timestamp: new Date() }]);
+                return engineYielding([doneStep('done')]);
             });
             await service.startImplementation(requirement.id);
             await new Promise(r => setTimeout(r, 0));
@@ -606,6 +633,248 @@ describe('RequirementExecutionService', () => {
             const card = requirements.createCard({ parentId: requirement.id, projectId, reqKey: 'cmasterBot#sc3-1', source: 'manual', sourceKey: 'sc3-1', title: '卡1', cardNo: 1 });
             requirements.updateStatus(card.id, 'implemented');
             expect(() => service.skipCard(card.id)).toThrow(/already terminal/);
+        });
+    });
+
+    // ─────────────────────────── 标记块协议 + 待回答问题（spec #85, ticket #88）───────────────────────────
+
+    describe('标记块协议解析（analysis 阶段）', () => {
+        it('cmaster:done 携带 analysisSpec + cards：写入规格，按顺序建卡', async () => {
+            const service = makeService(() => engineYielding([
+                doneStep('分析完成', {
+                    analysisSpec: { goal: 'g', scope: 's', acceptance: 'a' },
+                    cards: [{ title: '卡片 A' }, { title: '卡片 B' }],
+                }),
+            ]));
+            const requirement = requirements.create({
+                projectId, reqKey: 'cmasterBot#m1', source: 'github', sourceKey: 'm1', title: 'Add feature',
+            });
+            requirements.updateStatus(requirement.id, 'queued');
+
+            await service.startAnalysis(requirement.id);
+            await new Promise(r => setTimeout(r, 0));
+
+            const updated = requirements.getById(requirement.id)!;
+            expect(updated.status).toBe('analyzed');
+            expect(updated.analysisSpec).toEqual({ goal: 'g', scope: 's', acceptance: 'a' });
+
+            const cards = requirements.listCardsByParent(requirement.id);
+            expect(cards.map(c => c.title)).toEqual(['卡片 A', '卡片 B']);
+            expect(cards.map(c => c.cardNo)).toEqual([1, 2]);
+            expect(cards.every(c => c.status === 'queued')).toBe(true);
+        });
+
+        it('cmaster:questions（非交互引擎的等价提问路径）：写入 pending_questions，需求转 waiting_input', async () => {
+            const service = makeService(() => engineYielding([questionsStep([{ id: 'q1', question: '用什么版式？' }])]));
+            const requirement = requirements.create({
+                projectId, reqKey: 'cmasterBot#m2', source: 'github', sourceKey: 'm2', title: 'Add feature',
+            });
+
+            await service.startAnalysis(requirement.id);
+            await new Promise(r => setTimeout(r, 0));
+
+            expect(requirements.getById(requirement.id)!.status).toBe('waiting_input');
+            const pending = pendingQuestions.getLatestByRequirement(requirement.id);
+            expect(pending?.status).toBe('pending');
+            expect(pending?.questions).toEqual([{ id: 'q1', question: '用什么版式？' }]);
+        });
+
+        it('claude-code 原生 interrupt 也会双写 pending_questions（与标记块路径落同一张表）', async () => {
+            const service = makeService(() => ({
+                kind: 'claude-agent-sdk',
+                capabilities: { interactiveApproval: true, resume: false },
+                run: async function* (_input: string, context: any) {
+                    yield { type: 'interrupt', interruptKind: 'question', interruptId: 'i1', interruptReason: '用什么版式？', content: '用什么版式？', sessionId: context.sessionId, timestamp: new Date() };
+                    await waitForUserDecision(context.sessionId, {});
+                    yield doneStep('好的');
+                },
+            }));
+            const requirement = requirements.create({
+                projectId, reqKey: 'cmasterBot#m3', source: 'github', sourceKey: 'm3', title: 'Add feature',
+            });
+
+            await service.startAnalysis(requirement.id);
+            await new Promise(r => setTimeout(r, 0));
+
+            expect(requirements.getById(requirement.id)!.status).toBe('waiting_input');
+            const pending = pendingQuestions.getLatestByRequirement(requirement.id);
+            expect(pending?.status).toBe('pending');
+            expect(pending?.questions).toEqual([{ id: 'i1', question: '用什么版式？' }]);
+        });
+
+        it('协议违约（既无 questions 也无 done）：追加提示重试一轮，仍违约则标 failed', async () => {
+            const service = makeService(() => engineYielding([{ type: 'answer', content: '好的，我明白了', timestamp: new Date() }]));
+            const requirement = requirements.create({
+                projectId, reqKey: 'cmasterBot#m4', source: 'github', sourceKey: 'm4', title: 'Add feature',
+            });
+
+            await service.startAnalysis(requirement.id);
+            await new Promise(r => setTimeout(r, 0));
+
+            const updated = requirements.getById(requirement.id)!;
+            expect(updated.status).toBe('failed');
+            const [latestRun] = runs.listByRequirement(requirement.id);
+            expect(latestRun.errorMessage).toContain('协议违约');
+        });
+
+        it('第一次违约、第二次带 done 标记块：重试后成功', async () => {
+            const attempts: string[] = [];
+            const retryingService = makeService(() => ({
+                kind: 'claude-agent-sdk',
+                capabilities: { interactiveApproval: true, resume: false },
+                run: async function* () {
+                    attempts.push('call');
+                    if (attempts.length === 1) {
+                        yield { type: 'answer', content: '第一次忘了标记块', timestamp: new Date() } as ExecutionStep;
+                    } else {
+                        yield doneStep('这次带上了');
+                    }
+                },
+            }));
+            const requirement = requirements.create({
+                projectId, reqKey: 'cmasterBot#m5', source: 'github', sourceKey: 'm5', title: 'Add feature',
+            });
+
+            await retryingService.startAnalysis(requirement.id);
+            await new Promise(r => setTimeout(r, 0));
+
+            expect(attempts).toHaveLength(2);
+            expect(requirements.getById(requirement.id)!.status).toBe('analyzed');
+        });
+    });
+
+    describe('submitAnswers（统一回答分派，spec #85）', () => {
+        it('拒绝非 waiting_input 状态', async () => {
+            const service = makeService(() => engineYielding([]));
+            const requirement = requirements.create({
+                projectId, reqKey: 'cmasterBot#sa1', source: 'github', sourceKey: 'sa1', title: 'Add feature',
+            });
+            await expect(service.submitAnswers(requirement.id, ['x'])).rejects.toThrow(/waiting for input/);
+        });
+
+        it('waiting_input 但没有 pending 问题集时拒绝', async () => {
+            const service = makeService(() => engineYielding([]));
+            const requirement = requirements.create({
+                projectId, reqKey: 'cmasterBot#sa2', source: 'github', sourceKey: 'sa2', title: 'Add feature',
+            });
+            requirements.updateStatus(requirement.id, 'waiting_input');
+            await expect(service.submitAnswers(requirement.id, ['x'])).rejects.toThrow(/No pending question set/);
+        });
+
+        it('分派路径 A：claude-code 原生中断走 resolveInterrupt，run 在原地继续并完成', async () => {
+            const service = makeService(() => ({
+                kind: 'claude-agent-sdk',
+                capabilities: { interactiveApproval: true, resume: false },
+                run: async function* (_input: string, context: any) {
+                    yield { type: 'interrupt', interruptKind: 'question', interruptId: 'i1', interruptReason: '用什么版式？', content: '用什么版式？', sessionId: context.sessionId, timestamp: new Date() };
+                    const decision = await waitForUserDecision(context.sessionId, {});
+                    yield doneStep(`已收到：${decision.response}`);
+                },
+            }));
+            const requirement = requirements.create({
+                projectId, reqKey: 'cmasterBot#sa3', source: 'github', sourceKey: 'sa3', title: 'Add feature',
+            });
+            await service.startAnalysis(requirement.id);
+            await new Promise(r => setTimeout(r, 0));
+            expect(requirements.getById(requirement.id)!.status).toBe('waiting_input');
+
+            await service.submitAnswers(requirement.id, ['A4 纵向']);
+            await new Promise(r => setTimeout(r, 0));
+
+            expect(requirements.getById(requirement.id)!.status).toBe('analyzed');
+            const pending = pendingQuestions.getLatestByRequirement(requirement.id);
+            expect(pending?.status).toBe('answered');
+            expect(pending?.answers).toEqual(['A4 纵向']);
+        });
+
+        it('分派路径 B：非交互引擎走 resumeToken 续接（进程已退出，重新驱动一轮）', async () => {
+            let resumeCallArgs: any[] = [];
+            const service = makeService(() => ({
+                kind: 'codex',
+                capabilities: { interactiveApproval: false, resume: true },
+                run: async function* (_input: string, context: any) {
+                    resumeCallArgs.push({ input: _input, resumeToken: context.resumeToken });
+                    if (!context.resumeToken) {
+                        yield { type: 'meta', content: 'session recorded', resumeToken: 'codex-session-abc', timestamp: new Date() } as ExecutionStep;
+                        yield questionsStep([{ id: 'q1', question: '用什么版式？' }]);
+                    } else {
+                        yield doneStep('续接后完成');
+                    }
+                },
+            }));
+            const requirement = requirements.create({
+                projectId, reqKey: 'cmasterBot#sa4', source: 'github', sourceKey: 'sa4', title: 'Add feature',
+            });
+            await service.startAnalysis(requirement.id, { engine: 'codex' });
+            await new Promise(r => setTimeout(r, 0));
+            expect(requirements.getById(requirement.id)!.status).toBe('waiting_input');
+            const [runBeforeResume] = runs.listByRequirement(requirement.id);
+            expect(runBeforeResume.resumeToken).toBe('codex-session-abc');
+
+            await service.submitAnswers(requirement.id, ['A4 纵向']);
+            await new Promise(r => setTimeout(r, 0));
+
+            expect(resumeCallArgs[1].resumeToken).toBe('codex-session-abc');
+            expect(resumeCallArgs[1].input).toContain('A4 纵向');
+            expect(requirements.getById(requirement.id)!.status).toBe('analyzed');
+        });
+
+        it('无 resumeToken 时拒绝（引擎不支持续接或凭据缺失）', async () => {
+            const service = makeService(() => ({
+                kind: 'codex',
+                capabilities: { interactiveApproval: false, resume: true },
+                run: async function* () {
+                    yield questionsStep([{ id: 'q1', question: '？' }]);
+                },
+            }));
+            const requirement = requirements.create({
+                projectId, reqKey: 'cmasterBot#sa5', source: 'github', sourceKey: 'sa5', title: 'Add feature',
+            });
+            await service.startAnalysis(requirement.id, { engine: 'codex' });
+            await new Promise(r => setTimeout(r, 0));
+
+            await expect(service.submitAnswers(requirement.id, ['x'])).rejects.toThrow(/no resumable session/);
+        });
+
+        it('卡片续接：本卡完成后自动继续驱动父需求的下一张卡片', async () => {
+            const { requirement, cards } = (function makeAnalyzedWithCards() {
+                const req = requirements.create({
+                    projectId, reqKey: 'cmasterBot#sa6', source: 'github', sourceKey: 'sa6', title: 'Add feature',
+                });
+                requirements.updateStatus(req.id, 'analyzed');
+                const c1 = requirements.createCard({ parentId: req.id, projectId, reqKey: 'cmasterBot#sa6-1', source: 'manual', sourceKey: 'sa6-1', title: '卡1', cardNo: 1 });
+                const c2 = requirements.createCard({ parentId: req.id, projectId, reqKey: 'cmasterBot#sa6-2', source: 'manual', sourceKey: 'sa6-2', title: '卡2', cardNo: 2 });
+                return { requirement: req, cards: [c1, c2] };
+            })();
+
+            const service = makeService(() => ({
+                kind: 'codex',
+                capabilities: { interactiveApproval: false, resume: true },
+                run: async function* (input: string, context: any) {
+                    if (input.includes('卡1') && !context.resumeToken) {
+                        yield { type: 'meta', content: 'x', resumeToken: 'card1-session', timestamp: new Date() } as ExecutionStep;
+                        yield questionsStep([{ id: 'q1', question: '？' }]);
+                    } else {
+                        yield doneStep('完成');
+                    }
+                },
+            }));
+
+            await service.startImplementation(requirement.id, { engine: 'codex' });
+            await new Promise(r => setTimeout(r, 0));
+            expect(requirements.getById(cards[0].id)!.status).toBe('waiting_input');
+            expect(requirements.getById(requirement.id)!.status).toBe('waiting_input');
+
+            await service.submitAnswers(cards[0].id, ['答案']);
+            // 卡1续接 → 卡1完成 → 自动触发 startImplementation 继续驱动卡2，链路比单卡多几个
+            // microtask/macrotask，多让几拍
+            await new Promise(r => setTimeout(r, 0));
+            await new Promise(r => setTimeout(r, 0));
+            await new Promise(r => setTimeout(r, 0));
+
+            expect(requirements.getById(cards[0].id)!.status).toBe('implemented');
+            expect(requirements.getById(cards[1].id)!.status).toBe('implemented'); // 自动继续驱动下一张
+            expect(requirements.getById(requirement.id)!.status).toBe('implemented');
         });
     });
 });
