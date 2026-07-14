@@ -1,8 +1,9 @@
 import type { FastifyInstance } from 'fastify';
-import { requirementRepository, type RequirementStatus } from '../../core/requirement-repository.js';
+import { requirementRepository, type RequirementStatus, type AnalysisSpec } from '../../core/requirement-repository.js';
 import { requirementRunRepository } from '../../core/requirement-run-repository.js';
 import { requirementSyncService } from '../../core/requirement-sync-service.js';
 import { requirementExecutionService, type ExecutionEngineKind } from '../../core/requirement-execution-service.js';
+import { pendingQuestionsRepository } from '../../core/pending-questions-repository.js';
 import { sessionEventStore } from '../../core/harness/session-store.js';
 import type { GatewayDeps } from '../route-deps.js';
 
@@ -95,6 +96,138 @@ export async function registerRequirementRoutes(app: FastifyInstance, deps: Gate
             }
         }
     );
+
+    // ─────────────────────────── 两阶段自动化（spec #85）───────────────────────────
+
+    // 发起需求分析阶段；reanalyze=true 显式重新分析（作废尚未 implemented 的卡片）
+    app.post<{ Params: { id: string }; Body: { engine?: ExecutionEngineKind; approvalMode?: 'auto' | 'ask-on-risky'; reanalyze?: boolean } }>(
+        '/api/requirements/:id/analysis',
+        async (request, reply) => {
+            try {
+                const result = await requirementExecutionService.startAnalysis(request.params.id, {
+                    engine: request.body?.engine,
+                    approvalMode: request.body?.approvalMode,
+                    reanalyze: request.body?.reanalyze,
+                });
+                reply.status(202);
+                return result;
+            } catch (error: any) {
+                deps.logger.error(`Start analysis error: ${error.message}`);
+                if (error.message?.startsWith('Requirement not found') || error.message?.startsWith('Project not found')) {
+                    reply.status(404);
+                    return { error: error.message };
+                }
+                if (error.message?.includes('analyzable state') || error.message?.includes('cannot be reanalyzed')) {
+                    reply.status(409);
+                    return { error: error.message };
+                }
+                reply.status(500);
+                return { error: error.message };
+            }
+        }
+    );
+
+    // 核验通过后发起（或从失败卡续跑）拆卡实现阶段
+    app.post<{ Params: { id: string }; Body: { engine?: ExecutionEngineKind; approvalMode?: 'auto' | 'ask-on-risky' } }>(
+        '/api/requirements/:id/implementation',
+        async (request, reply) => {
+            try {
+                const result = await requirementExecutionService.startImplementation(request.params.id, {
+                    engine: request.body?.engine,
+                    approvalMode: request.body?.approvalMode,
+                });
+                reply.status(202);
+                return result;
+            } catch (error: any) {
+                deps.logger.error(`Start implementation error: ${error.message}`);
+                if (error.message?.startsWith('Requirement not found') || error.message?.startsWith('Project not found')) {
+                    reply.status(404);
+                    return { error: error.message };
+                }
+                if (error.message?.includes('implementable state') || error.message?.includes('no cards')) {
+                    reply.status(409);
+                    return { error: error.message };
+                }
+                reply.status(500);
+                return { error: error.message };
+            }
+        }
+    );
+
+    // 核验阶段编辑分析规格
+    app.patch<{ Params: { id: string }; Body: AnalysisSpec }>('/api/requirements/:id/analysis-spec', async (request, reply) => {
+        const requirement = requirementRepository.getById(request.params.id);
+        if (!requirement) { reply.status(404); return { error: 'Requirement not found' }; }
+        requirementRepository.updateAnalysisSpec(request.params.id, request.body ?? {});
+        return requirementRepository.getById(request.params.id);
+    });
+
+    // 该需求当前（最新）的待回答问题集，waiting_input 时供页面渲染问答表单
+    app.get<{ Params: { id: string } }>('/api/requirements/:id/pending-questions', async (request) => {
+        return pendingQuestionsRepository.getLatestByRequirement(request.params.id) ?? null;
+    });
+
+    // 卡片列表（核验阶段编辑、实现阶段查看进度共用）
+    app.get<{ Params: { id: string } }>('/api/requirements/:id/cards', async (request) => {
+        return requirementRepository.listCardsByParent(request.params.id);
+    });
+
+    // 核验阶段手动添加一张卡片（追加到末尾）
+    app.post<{ Params: { id: string }; Body: { title: string } }>('/api/requirements/:id/cards', async (request, reply) => {
+        const title = request.body?.title?.trim();
+        if (!title) { reply.status(400); return { error: 'Missing required field: title' }; }
+        const parent = requirementRepository.getById(request.params.id);
+        if (!parent) { reply.status(404); return { error: 'Requirement not found' }; }
+        const existing = requirementRepository.listCardsByParent(parent.id);
+        const cardNo = existing.length > 0 ? Math.max(...existing.map(c => c.cardNo ?? 0)) + 1 : 1;
+        const card = requirementRepository.createCard({
+            parentId: parent.id, projectId: parent.projectId,
+            reqKey: `${parent.reqKey}-card-${cardNo}`, source: 'manual', sourceKey: `card-${cardNo}`,
+            title, cardNo,
+        });
+        reply.status(201);
+        return card;
+    });
+
+    // 核验阶段编辑卡片标题 / 调整顺序
+    app.patch<{ Params: { id: string; cardId: string }; Body: { title?: string; cardNo?: number } }>(
+        '/api/requirements/:id/cards/:cardId',
+        async (request, reply) => {
+            const card = requirementRepository.getById(request.params.cardId);
+            if (!card || card.parentId !== request.params.id) { reply.status(404); return { error: 'Card not found' }; }
+            if (request.body?.title !== undefined) requirementRepository.updateCardTitle(card.id, request.body.title);
+            if (request.body?.cardNo !== undefined) requirementRepository.updateCardOrder(card.id, request.body.cardNo);
+            return requirementRepository.getById(card.id);
+        }
+    );
+
+    // 核验阶段删除一张尚未执行的卡片
+    app.delete<{ Params: { id: string; cardId: string } }>('/api/requirements/:id/cards/:cardId', async (request, reply) => {
+        const card = requirementRepository.getById(request.params.cardId);
+        if (!card || card.parentId !== request.params.id) { reply.status(404); return { error: 'Card not found' }; }
+        requirementRepository.deleteCard(card.id);
+        return { success: true };
+    });
+
+    // 人工「跳过此卡」：标记 cancelled，之后调用 /implementation 会自然跳过它继续下一张
+    app.post<{ Params: { id: string; cardId: string } }>('/api/requirements/:id/cards/:cardId/skip', async (request, reply) => {
+        try {
+            requirementExecutionService.skipCard(request.params.cardId);
+            return requirementRepository.getById(request.params.cardId);
+        } catch (error: any) {
+            deps.logger.error(`Skip card error: ${error.message}`);
+            if (error.message?.startsWith('Card not found')) {
+                reply.status(404);
+                return { error: error.message };
+            }
+            if (error.message?.includes('is not a card') || error.message?.includes('already terminal')) {
+                reply.status(409);
+                return { error: error.message };
+            }
+            reply.status(500);
+            return { error: error.message };
+        }
+    });
 
     // run 列表与详情（执行记录回放的入口，静态浏览用）
     app.get<{ Params: { id: string } }>('/api/requirements/:id/runs', async (request) => {
