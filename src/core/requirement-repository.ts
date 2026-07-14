@@ -6,10 +6,22 @@ export type RequirementStatus =
     | 'queued'
     | 'in_progress'
     | 'waiting_input'
+    | 'analyzed'
     | 'implemented'
     | 'merged'
     | 'failed'
     | 'cancelled';
+
+/** 两阶段自动化：需求当前处于哪个阶段（NULL = 旧单阶段直通路径） */
+export type RequirementPhase = 'analysis' | 'implementation';
+
+/** 分析产出的结构化规格（目标/范围/验收），由 grilling+to-spec skill 产出后落库 */
+export interface AnalysisSpec {
+    goal?: string;
+    scope?: string;
+    acceptance?: string;
+    [key: string]: unknown;
+}
 
 export interface Requirement {
     id: string;
@@ -23,6 +35,14 @@ export interface Requirement {
     status: RequirementStatus;
     sourceUrl: string | null;
     sourceClosed: boolean;
+    /** 当前阶段，NULL = 旧单阶段直通路径 */
+    phase: RequirementPhase | null;
+    /** 分析规格 JSON，NULL = 尚未分析完成或走的旧路径 */
+    analysisSpec: AnalysisSpec | null;
+    /** 父需求 id，NULL = 非卡片（普通需求） */
+    parentId: string | null;
+    /** 卡片在父需求下的串行执行序号，NULL = 非卡片 */
+    cardNo: number | null;
     createdAt: string;
     updatedAt: string;
 }
@@ -39,6 +59,10 @@ interface RequirementRow {
     status: string;
     source_url: string | null;
     source_closed: number;
+    phase: string | null;
+    analysis_spec: string | null;
+    parent_id: string | null;
+    card_no: number | null;
     created_at: string;
     updated_at: string;
 }
@@ -56,6 +80,10 @@ function rowToRequirement(row: RequirementRow): Requirement {
         status: row.status as RequirementStatus,
         sourceUrl: row.source_url,
         sourceClosed: Boolean(row.source_closed),
+        phase: (row.phase as RequirementPhase | null) ?? null,
+        analysisSpec: row.analysis_spec ? JSON.parse(row.analysis_spec) : null,
+        parentId: row.parent_id,
+        cardNo: row.card_no,
         createdAt: row.created_at,
         updatedAt: row.updated_at,
     };
@@ -175,6 +203,71 @@ export class RequirementRepository {
         const now = new Date().toISOString();
         this.db.prepare('UPDATE requirements SET source_closed = ?, updated_at = ? WHERE id = ?')
             .run(closed ? 1 : 0, now, id);
+    }
+
+    /** 两阶段自动化：进入/切换阶段（analysis/implementation），不改动状态 */
+    updatePhase(id: string, phase: RequirementPhase): void {
+        const now = new Date().toISOString();
+        this.db.prepare('UPDATE requirements SET phase = ?, updated_at = ? WHERE id = ?')
+            .run(phase, now, id);
+    }
+
+    /** 分析阶段完成后落库结构化规格；analyzed 状态下页面可再次调用本方法保存核验中的编辑 */
+    updateAnalysisSpec(id: string, spec: AnalysisSpec): void {
+        const now = new Date().toISOString();
+        this.db.prepare('UPDATE requirements SET analysis_spec = ?, updated_at = ? WHERE id = ?')
+            .run(JSON.stringify(spec), now, id);
+    }
+
+    /**
+     * 拆卡：把一张实现卡片建成父需求的子 requirement（spec: 卡 = 子 requirement，
+     * parentId + cardNo 串行顺序，无依赖图）。cardNo 由调用方按 to-tickets 的输出顺序传入。
+     */
+    createCard(input: { parentId: string; projectId: string; reqKey: string; source: string; sourceKey: string; title: string; cardNo: number }): Requirement {
+        const id = nanoid();
+        const now = new Date().toISOString();
+        this.db.prepare(
+            `INSERT INTO requirements (id, project_id, req_key, source, source_key, title, status, source_closed, parent_id, card_no, created_at, updated_at)
+             VALUES (?, ?, ?, ?, ?, ?, 'queued', 0, ?, ?, ?, ?)`
+        ).run(
+            id,
+            input.projectId,
+            input.reqKey,
+            input.source,
+            input.sourceKey,
+            input.title,
+            input.parentId,
+            input.cardNo,
+            now,
+            now
+        );
+        return this.getById(id)!;
+    }
+
+    /** 一张父需求下的全部卡片，按执行顺序（card_no 升序）返回 */
+    listCardsByParent(parentId: string): Requirement[] {
+        const rows = this.db.prepare('SELECT * FROM requirements WHERE parent_id = ? ORDER BY card_no ASC')
+            .all(parentId) as unknown as RequirementRow[];
+        return rows.map(rowToRequirement);
+    }
+
+    /** 核验阶段编辑卡片标题 */
+    updateCardTitle(id: string, title: string): void {
+        const now = new Date().toISOString();
+        this.db.prepare('UPDATE requirements SET title = ?, updated_at = ? WHERE id = ?')
+            .run(title, now, id);
+    }
+
+    /** 核验阶段调整卡片执行顺序 */
+    updateCardOrder(id: string, cardNo: number): void {
+        const now = new Date().toISOString();
+        this.db.prepare('UPDATE requirements SET card_no = ?, updated_at = ? WHERE id = ?')
+            .run(cardNo, now, id);
+    }
+
+    /** 核验阶段删除一张尚未执行的卡片 */
+    deleteCard(id: string): boolean {
+        return this.delete(id);
     }
 
     delete(id: string): boolean {

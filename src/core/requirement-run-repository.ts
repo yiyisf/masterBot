@@ -16,6 +16,8 @@ export interface RequirementRun {
     prUrl: string | null;
     errorMessage: string | null;
     tokenCost: Record<string, unknown> | null;
+    /** 引擎侧会话续接凭据（codex=rollout uuid / opencode/pi=首行 session id），供问答后原生续接 */
+    resumeToken: string | null;
     startedAt: string;
     finishedAt: string | null;
 }
@@ -33,6 +35,7 @@ interface RequirementRunRow {
     pr_url: string | null;
     error_message: string | null;
     token_cost: string | null;
+    resume_token: string | null;
     started_at: string;
     finished_at: string | null;
 }
@@ -51,6 +54,7 @@ function rowToRun(row: RequirementRunRow): RequirementRun {
         prUrl: row.pr_url,
         errorMessage: row.error_message,
         tokenCost: row.token_cost ? JSON.parse(row.token_cost) : null,
+        resumeToken: row.resume_token,
         startedAt: row.started_at,
         finishedAt: row.finished_at,
     };
@@ -132,6 +136,11 @@ export class RequirementRunRepository {
 
     setTokenCost(id: string, tokenCost: Record<string, unknown>): void {
         this.db.prepare('UPDATE requirement_runs SET token_cost = ? WHERE id = ?').run(JSON.stringify(tokenCost), id);
+    }
+
+    /** 引擎 run() 结束后捕获的会话续接凭据，供回答分派时判断走 resume 续接 */
+    setResumeToken(id: string, resumeToken: string): void {
+        this.db.prepare('UPDATE requirement_runs SET resume_token = ? WHERE id = ?').run(resumeToken, id);
     }
 
     incrementRetryFrom(previousRun: RequirementRun, sessionId: string): RequirementRun {

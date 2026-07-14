@@ -18,6 +18,7 @@ function createTestDb(): DatabaseSync {
             pr_url          TEXT,
             error_message   TEXT,
             token_cost      TEXT,
+            resume_token    TEXT,
             started_at      TEXT NOT NULL,
             finished_at     TEXT
         );
@@ -131,5 +132,13 @@ describe('RequirementRunRepository', () => {
         expect(fetched1.errorMessage).toBe('服务重启，执行中断');
         expect(fetched1.finishedAt).not.toBeNull();
         expect(repo.getById(untouched.id)!.status).toBe('succeeded');
+    });
+
+    it('新建的 run resumeToken 为 null，setResumeToken 后可读取（问答分派用）', () => {
+        const run = repo.create({ requirementId: 'r1', projectId: 'p1', engine: 'codex', sessionId: 's1' });
+        expect(run.resumeToken).toBeNull();
+
+        repo.setResumeToken(run.id, '019f553e-576a-78e1-a34c-465152fae76b');
+        expect(repo.getById(run.id)!.resumeToken).toBe('019f553e-576a-78e1-a34c-465152fae76b');
     });
 });

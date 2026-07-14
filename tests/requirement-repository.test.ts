@@ -24,12 +24,17 @@ function createTestDb(): DatabaseSync {
             status         TEXT NOT NULL DEFAULT 'synced',
             source_url     TEXT,
             source_closed  INTEGER NOT NULL DEFAULT 0,
+            phase          TEXT,
+            analysis_spec  TEXT,
+            parent_id      TEXT,
+            card_no        INTEGER,
             created_at     TEXT NOT NULL,
             updated_at     TEXT NOT NULL
         );
         CREATE UNIQUE INDEX IF NOT EXISTS uq_req_key      ON requirements(req_key);
         CREATE UNIQUE INDEX IF NOT EXISTS uq_req_dedup    ON requirements(project_id, source, source_key);
         CREATE INDEX IF NOT EXISTS idx_req_project_status ON requirements(project_id, status);
+        CREATE INDEX IF NOT EXISTS idx_req_parent          ON requirements(parent_id, card_no);
     `);
     db.exec(`INSERT INTO projects (id, name, dir, created_at, updated_at) VALUES ('p1', 'cmasterBot', '/repo', '2026-01-01', '2026-01-01')`);
     db.exec(`INSERT INTO projects (id, name, dir, created_at, updated_at) VALUES ('p2', 'otherRepo', '/repo2', '2026-01-01', '2026-01-01')`);
@@ -155,5 +160,65 @@ describe('RequirementRepository', () => {
         expect(repo.getById(stuck1.id)!.status).toBe('failed');
         expect(repo.getById(stuck2.id)!.status).toBe('failed');
         expect(repo.getById(untouched.id)!.status).toBe('synced');
+    });
+
+    // ─────────────────────────── 两阶段自动化：phase / analysisSpec / 卡片 ───────────────────────────
+
+    it('新建的需求 phase/analysisSpec/parentId/cardNo 均为 null（旧单阶段直通路径零迁移）', () => {
+        const req = repo.create({ projectId: 'p1', reqKey: 'cmasterBot#1', source: 'github', sourceKey: '1', title: 'A' });
+        expect(req.phase).toBeNull();
+        expect(req.analysisSpec).toBeNull();
+        expect(req.parentId).toBeNull();
+        expect(req.cardNo).toBeNull();
+    });
+
+    it('updatePhase 切换阶段，不影响 status', () => {
+        const req = repo.create({ projectId: 'p1', reqKey: 'cmasterBot#1', source: 'github', sourceKey: '1', title: 'A' });
+        repo.updateStatus(req.id, 'in_progress');
+        repo.updatePhase(req.id, 'analysis');
+        const updated = repo.getById(req.id)!;
+        expect(updated.phase).toBe('analysis');
+        expect(updated.status).toBe('in_progress');
+    });
+
+    it('updateAnalysisSpec 落库结构化规格，可重复调用覆盖（核验阶段编辑）', () => {
+        const req = repo.create({ projectId: 'p1', reqKey: 'cmasterBot#1', source: 'github', sourceKey: '1', title: 'A' });
+        repo.updateAnalysisSpec(req.id, { goal: '导出 PDF', scope: '详情页按钮' });
+        expect(repo.getById(req.id)!.analysisSpec).toEqual({ goal: '导出 PDF', scope: '详情页按钮' });
+
+        repo.updateAnalysisSpec(req.id, { goal: '导出 PDF（修订）', scope: '详情页按钮', acceptance: '5 秒内出件' });
+        expect(repo.getById(req.id)!.analysisSpec).toEqual({ goal: '导出 PDF（修订）', scope: '详情页按钮', acceptance: '5 秒内出件' });
+    });
+
+    it('createCard 建子 requirement，listCardsByParent 按 card_no 升序返回', () => {
+        const parent = repo.create({ projectId: 'p1', reqKey: 'cmasterBot#1', source: 'github', sourceKey: '1', title: '父需求' });
+        const card2 = repo.createCard({ parentId: parent.id, projectId: 'p1', reqKey: 'cmasterBot#1-card-2', source: 'manual', sourceKey: 'card-2', title: '卡片 2', cardNo: 2 });
+        const card1 = repo.createCard({ parentId: parent.id, projectId: 'p1', reqKey: 'cmasterBot#1-card-1', source: 'manual', sourceKey: 'card-1', title: '卡片 1', cardNo: 1 });
+
+        expect(card1.parentId).toBe(parent.id);
+        expect(card1.status).toBe('queued');
+
+        const cards = repo.listCardsByParent(parent.id);
+        expect(cards.map(c => c.id)).toEqual([card1.id, card2.id]);
+    });
+
+    it('updateCardTitle / updateCardOrder 支持核验阶段编辑', () => {
+        const parent = repo.create({ projectId: 'p1', reqKey: 'cmasterBot#1', source: 'github', sourceKey: '1', title: '父需求' });
+        const card = repo.createCard({ parentId: parent.id, projectId: 'p1', reqKey: 'cmasterBot#1-card-1', source: 'manual', sourceKey: 'card-1', title: '旧标题', cardNo: 1 });
+
+        repo.updateCardTitle(card.id, '新标题');
+        repo.updateCardOrder(card.id, 3);
+        const updated = repo.getById(card.id)!;
+        expect(updated.title).toBe('新标题');
+        expect(updated.cardNo).toBe(3);
+    });
+
+    it('deleteCard 删除尚未执行的卡片，不影响其余卡片', () => {
+        const parent = repo.create({ projectId: 'p1', reqKey: 'cmasterBot#1', source: 'github', sourceKey: '1', title: '父需求' });
+        const card1 = repo.createCard({ parentId: parent.id, projectId: 'p1', reqKey: 'cmasterBot#1-card-1', source: 'manual', sourceKey: 'card-1', title: '卡片 1', cardNo: 1 });
+        const card2 = repo.createCard({ parentId: parent.id, projectId: 'p1', reqKey: 'cmasterBot#1-card-2', source: 'manual', sourceKey: 'card-2', title: '卡片 2', cardNo: 2 });
+
+        expect(repo.deleteCard(card1.id)).toBe(true);
+        expect(repo.listCardsByParent(parent.id).map(c => c.id)).toEqual([card2.id]);
     });
 });
