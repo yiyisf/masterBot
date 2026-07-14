@@ -207,7 +207,10 @@ describe('OpenCodeEngine', () => {
 
         it('resume 时看门狗超时兜底：目录不一致会挂死且不报错，watchdogMs 内无任何输出则主动判定失败', async () => {
             const hangScript = path.join(tmpDir, 'hang-opencode.cjs');
-            writeFileSync(hangScript, `#!/usr/bin/env node\n// 模拟 --dir 不一致：既不输出也不退出\n`);
+            // 模拟 --dir 不一致：既不输出也不退出——必须真的挂起进程（而不是让脚本自然
+            // 执行完退出），否则本用例在 CI 上会和看门狗定时器赛跑，脚本自己先退出就
+            // 让断言失败（真实踩过：本地偶尔通过，CI 上稳定失败）
+            writeFileSync(hangScript, `#!/usr/bin/env node\nsetInterval(() => {}, 1000);\n`);
             chmodSync(hangScript, 0o755);
 
             const engine = new OpenCodeEngine(mockLogger, { binaryPath: hangScript, resumeWatchdogMs: 100 });
