@@ -23,7 +23,7 @@ export type AgentEngineKind = 'native' | 'claude-agent-sdk' | 'codex' | 'opencod
 /**
  * 引擎能力声明（研发流程管理模块，spec §5.2）。
  * interactiveApproval：执行中能否编程式向人提问/请求审批（codex exec = false）。
- * resume：能否跨进程恢复会话（v1 全部 false；未来 Claude `--resume` 等）。
+ * resume：能否跨进程恢复会话（codex/opencode/pi 均支持原生会话续接，spec: 两阶段自动化 #85）。
  */
 export interface EngineCapabilities {
     interactiveApproval: boolean;
@@ -41,6 +41,11 @@ export interface EngineRunContext {
     cwd?: string;
     /** 审批模式：'auto' 沙箱自动判定（默认）；'ask-on-risky' 危险操作转人工审批（spec §5.4）*/
     approvalMode?: 'auto' | 'ask-on-risky';
+    /**
+     * 上一轮 run() 捕获的会话续接凭据（capabilities.resume=true 的引擎专用）。
+     * 传入时引擎应续接同一会话而非新建；未传或引擎不支持 resume 时忽略。
+     */
+    resumeToken?: string;
 }
 
 export interface IAgentEngine {

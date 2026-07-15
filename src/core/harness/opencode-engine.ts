@@ -30,6 +30,15 @@
  * 此时 `child_process.spawn()` 的 `cwd` 选项只影响新 spawn 出来的这个客户端进程，管不到
  * 被复用的那个 server 进程，导致实际操作目录/需求都不对。修复：显式传 `--dir <cwd>`，
  * 不管是新起的还是被复用的 server，都会被这个参数正确定向。
+ *
+ * Resume 接入（两阶段自动化 spec #85，实测记录见地图 ticket #76，opencode CLI 1.17.18）：
+ * - resumeToken 就是 JSONL 每行都带的顶层 `sessionID`，无需像 codex 那样反查文件，运行中
+ *   捕获第一行出现的即可。
+ * - resume 命令：`opencode run --session <id>`，**必须复用首轮相同的 `--dir`**。
+ * - **关键坑**：resume 时 `--dir` 与会话原目录不一致会导致进程无输出、无报错地挂死
+ *   （非 daemon 复用场景实测复现）。伪造 id 会显式报错（`Session not found`），这点比 codex
+ *   更友好；但目录不一致这个坑报错机制救不了，只能靠进程级看门狗兜底——resume 场景下若
+ *   watchdogMs 内收不到任何一行输出，主动 kill 并抛出清晰错误。
  */
 
 import { spawn } from 'child_process';
@@ -44,6 +53,8 @@ export interface OpenCodeEngineOptions {
     binaryPath?: string;
     /** provider/model，格式 "provider/model"（默认由 opencode 自身配置决定）*/
     model?: string;
+    /** resume 场景下的看门狗超时（ms，默认 120000）：目录不一致会挂死且不报错，只能靠超时兜底 */
+    resumeWatchdogMs?: number;
 }
 
 interface OpenCodePart {
@@ -70,8 +81,9 @@ interface OpenCodeJsonLine {
 export class OpenCodeEngine implements IAgentEngine {
     readonly kind = 'opencode' as const;
     // v1 用一次性非交互模式（opencode run），无编程式转人工接口；opencode serve 的双向
-    // 通道留作后续增强（见文件头注释）；不做 PTY 文本匹配兜底；v1 无 resume
-    readonly capabilities: EngineCapabilities = { interactiveApproval: false, resume: false };
+    // 通道留作后续增强（见文件头注释）；不做 PTY 文本匹配兜底。
+    // resume=true：接 opencode 原生 --session 续接（见文件头注释，实测记录 #76）
+    readonly capabilities: EngineCapabilities = { interactiveApproval: false, resume: true };
 
     constructor(private logger: Logger, private options: OpenCodeEngineOptions = {}) {}
 
@@ -81,11 +93,13 @@ export class OpenCodeEngine implements IAgentEngine {
         // 真实使用中发现：opencode 会自动发现/复用本机已在跑的 opencode server（daemon 式架构），
         // 此时新 spawn 的进程只是连去那个已有 server，spawn() 的 cwd 选项管不到它——
         // 必须显式传 --dir 告诉（新起的或被复用的）server 用哪个目录，不能只依赖进程级 cwd。
+        // resume 时必须复用首轮相同的 --dir（目录不一致会挂死，见文件头注释）。
         const args = ['run', '--format', 'json', '--dir', cwd];
+        if (context.resumeToken) args.push('--session', context.resumeToken);
         if (this.options.model) args.push('-m', this.options.model);
         args.push(input);
 
-        this.logger.info(`[opencode-engine] Starting "${binary} run" (cwd: ${cwd})`);
+        this.logger.info(`[opencode-engine] Starting "${binary} run"${context.resumeToken ? ' --session' : ''} (cwd: ${cwd})`);
 
         const child = spawn(binary, args, { cwd, stdio: ['ignore', 'pipe', 'pipe'] });
 
@@ -111,11 +125,29 @@ export class OpenCodeEngine implements IAgentEngine {
             child.on('close', (code, signal) => { exitCode = code; exitSignal = signal; resolve(); });
         });
 
+        // resume 场景专属看门狗：目录不一致时进程无输出无报错地挂死（实测确认），报错机制救不了，
+        // 只能靠"多久没收到一行输出就主动判定为挂死"兜底。首轮（无 resumeToken）不受影响。
+        let watchdogTimedOut = false;
+        let watchdogTimer: NodeJS.Timeout | undefined;
+        const armWatchdog = () => {
+            if (!context.resumeToken) return;
+            clearTimeout(watchdogTimer);
+            watchdogTimer = setTimeout(() => {
+                watchdogTimedOut = true;
+                child.kill();
+            }, this.options.resumeWatchdogMs ?? 120_000);
+        };
+        armWatchdog();
+
+        let resumeToken: string | undefined;
+
         if (child.stdout) {
             const rl = createInterface({ input: child.stdout });
             try {
                 for await (const line of rl) {
+                    armWatchdog();
                     if (!line.trim()) continue;
+                    if (!resumeToken) resumeToken = this._extractSessionId(line);
                     yield* this._translateLine(line);
                 }
             } finally {
@@ -124,14 +156,31 @@ export class OpenCodeEngine implements IAgentEngine {
         }
 
         await closePromise;
+        clearTimeout(watchdogTimer);
         if (context.abortSignal) context.abortSignal.removeEventListener('abort', onAbort);
 
+        if (watchdogTimedOut) {
+            throw new Error(`opencode resume 挂死：${this.options.resumeWatchdogMs ?? 120_000}ms 内无任何输出（很可能是 --dir 与会话原目录不一致导致进程无输出无报错地挂死，见 opencode-engine.ts 文件头注释）`);
+        }
         if (spawnError) throw spawnError;
         if (exitSignal) {
             throw new Error(`opencode run terminated by signal ${exitSignal}${context.abortSignal?.aborted ? ' (aborted)' : ''}`);
         }
         if (exitCode !== 0) {
             throw new Error(`opencode run exited with code ${exitCode}${stderrBuf ? `: ${stderrBuf.slice(0, 500)}` : ''}`);
+        }
+
+        if (resumeToken) {
+            yield { type: 'meta', content: '💾 opencode 会话已记录，可续接', resumeToken, timestamp: new Date() };
+        }
+    }
+
+    private _extractSessionId(raw: string): string | undefined {
+        try {
+            const parsed = JSON.parse(raw) as OpenCodeJsonLine;
+            return typeof parsed.sessionID === 'string' ? parsed.sessionID : undefined;
+        } catch {
+            return undefined;
         }
     }
 

@@ -43,9 +43,9 @@ afterEach(() => {
 });
 
 describe('PiEngine', () => {
-    it('capabilities: interactiveApproval=false（v1 一次性非交互模式，--mode rpc 双向通道留后续）, resume=false', () => {
+    it('capabilities: interactiveApproval=false（v1 一次性非交互模式，--mode rpc 双向通道留后续）, resume=true（原生 --session 续接，spec #85）', () => {
         const engine = new PiEngine(mockLogger, { binaryPath: fakeBinPath });
-        expect(engine.capabilities).toEqual({ interactiveApproval: false, resume: false });
+        expect(engine.capabilities).toEqual({ interactiveApproval: false, resume: true });
     });
 
     it('拼装的 CLI 参数包含 --mode json -p、--provider/--model/--tools 与 prompt', async () => {
@@ -59,6 +59,7 @@ describe('PiEngine', () => {
         expect(args).toEqual([
             '--mode', 'json', '-p',
             '--provider', 'mistral', '--model', 'mistral-large-latest', '--tools', 'read,grep',
+            '--session-dir', path.join(tmpDir, '.cmaster-pi-sessions'),
             'implement X',
         ]);
     });
@@ -82,10 +83,12 @@ describe('PiEngine', () => {
         const engine = new PiEngine(mockLogger, { binaryPath: fakeBinPath });
         const steps = await drain(engine.run('reply pong', { sessionId: 's2', memory: mockMemory }));
 
-        expect(steps).toHaveLength(2);
+        // session 启动 meta + pong content + 成功结束后追加的 resumeToken meta（id='x'）
+        expect(steps).toHaveLength(3);
         expect(steps[0]).toMatchObject({ type: 'meta' });
         expect(steps[0].content).toContain('/private/tmp/pi-probe');
         expect(steps[1]).toMatchObject({ type: 'content', content: 'pong' });
+        expect(steps[2].resumeToken).toBe('x');
     });
 
     it('真实成功路径（实测，含工具调用）：tool_execution_start/end → action/observation，多轮 message_end 各自产出 content', async () => {
@@ -203,5 +206,51 @@ describe('PiEngine', () => {
         const runPromise = drain(engine.run('task', { sessionId: 's10', memory: mockMemory, abortSignal: controller.signal }));
         controller.abort();
         await expect(runPromise).rejects.toThrow();
+    });
+
+    // ─────────────────────────── Resume（两阶段自动化 spec #85，实测记录 #77）───────────────────────────
+
+    describe('resume', () => {
+        it('传入 resumeToken 时 CLI 参数包含 --session-dir 与 --session', async () => {
+            const argsFile = path.join(tmpDir, 'resume-args.json');
+            process.env.FAKE_PI_ARGS_FILE = argsFile;
+            process.env.FAKE_PI_OUTPUT = JSON.stringify({
+                type: 'message_end',
+                message: { role: 'assistant', content: [{ type: 'text', text: '紫色大象88' }], stopReason: 'stop' },
+            }) + '\n';
+            const engine = new PiEngine(mockLogger, { binaryPath: fakeBinPath, provider: 'mistral', model: 'devstral-medium-latest' });
+            await drain(engine.run('刚才的暗号是什么？', { sessionId: 'sr1', memory: mockMemory, cwd: tmpDir, resumeToken: '019f5548-b50a-abcd' }));
+            const args = JSON.parse(readFileSync(argsFile, 'utf-8'));
+            expect(args).toEqual([
+                '--mode', 'json', '-p',
+                '--provider', 'mistral', '--model', 'devstral-medium-latest',
+                '--session-dir', path.join(tmpDir, '.cmaster-pi-sessions'),
+                '--session', '019f5548-b50a-abcd',
+                '刚才的暗号是什么？',
+            ]);
+        });
+
+        it('resumeToken 直接取自首行 session 事件的 id 字段，无需扫目录反查', async () => {
+            process.env.FAKE_PI_OUTPUT = [
+                JSON.stringify({ type: 'session', version: 3, id: '019f5548-real-session', timestamp: 't', cwd: tmpDir }),
+                JSON.stringify({ type: 'message_end', message: { role: 'assistant', content: [{ type: 'text', text: 'ok' }], stopReason: 'stop' } }),
+            ].join('\n') + '\n';
+            const engine = new PiEngine(mockLogger, { binaryPath: fakeBinPath });
+            const steps = await drain(engine.run('task', { sessionId: 'sr2', memory: mockMemory, cwd: tmpDir }));
+            expect(steps.find(s => s.resumeToken)?.resumeToken).toBe('019f5548-real-session');
+        });
+
+        it('--session 传伪 id 时 pi 显式 exit 1 + stderr「No session found」，透传为可判的错误', async () => {
+            const stderrScript = path.join(tmpDir, 'fake-pi-stderr.cjs');
+            writeFileSync(stderrScript, `#!/usr/bin/env node
+process.stderr.write("No session found matching '00000000-stale'");
+process.exitCode = 1;
+`);
+            chmodSync(stderrScript, 0o755);
+            const engine = new PiEngine(mockLogger, { binaryPath: stderrScript });
+            await expect(drain(engine.run('task', {
+                sessionId: 'sr3', memory: mockMemory, cwd: tmpDir, resumeToken: '00000000-stale',
+            }))).rejects.toThrow(/No session found/);
+        });
     });
 });

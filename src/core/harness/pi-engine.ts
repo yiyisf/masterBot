@@ -27,10 +27,21 @@
  *   `message_update` 里的 toolcall_* 增量事件干净得多，直接用这一对映射 action/observation。
  * - `agent_end`：整个 agent 循环结束（可能包含多个 turn），携带完整 `messages[]`；只用作
  *   收尾标记，不重复提取内容（已经在各个 message_end 里发过了）。
+ *
+ * Resume 接入（两阶段自动化 spec #85，实测记录见地图 ticket #77，pi 0.80.6）：
+ * - pi 有原生轻量续接参数，无需 `--mode rpc`：`--session <id>` 直接续接，配合固定
+ *   `--session-dir <dir>`；resumeToken 取首行 `session` 事件的 `id` 字段（比 codex 友好，
+ *   不用扫目录反查）。
+ * - **关键**：续接必须用 `--session`，不能用 `--session-id`——后者传伪 id 时会静默新建
+ *   一个不带上下文的空会话（exit 0，等同 codex 的坑）；`--session` 传伪 id 则显式
+ *   `exit 1` + stderr `No session found matching '…'`，失败可判。
+ * - 已知坑仍在（与非 resume 场景一致）：API 认证/网络失败时退出码仍是 0，失败信号只在
+ *   `message_end.stopReason === "error"` 里，续接后同样需要检测。
  */
 
 import { spawn } from 'child_process';
 import { createInterface } from 'readline';
+import path from 'path';
 import type { ExecutionStep, Logger } from '../../types.js';
 import type { IAgentEngine, EngineRunContext, EngineCapabilities } from './agent-engine.js';
 
@@ -45,6 +56,11 @@ export interface PiEngineOptions {
     model?: string;
     /** 工具白名单（默认不传，使用 pi 默认工具集：read/bash/edit/write）*/
     tools?: string[];
+    /**
+     * 会话存储目录（--session-dir，固定传递以保证首轮与 resume 轮指向同一位置）。
+     * 默认 `<cwd>/.cmaster-pi-sessions`（按需求 worktree 隔离，实测建议按实例隔离）。
+     */
+    sessionDir?: string;
 }
 
 interface PiTextContentPart {
@@ -77,32 +93,42 @@ interface PiJsonLine {
     result?: { content?: Array<{ type: string; text?: string }> };
     isError?: boolean;
     cwd?: string;
+    /** session 事件携带的会话 id，用作 resumeToken（实测记录 #77） */
+    id?: string;
     [key: string]: unknown;
 }
 
 interface TranslateState {
     hasError: boolean;
     errorMessage?: string;
+    /** 首行 session 事件捕获的会话 id，作为 resumeToken */
+    sessionId?: string;
 }
 
 export class PiEngine implements IAgentEngine {
     readonly kind = 'pi' as const;
     // v1 用一次性非交互模式（--mode json -p），无编程式转人工接口；--mode rpc 的双向
-    // 通道留作后续增强（见文件头注释）；不做 PTY 文本匹配兜底；v1 无 resume
-    readonly capabilities: EngineCapabilities = { interactiveApproval: false, resume: false };
+    // 通道留作后续增强（见文件头注释）。
+    // resume=true：接 pi 原生 --session 续接（见文件头注释，实测记录 #77）
+    readonly capabilities: EngineCapabilities = { interactiveApproval: false, resume: true };
 
     constructor(private logger: Logger, private options: PiEngineOptions = {}) {}
 
     async *run(input: string, context: EngineRunContext): AsyncGenerator<ExecutionStep> {
         const cwd = context.cwd ?? this.options.cwd ?? process.cwd();
         const binary = this.options.binaryPath ?? 'pi';
+        const sessionDir = this.options.sessionDir ?? path.join(cwd, '.cmaster-pi-sessions');
         const args = ['--mode', 'json', '-p'];
         if (this.options.provider) args.push('--provider', this.options.provider);
         if (this.options.model) args.push('--model', this.options.model);
         if (this.options.tools && this.options.tools.length > 0) args.push('--tools', this.options.tools.join(','));
+        // --session-dir 固定传递，保证首轮与 resume 轮指向同一位置；resume 用 --session
+        // （不用 --session-id，那个参数伪 id 会静默新建，见文件头注释）
+        args.push('--session-dir', sessionDir);
+        if (context.resumeToken) args.push('--session', context.resumeToken);
         args.push(input);
 
-        this.logger.info(`[pi-engine] Starting "${binary} -p" (cwd: ${cwd})`);
+        this.logger.info(`[pi-engine] Starting "${binary} -p"${context.resumeToken ? ' --session' : ''} (cwd: ${cwd})`);
 
         const child = spawn(binary, args, { cwd, stdio: ['ignore', 'pipe', 'pipe'] });
 
@@ -156,6 +182,10 @@ export class PiEngine implements IAgentEngine {
         if (state.hasError) {
             throw new Error(`pi reported an error: ${state.errorMessage ?? 'unknown error'}`);
         }
+
+        if (state.sessionId) {
+            yield { type: 'meta', content: '💾 pi 会话已记录，可续接', resumeToken: state.sessionId, timestamp: new Date() };
+        }
     }
 
     // ─────────────────────────────── private ───────────────────────────────
@@ -172,6 +202,7 @@ export class PiEngine implements IAgentEngine {
 
         switch (parsed.type) {
             case 'session':
+                if (typeof parsed.id === 'string' && !state.sessionId) state.sessionId = parsed.id;
                 yield { type: 'meta', content: `🚀 pi 会话已启动（cwd: ${parsed.cwd ?? '-'}）`, timestamp: now() };
                 break;
 
