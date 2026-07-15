@@ -23,14 +23,16 @@ function createTestDb(): DatabaseSync {
             id TEXT PRIMARY KEY, project_id TEXT NOT NULL, req_key TEXT NOT NULL, source TEXT NOT NULL,
             source_key TEXT NOT NULL, title TEXT NOT NULL, description TEXT, labels TEXT,
             status TEXT NOT NULL DEFAULT 'synced', source_url TEXT, source_closed INTEGER NOT NULL DEFAULT 0,
+            phase TEXT, analysis_spec TEXT, parent_id TEXT, card_no INTEGER,
             created_at TEXT NOT NULL, updated_at TEXT NOT NULL
         );
         CREATE UNIQUE INDEX IF NOT EXISTS uq_req_key ON requirements(req_key);
         CREATE UNIQUE INDEX IF NOT EXISTS uq_req_dedup ON requirements(project_id, source, source_key);
+        CREATE INDEX IF NOT EXISTS idx_req_parent ON requirements(parent_id, card_no);
         CREATE TABLE IF NOT EXISTS requirement_runs (
             id TEXT PRIMARY KEY, requirement_id TEXT NOT NULL, project_id TEXT NOT NULL, engine TEXT NOT NULL,
             worktree_path TEXT, branch TEXT, session_id TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'running',
-            retry_no INTEGER NOT NULL DEFAULT 0, pr_url TEXT, error_message TEXT, token_cost TEXT,
+            retry_no INTEGER NOT NULL DEFAULT 0, pr_url TEXT, error_message TEXT, token_cost TEXT, resume_token TEXT,
             started_at TEXT NOT NULL, finished_at TEXT
         );
     `);
@@ -385,5 +387,225 @@ describe('RequirementExecutionService', () => {
             projectId, reqKey: 'cmasterBot#m2', source: 'github', sourceKey: 'm2', title: 'Add feature',
         });
         await expect(service.merge(requirement.id)).rejects.toThrow(/mergeable state/);
+    });
+
+    // ─────────────────────────── 两阶段自动化：startAnalysis / startImplementation（spec #85）───────────────────────────
+
+    describe('startAnalysis', () => {
+        it('建 worktree、建 run，phase=analysis，成功结束后转 analyzed（不是 implemented）', async () => {
+            const service = makeService(() => engineYielding([{ type: 'answer', content: 'spec drafted', timestamp: new Date() }]));
+            const requirement = requirements.create({
+                projectId, reqKey: 'cmasterBot#a1', source: 'github', sourceKey: 'a1', title: 'Add feature',
+            });
+            requirements.updateStatus(requirement.id, 'queued');
+
+            const { runId } = await service.startAnalysis(requirement.id);
+            await new Promise(r => setTimeout(r, 0));
+
+            expect(worktree.ensure).toHaveBeenCalled();
+            expect(runs.getById(runId)!.status).toBe('succeeded');
+            const updated = requirements.getById(requirement.id)!;
+            expect(updated.status).toBe('analyzed');
+            expect(updated.phase).toBe('analysis');
+        });
+
+        it('拒绝非可分析状态（如 in_progress）', async () => {
+            const service = makeService(() => engineYielding([]));
+            const requirement = requirements.create({
+                projectId, reqKey: 'cmasterBot#a2', source: 'github', sourceKey: 'a2', title: 'Add feature',
+            });
+            requirements.updateStatus(requirement.id, 'in_progress');
+            await expect(service.startAnalysis(requirement.id)).rejects.toThrow(/analyzable state/);
+        });
+
+        it('interrupt 步骤 → waiting_input，恢复后 → in_progress，最终 analyzed', async () => {
+            const service = makeService(() => engineYielding([
+                { type: 'interrupt', interruptKind: 'question', interruptId: 'i1', content: 'q?', timestamp: new Date() },
+                { type: 'answer', content: 'spec drafted', timestamp: new Date() },
+            ]));
+            const requirement = requirements.create({
+                projectId, reqKey: 'cmasterBot#a3', source: 'github', sourceKey: 'a3', title: 'Add feature',
+            });
+            await service.startAnalysis(requirement.id);
+            await new Promise(r => setTimeout(r, 0));
+            expect(requirements.getById(requirement.id)!.status).toBe('analyzed');
+        });
+
+        it('reanalyze=false 时 analyzed 状态不可再次 startAnalysis（需显式 reanalyze）', async () => {
+            const service = makeService(() => engineYielding([]));
+            const requirement = requirements.create({
+                projectId, reqKey: 'cmasterBot#a4', source: 'github', sourceKey: 'a4', title: 'Add feature',
+            });
+            requirements.updateStatus(requirement.id, 'analyzed');
+            await expect(service.startAnalysis(requirement.id)).rejects.toThrow(/analyzable state/);
+        });
+
+        it('reanalyze=true 允许从 analyzed 重新发起，并把尚未 implemented 的卡片标记 cancelled（已实现卡片不受影响）', async () => {
+            const service = makeService(() => engineYielding([{ type: 'answer', content: 'redone', timestamp: new Date() }]));
+            const requirement = requirements.create({
+                projectId, reqKey: 'cmasterBot#a5', source: 'github', sourceKey: 'a5', title: 'Add feature',
+            });
+            requirements.updateStatus(requirement.id, 'analyzed');
+            const doneCard = requirements.createCard({ parentId: requirement.id, projectId, reqKey: 'cmasterBot#a5-1', source: 'manual', sourceKey: 'a5-1', title: '卡1', cardNo: 1 });
+            requirements.updateStatus(doneCard.id, 'implemented');
+            const pendingCard = requirements.createCard({ parentId: requirement.id, projectId, reqKey: 'cmasterBot#a5-2', source: 'manual', sourceKey: 'a5-2', title: '卡2', cardNo: 2 });
+
+            await service.startAnalysis(requirement.id, { reanalyze: true });
+            await new Promise(r => setTimeout(r, 0));
+
+            expect(requirements.getById(doneCard.id)!.status).toBe('implemented'); // 已实现的不受影响
+            expect(requirements.getById(pendingCard.id)!.status).toBe('cancelled'); // 未实现的被作废
+            expect(requirements.getById(requirement.id)!.status).toBe('analyzed');
+        });
+
+        it('reanalyze=true 但需求处于 in_progress/waiting_input/merged/cancelled 时拒绝', async () => {
+            const service = makeService(() => engineYielding([]));
+            const requirement = requirements.create({
+                projectId, reqKey: 'cmasterBot#a6', source: 'github', sourceKey: 'a6', title: 'Add feature',
+            });
+            requirements.updateStatus(requirement.id, 'merged');
+            await expect(service.startAnalysis(requirement.id, { reanalyze: true })).rejects.toThrow(/cannot be reanalyzed/);
+        });
+    });
+
+    describe('startImplementation', () => {
+        function makeAnalyzedWithCards(cardCount: number, reqKeyPrefix: string) {
+            const requirement = requirements.create({
+                projectId, reqKey: `cmasterBot#${reqKeyPrefix}`, source: 'github', sourceKey: reqKeyPrefix, title: 'Add feature',
+            });
+            requirements.updateStatus(requirement.id, 'analyzed');
+            const cards = Array.from({ length: cardCount }, (_, i) =>
+                requirements.createCard({
+                    parentId: requirement.id, projectId, reqKey: `cmasterBot#${reqKeyPrefix}-${i + 1}`,
+                    source: 'manual', sourceKey: `${reqKeyPrefix}-${i + 1}`, title: `卡片 ${i + 1}`, cardNo: i + 1,
+                }));
+            return { requirement, cards };
+        }
+
+        it('拒绝非可实现状态（如 synced）', async () => {
+            const service = makeService(() => engineYielding([]));
+            const requirement = requirements.create({
+                projectId, reqKey: 'cmasterBot#i1', source: 'github', sourceKey: 'i1', title: 'Add feature',
+            });
+            await expect(service.startImplementation(requirement.id)).rejects.toThrow(/implementable state/);
+        });
+
+        it('无卡片时拒绝', async () => {
+            const service = makeService(() => engineYielding([]));
+            const requirement = requirements.create({
+                projectId, reqKey: 'cmasterBot#i2', source: 'github', sourceKey: 'i2', title: 'Add feature',
+            });
+            requirements.updateStatus(requirement.id, 'analyzed');
+            await expect(service.startImplementation(requirement.id)).rejects.toThrow(/no cards/);
+        });
+
+        it('按 card_no 顺序串行驱动全部卡片，全部完成后父需求转 implemented，共用同一 worktree', async () => {
+            const { requirement, cards } = makeAnalyzedWithCards(2, 'i3');
+            const service = makeService(() => engineYielding([{ type: 'answer', content: 'done', timestamp: new Date() }]));
+
+            await service.startImplementation(requirement.id);
+            await new Promise(r => setTimeout(r, 0));
+
+            expect(requirements.getById(cards[0].id)!.status).toBe('implemented');
+            expect(requirements.getById(cards[1].id)!.status).toBe('implemented');
+            expect(requirements.getById(requirement.id)!.status).toBe('implemented');
+            // ensure 只调用一次（父需求）——卡片共用同一 worktree，不各自新建
+            expect(worktree.ensure).toHaveBeenCalledTimes(1);
+        });
+
+        it('某卡失败时停在当卡：后续卡片不执行，父需求同步为 failed', async () => {
+            const { requirement, cards } = makeAnalyzedWithCards(3, 'i4');
+            let call = 0;
+            const service = makeService(() => {
+                call += 1;
+                if (call === 2) return engineThrowing('card 2 boom');
+                return engineYielding([{ type: 'answer', content: 'done', timestamp: new Date() }]);
+            });
+
+            await service.startImplementation(requirement.id);
+            await new Promise(r => setTimeout(r, 0));
+
+            expect(requirements.getById(cards[0].id)!.status).toBe('implemented');
+            expect(requirements.getById(cards[1].id)!.status).toBe('failed');
+            expect(requirements.getById(cards[2].id)!.status).toBe('queued'); // 未被驱动
+            expect(requirements.getById(requirement.id)!.status).toBe('failed');
+        });
+
+        it('从失败卡续跑：再次调用 startImplementation 会跳过已 implemented 的卡片，重试失败的那张', async () => {
+            const { requirement, cards } = makeAnalyzedWithCards(2, 'i5');
+            let firstAttemptCall = 0;
+            const service = makeService(() => {
+                firstAttemptCall += 1;
+                if (firstAttemptCall === 2) return engineThrowing('card 2 boom');
+                return engineYielding([{ type: 'answer', content: 'done', timestamp: new Date() }]);
+            });
+            await service.startImplementation(requirement.id);
+            await new Promise(r => setTimeout(r, 0));
+            expect(requirements.getById(cards[1].id)!.status).toBe('failed');
+            expect(requirements.getById(requirement.id)!.status).toBe('failed');
+
+            // 重试：第二次调用换一个总是成功的引擎
+            const retryService = makeService(() => engineYielding([{ type: 'answer', content: 'done on retry', timestamp: new Date() }]));
+            await retryService.startImplementation(requirement.id);
+            await new Promise(r => setTimeout(r, 0));
+
+            expect(requirements.getById(cards[0].id)!.status).toBe('implemented'); // 未被重复驱动，保持原状态
+            expect(requirements.getById(cards[1].id)!.status).toBe('implemented');
+            expect(requirements.getById(requirement.id)!.status).toBe('implemented');
+        });
+
+        it('skipCard() 跳过某张失败卡后续跑，直接推进到下一张，不重试被跳过的卡', async () => {
+            const { requirement, cards } = makeAnalyzedWithCards(2, 'i6');
+            let call = 0;
+            const service = makeService(() => {
+                call += 1;
+                if (call === 1) return engineThrowing('card 1 boom');
+                return engineYielding([{ type: 'answer', content: 'done', timestamp: new Date() }]);
+            });
+            await service.startImplementation(requirement.id);
+            await new Promise(r => setTimeout(r, 0));
+            expect(requirements.getById(cards[0].id)!.status).toBe('failed');
+
+            service.skipCard(cards[0].id);
+            expect(requirements.getById(cards[0].id)!.status).toBe('cancelled');
+
+            await service.startImplementation(requirement.id);
+            await new Promise(r => setTimeout(r, 0));
+
+            expect(requirements.getById(cards[0].id)!.status).toBe('cancelled'); // 保持跳过态，不被重试
+            expect(requirements.getById(cards[1].id)!.status).toBe('implemented');
+            expect(requirements.getById(requirement.id)!.status).toBe('implemented');
+        });
+    });
+
+    describe('skipCard', () => {
+        it('把失败/排队中的卡片标记 cancelled', async () => {
+            const service = makeService(() => engineYielding([]));
+            const requirement = requirements.create({
+                projectId, reqKey: 'cmasterBot#sc1', source: 'github', sourceKey: 'sc1', title: 'Add feature',
+            });
+            const card = requirements.createCard({ parentId: requirement.id, projectId, reqKey: 'cmasterBot#sc1-1', source: 'manual', sourceKey: 'sc1-1', title: '卡1', cardNo: 1 });
+
+            service.skipCard(card.id);
+            expect(requirements.getById(card.id)!.status).toBe('cancelled');
+        });
+
+        it('拒绝对非卡片（无 parentId）调用', async () => {
+            const service = makeService(() => engineYielding([]));
+            const requirement = requirements.create({
+                projectId, reqKey: 'cmasterBot#sc2', source: 'github', sourceKey: 'sc2', title: 'Add feature',
+            });
+            expect(() => service.skipCard(requirement.id)).toThrow(/is not a card/);
+        });
+
+        it('拒绝对已终态（implemented/cancelled）卡片调用', async () => {
+            const service = makeService(() => engineYielding([]));
+            const requirement = requirements.create({
+                projectId, reqKey: 'cmasterBot#sc3', source: 'github', sourceKey: 'sc3', title: 'Add feature',
+            });
+            const card = requirements.createCard({ parentId: requirement.id, projectId, reqKey: 'cmasterBot#sc3-1', source: 'manual', sourceKey: 'sc3-1', title: '卡1', cardNo: 1 });
+            requirements.updateStatus(card.id, 'implemented');
+            expect(() => service.skipCard(card.id)).toThrow(/already terminal/);
+        });
     });
 });
