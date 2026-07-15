@@ -10,10 +10,12 @@ import { OpenCodeEngine } from './harness/opencode-engine.js';
 import { PiEngine } from './harness/pi-engine.js';
 import type { IAgentEngine } from './harness/agent-engine.js';
 import { defaultAgentSpec, type AgentSpec } from './harness/agent-spec.js';
-import { cancelInterrupt } from './interrupt-coordinator.js';
+import { cancelInterrupt, hasPendingInterrupt, resolveInterrupt } from './interrupt-coordinator.js';
 import { sessionEventStore } from './harness/session-store.js';
 import { buildAnalysisPrompt, buildImplementPrompt, type DevWorkflowPromptOverrides } from './harness/dev-workflow-prompts.js';
 import { devWorkflowPromptTemplateRepository } from './dev-workflow-prompt-template-repository.js';
+import { extractLastMarker } from './harness/marker-blocks.js';
+import { pendingQuestionsRepository, type PendingQuestionsRepository } from './pending-questions-repository.js';
 
 /** coding agent 运行不使用 cmasterBot 自身的记忆系统 */
 const noopMemory: MemoryAccess = {
@@ -75,6 +77,8 @@ export interface RequirementExecutionServiceDeps {
     createEngine?: (engineKind: ExecutionEngineKind, spec: AgentSpec, logger: Logger) => IAgentEngine;
     /** 阶段 prompt 模板的 DB 覆盖层（spec #85），默认走真实 devWorkflowPromptTemplateRepository */
     promptOverrides?: DevWorkflowPromptOverrides;
+    /** 待回答问题的唯一真源（spec #85），默认走真实 pendingQuestionsRepository */
+    pendingQuestions?: PendingQuestionsRepository;
 }
 
 const consoleLogger: Logger = {
@@ -99,6 +103,7 @@ export class RequirementExecutionService {
     private logger: Logger;
     private createEngine: (engineKind: ExecutionEngineKind, spec: AgentSpec, logger: Logger) => IAgentEngine;
     private promptOverrides: DevWorkflowPromptOverrides;
+    private pendingQuestions: PendingQuestionsRepository;
     /** 运行中的 run（run.id → 中止句柄），供 cancel() 定位并中止；drive() 结束时自行清理 */
     private activeRuns = new Map<string, { controller: AbortController; cancelled: boolean }>();
 
@@ -109,6 +114,7 @@ export class RequirementExecutionService {
         this.worktree = deps.worktree ?? worktreeManager;
         this.logger = deps.logger ?? consoleLogger;
         this.promptOverrides = deps.promptOverrides ?? devWorkflowPromptTemplateRepository;
+        this.pendingQuestions = deps.pendingQuestions ?? pendingQuestionsRepository;
         this.createEngine = deps.createEngine ?? ((engineKind, spec, logger) => {
             switch (engineKind) {
                 case 'codex': return new CodexEngine(logger, {});
@@ -285,6 +291,82 @@ export class RequirementExecutionService {
     }
 
     /**
+     * 统一回答入口（spec: 两阶段自动化 #85）：标记待回答问题集为 answered 后按引擎能力双路分派——
+     * claude-code 原生中断走内存里挂起的 Promise（resolveInterrupt，executeAgentRun 的 for-await
+     * 循环仍在运行，唤醒后自动继续，不需要额外驱动）；非交互引擎（headless 进程已退出）取
+     * requirement_runs.resume_token 续接同一会话，组装「已回答问题 + 请继续」作为新一轮输入。
+     * 页面全程不感知走的是哪条分派路径。
+     */
+    async submitAnswers(requirementId: string, answers: string[]): Promise<void> {
+        const requirement = this.requirements.getById(requirementId);
+        if (!requirement) throw new Error(`Requirement not found: ${requirementId}`);
+        if (requirement.status !== 'waiting_input') {
+            throw new Error(`Requirement is not waiting for input (current: ${requirement.status})`);
+        }
+        const pending = this.pendingQuestions.getLatestByRequirement(requirementId);
+        if (!pending || pending.status !== 'pending') {
+            throw new Error(`No pending question set found for requirement: ${requirementId}`);
+        }
+        this.pendingQuestions.markAnswered(pending.id, answers);
+
+        const [latestRun] = this.runs.listByRequirement(requirementId);
+        if (!latestRun) throw new Error(`No run found for requirement: ${requirementId}`);
+
+        const joinedAnswer = answers.join('\n');
+
+        if (hasPendingInterrupt(latestRun.sessionId)) {
+            resolveInterrupt(latestRun.sessionId, true, { response: joinedAnswer });
+            return;
+        }
+
+        if (!latestRun.resumeToken) {
+            throw new Error(`Requirement ${requirementId} has no resumable session (engine may not support resume, or the process already exited without one)`);
+        }
+        const project = this.projects.getById(requirement.projectId);
+        if (!project) throw new Error(`Project not found: ${requirement.projectId}`);
+
+        const engineKind = ENGINE_KIND_FROM_LABEL[latestRun.engine] ?? 'claude-code';
+        const continuationTask = `已回答问题：\n${joinedAnswer}\n\n请基于以上回答继续。`;
+        const resumeOptions: StartRunOptions = { engine: engineKind };
+
+        if (requirement.parentId) {
+            // 卡片：先续接这张卡自己的 run，成功后直接继续驱动父需求的后续卡片
+            // （driveCardsSequentially 私有方法，不走 startImplementation 的公开状态门禁——
+            // 此时父需求处于 waiting_input，公开入口的 IMPLEMENTATION_RESUMABLE_STATUSES
+            // 不包含它，但这里是同一次实现流程的延续，不是重新发起，跳过门禁是正确的）
+            const parentId = requirement.parentId;
+            this.requirements.updateStatus(requirement.id, 'in_progress');
+            this.executeAgentRun(project, requirement, latestRun, resumeOptions, {
+                task: continuationTask, phase: 'implementation', onSuccessStatus: 'implemented', resumeToken: latestRun.resumeToken,
+            }).then(() => {
+                const finishedCard = this.requirements.getById(requirement.id)!;
+                const parent = this.requirements.getById(parentId);
+                if (!parent) return;
+                if (finishedCard.status === 'implemented') {
+                    this.requirements.updateStatus(parent.id, 'in_progress');
+                    const remainingCards = this.requirements.listCardsByParent(parent.id);
+                    this.driveCardsSequentially(project, parent, remainingCards, latestRun.worktreePath ?? '', latestRun.branch ?? '', resumeOptions).catch(err => {
+                        this.logger.error(`[requirement-execution] continue implementation for ${parentId} after card resume failed: ${(err as Error).message}`);
+                    });
+                } else {
+                    this.requirements.updateStatus(parent.id, finishedCard.status);
+                }
+            }).catch(err => {
+                this.logger.error(`[requirement-execution] resume card ${requirement.id} crashed outside its own try/catch: ${(err as Error).message}`);
+            });
+            return;
+        }
+
+        // 分析阶段续接
+        this.requirements.updateStatus(requirement.id, 'in_progress');
+        this.executeAgentRun(project, requirement, latestRun, resumeOptions, {
+            task: continuationTask, phase: 'analysis', onSuccessStatus: 'analyzed', resumeToken: latestRun.resumeToken,
+        }).catch(err => {
+            this.logger.error(`[requirement-execution] resume analysis ${requirement.id} crashed outside its own try/catch: ${(err as Error).message}`);
+        });
+    }
+
+    /**
      * 逐张驱动卡片；某卡失败/取消/等待回答则停在当卡（不推进后续卡片），把父需求状态同步为
      * 该卡的终态，供页面据此判断下一步（重试/跳过/回答问题）。全部卡片终态为 implemented 时，
      * 父需求转 implemented（走现有 merge() 流程）。
@@ -416,6 +498,10 @@ export class RequirementExecutionService {
             systemPrompt?: string;
             phase?: 'analysis' | 'implementation';
             onSuccessStatus: Requirement['status'];
+            /** 续接凭据（spec #85）：传给引擎表示续接同一会话，而非新起一轮 */
+            resumeToken?: string;
+            /** 内部用：协议违约重试是否已经用过（最多重试一轮） */
+            protocolRetryAttempted?: boolean;
         }
     ): Promise<void> {
         if (config.phase) this.requirements.updatePhase(requirement.id, config.phase);
@@ -444,6 +530,10 @@ export class RequirementExecutionService {
         emitEvent('session_start', { specId: spec.id, specName: spec.name, task, requirementId: requirement.id, engine: options.engine ?? 'claude-code' });
 
         let awaitingResume = false;
+        // 标记块协议（spec: 两阶段自动化 #85）判定材料：累积 content/answer 步骤的文本，
+        // 循环结束后据此判断 agent 最终想表达的是提问还是完成（只在 phase 已设置时启用，
+        // 旧单阶段 drive() 不传 phase，行为与改造前完全一致，不受影响）。
+        let accumulatedText = '';
         try {
             for await (const step of engine.run(task, {
                 sessionId: run.sessionId,
@@ -451,6 +541,7 @@ export class RequirementExecutionService {
                 cwd: run.worktreePath ?? undefined,
                 approvalMode: options.approvalMode ?? 'auto',
                 abortSignal: controller.signal,
+                resumeToken: config.resumeToken,
             })) {
                 emitEvent('agent_step', {
                     type: step.type,
@@ -462,8 +553,25 @@ export class RequirementExecutionService {
                     interruptReason: step.interruptReason,
                 });
 
+                if (step.resumeToken) {
+                    this.runs.setResumeToken(run.id, step.resumeToken);
+                }
+                if ((step.type === 'content' || step.type === 'answer') && step.content) {
+                    accumulatedText += step.content + '\n';
+                }
+
                 if (step.type === 'interrupt') {
                     awaitingResume = true;
+                    if (config.phase) {
+                        // claude-code 原生中断（ask_user 等）双写 pending_questions（spec #85）：
+                        // 内存态挂起 Promise 由引擎自己维护，这里只负责落表，让页面能用同一张表
+                        // 统一渲染，不必区分问题来自原生中断还是非交互引擎的标记块。
+                        this.pendingQuestions.create({
+                            requirementId: requirement.id, runId: run.id, sessionId: run.sessionId,
+                            phase: config.phase,
+                            questions: [{ id: step.interruptId ?? 'q1', question: step.interruptReason ?? step.content }],
+                        });
+                    }
                     this.requirements.updateStatus(requirement.id, 'waiting_input');
                     this.runs.updateStatus(run.id, 'waiting_input');
                     continue;
@@ -475,9 +583,71 @@ export class RequirementExecutionService {
                 }
             }
 
-            emitEvent('session_end', { status: 'succeeded' });
-            this.runs.updateStatus(run.id, 'succeeded', { finished: true });
-            this.requirements.updateStatus(requirement.id, config.onSuccessStatus);
+            if (!config.phase) {
+                // 旧单阶段路径：行为与改造前完全一致，不做标记块协议判定
+                emitEvent('session_end', { status: 'succeeded' });
+                this.runs.updateStatus(run.id, 'succeeded', { finished: true });
+                this.requirements.updateStatus(requirement.id, config.onSuccessStatus);
+                return;
+            }
+
+            const marker = extractLastMarker(accumulatedText);
+
+            if (marker?.type === 'questions') {
+                // 非交互引擎的等价"提问"路径（claude-code 走上面的原生 interrupt，二者
+                // 落到同一张 pending_questions 表，页面渲染不区分来源）
+                this.pendingQuestions.create({
+                    requirementId: requirement.id, runId: run.id, sessionId: run.sessionId,
+                    phase: config.phase, questions: marker.questions,
+                });
+                emitEvent('session_end', { status: 'waiting_input' });
+                this.runs.updateStatus(run.id, 'waiting_input');
+                this.requirements.updateStatus(requirement.id, 'waiting_input');
+                return;
+            }
+
+            if (marker?.type === 'done') {
+                if (config.phase === 'analysis') {
+                    if (marker.data.analysisSpec) {
+                        this.requirements.updateAnalysisSpec(requirement.id, marker.data.analysisSpec);
+                    }
+                    if (Array.isArray(marker.data.cards)) {
+                        marker.data.cards.forEach((c, i) => {
+                            this.requirements.createCard({
+                                parentId: requirement.id,
+                                projectId: project.id,
+                                reqKey: `${requirement.reqKey}-card-${i + 1}`,
+                                source: 'agent',
+                                sourceKey: `card-${i + 1}`,
+                                title: c.title,
+                                cardNo: i + 1,
+                            });
+                        });
+                    }
+                }
+                emitEvent('session_end', { status: 'succeeded' });
+                this.runs.updateStatus(run.id, 'succeeded', { finished: true });
+                this.requirements.updateStatus(requirement.id, config.onSuccessStatus);
+                return;
+            }
+
+            // 协议违约：既没有问题也没有完成信号。附加违约提示重试一轮；再次违约则整体标记 failed。
+            if (!config.protocolRetryAttempted) {
+                emitEvent('agent_step', {
+                    type: 'meta',
+                    content: '⚠️ 未检测到 cmaster:questions/cmaster:done 标记块，追加提示重试一轮',
+                });
+                return await this.executeAgentRun(project, requirement, run, options, {
+                    ...config,
+                    task: `${config.task}\n\n你上一次的回复没有包含所需的 cmaster:questions 或 cmaster:done 代码块。请严格按照输出协议重新给出结果。`,
+                    protocolRetryAttempted: true,
+                });
+            }
+
+            const violationMessage = '协议违约：agent 回复未包含 cmaster:questions 或 cmaster:done 标记块（已重试一次仍未修正）';
+            emitEvent('session_end', { status: 'failed', error: violationMessage });
+            this.runs.updateStatus(run.id, 'failed', { errorMessage: violationMessage, finished: true });
+            this.requirements.updateStatus(requirement.id, 'failed');
         } catch (err) {
             // cancel() 已经把状态改成 cancelled 了；这里只是让 catch 分支保持终态一致，不覆盖成 failed
             if (this.activeRuns.get(run.id)?.cancelled) {

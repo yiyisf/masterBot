@@ -161,6 +161,33 @@ export async function registerRequirementRoutes(app: FastifyInstance, deps: Gate
         }
     });
 
+    // 两阶段自动化统一回答入口（spec #85）：页面提交回答后，平台按引擎能力自动分派——
+    // claude-code 原生中断走内存 Promise，非交互引擎走 resume_token 续接；页面全程不感知引擎。
+    app.post<{ Params: { id: string }; Body: { answers: string[] } }>('/api/requirements/:id/answers', async (request, reply) => {
+        try {
+            const answers = request.body?.answers;
+            if (!Array.isArray(answers) || answers.length === 0) {
+                reply.status(400);
+                return { error: 'Missing required field: answers (non-empty array)' };
+            }
+            await requirementExecutionService.submitAnswers(request.params.id, answers);
+            return { success: true };
+        } catch (error: any) {
+            deps.logger.error(`Submit answers error: ${error.message}`);
+            if (error.message?.startsWith('Requirement not found') || error.message?.startsWith('Project not found')
+                || error.message?.startsWith('No pending question set') || error.message?.startsWith('No run found')) {
+                reply.status(404);
+                return { error: error.message };
+            }
+            if (error.message?.includes('waiting for input') || error.message?.includes('no resumable session')) {
+                reply.status(409);
+                return { error: error.message };
+            }
+            reply.status(500);
+            return { error: error.message };
+        }
+    });
+
     // 人工核验通过、PR 已在 GitHub 上合并后调用：标记需求完成 + 自动清理 worktree（spec §4.3）
     app.post<{ Params: { id: string } }>('/api/requirements/:id/merge', async (request, reply) => {
         try {
