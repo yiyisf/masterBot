@@ -183,6 +183,14 @@ export function initDatabase(): DatabaseSync {
             created_at DATETIME DEFAULT CURRENT_TIMESTAMP
         );
         CREATE INDEX IF NOT EXISTS idx_prompt_templates_category ON prompt_templates(category);
+
+        -- 研发流程两阶段自动化（spec #85）：阶段 prompt 模板按键覆盖，与上面通用 prompt_templates
+        -- 是两码事（那张是面向终端用户的聊天提示词库，这张是内部调度层模板，不对外暴露）。
+        CREATE TABLE IF NOT EXISTS dev_workflow_prompt_templates (
+            key         TEXT PRIMARY KEY,
+            content     TEXT NOT NULL,
+            updated_at  TEXT NOT NULL
+        );
     `);
 
     // 执行审计 + IM 集成新增表

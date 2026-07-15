@@ -12,6 +12,8 @@ import type { IAgentEngine } from './harness/agent-engine.js';
 import { defaultAgentSpec, type AgentSpec } from './harness/agent-spec.js';
 import { cancelInterrupt } from './interrupt-coordinator.js';
 import { sessionEventStore } from './harness/session-store.js';
+import { buildAnalysisPrompt, buildImplementPrompt, type DevWorkflowPromptOverrides } from './harness/dev-workflow-prompts.js';
+import { devWorkflowPromptTemplateRepository } from './dev-workflow-prompt-template-repository.js';
 
 /** coding agent 运行不使用 cmasterBot 自身的记忆系统 */
 const noopMemory: MemoryAccess = {
@@ -71,6 +73,8 @@ export interface RequirementExecutionServiceDeps {
     logger?: Logger;
     /** 依赖注入：测试用 fake engine 替换真实引擎 */
     createEngine?: (engineKind: ExecutionEngineKind, spec: AgentSpec, logger: Logger) => IAgentEngine;
+    /** 阶段 prompt 模板的 DB 覆盖层（spec #85），默认走真实 devWorkflowPromptTemplateRepository */
+    promptOverrides?: DevWorkflowPromptOverrides;
 }
 
 const consoleLogger: Logger = {
@@ -94,6 +98,7 @@ export class RequirementExecutionService {
     private worktree: WorktreeManager;
     private logger: Logger;
     private createEngine: (engineKind: ExecutionEngineKind, spec: AgentSpec, logger: Logger) => IAgentEngine;
+    private promptOverrides: DevWorkflowPromptOverrides;
     /** 运行中的 run（run.id → 中止句柄），供 cancel() 定位并中止；drive() 结束时自行清理 */
     private activeRuns = new Map<string, { controller: AbortController; cancelled: boolean }>();
 
@@ -103,6 +108,7 @@ export class RequirementExecutionService {
         this.runs = deps.runs ?? requirementRunRepository;
         this.worktree = deps.worktree ?? worktreeManager;
         this.logger = deps.logger ?? consoleLogger;
+        this.promptOverrides = deps.promptOverrides ?? devWorkflowPromptTemplateRepository;
         this.createEngine = deps.createEngine ?? ((engineKind, spec, logger) => {
             switch (engineKind) {
                 case 'codex': return new CodexEngine(logger, {});
@@ -215,13 +221,12 @@ export class RequirementExecutionService {
         this.requirements.updatePhase(requirement.id, 'analysis');
         this.requirements.updateStatus(requirement.id, 'in_progress');
 
-        // 调度层 prompt 是薄薄一层：需求上下文 + 强制调用指定 skill 的硬指令（skill 承载真正的
-        // 分析流程方法论；平台钉版注入 .agents/skills + 模板细节留给 #89）
-        const task = [
-            `分析需求 ${requirement.reqKey}：${requirement.title}`,
-            requirement.description ?? '',
-            '本任务必须先调用 grilling 与 to-spec skill 并遵循其流程完成需求分析；若需要澄清，调用 ask_user 工具向人类提问。',
-        ].filter(Boolean).join('\n\n');
+        // 调度层 prompt 是薄薄一层：需求上下文 + 强制调用指定 skill 的硬指令 + cmaster:questions/
+        // done 输出协议要求（skill 承载真正的分析+拆卡流程方法论，见 dev-workflow-prompts.ts）
+        const task = buildAnalysisPrompt(
+            { reqKey: requirement.reqKey, title: requirement.title, description: requirement.description },
+            this.promptOverrides
+        );
 
         this.executeAgentRun(project, requirement, run, options, { task, phase: 'analysis', onSuccessStatus: 'analyzed' }).catch(err => {
             this.logger.error(`[requirement-execution] analysis run ${run.id} crashed outside its own try/catch: ${(err as Error).message}`);
@@ -311,11 +316,10 @@ export class RequirementExecutionService {
             this.requirements.updatePhase(card.id, 'implementation');
             this.requirements.updateStatus(card.id, 'in_progress');
 
-            const task = [
-                `实现卡片 ${card.reqKey}：${card.title}`,
-                card.description ?? '',
-                '本任务必须先调用 implement skill 并遵循其流程；若需要澄清或做出只有人类才能决定的选择，调用 ask_user 工具向人类提问。',
-            ].filter(Boolean).join('\n\n');
+            const task = buildImplementPrompt(
+                { reqKey: card.reqKey, title: card.title, description: card.description },
+                this.promptOverrides
+            );
 
             await this.executeAgentRun(project, card, run, options, { task, phase: 'implementation', onSuccessStatus: 'implemented' });
 
