@@ -16,6 +16,20 @@
 
 上述文档是未来实施的规范基线。旧的 Phase 路线图、Harness patch、能力差距报告和 v3/v3.1 重构方案已移除，不得从 Git 历史中的旧文档恢复设计约束。
 
+## Agent skills
+
+### Issue tracker
+
+Issues and PRDs are tracked in this repository's GitHub Issues. See `docs/agents/issue-tracker.md`.
+
+### Triage labels
+
+Triage uses the five canonical labels: `needs-triage`, `needs-info`, `ready-for-agent`, `ready-for-human`, and `wontfix`. See `docs/agents/triage-labels.md`.
+
+### Domain docs
+
+This repository uses a single-context layout with `CONTEXT.md` and system-wide ADRs under `docs/adr/`. See `docs/agents/domain.md`.
+
 ## 2. 项目状态
 
 CMaster Bot 正从本地技术验证原型增量重构为企业内网 Web-first Enterprise Assistant。
