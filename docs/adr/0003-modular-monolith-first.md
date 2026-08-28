@@ -1,0 +1,3 @@
+# Build the server as a modular monolith first
+
+CMaster Bot will be built as one modular codebase and deployment unit with explicit interfaces and inward-pointing dependencies; production may run that unit in separate API and Worker roles, while development may run both roles in one process. Gateway, persistence, model, tool, queue, and transport adapters may vary without entering the domain model, and modules must not bypass interfaces to read one another's storage. We will extract independently owned remote services only when scaling, security isolation, reliability, or team ownership creates a demonstrated need, avoiding premature microservices while preserving a controlled extraction path.

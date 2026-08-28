@@ -1,0 +1,3 @@
+# Recover Tool effects by capability rather than blind retry
+
+CMaster Bot does not promise exactly-once external side effects. Tool descriptors declare read-only, destructive, idempotent, idempotency-key, reconciliation, and open-world characteristics; Tool Runtime persists a call ledger and stable idempotency key before dispatch, then records completion, failure, and external operation identity. Recovery may retry safe reads, reuse supported idempotency keys, or reconcile external state, but an unknown non-idempotent write enters review and high-risk actions may require renewed approval. Checkpoints prefer completed Tool boundaries, the UI exposes unknown outcomes, and Workflows may define compensations without pretending they are transaction rollbacks.

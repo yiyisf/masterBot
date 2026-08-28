@@ -1,0 +1,66 @@
+flowchart TB
+  subgraph UX[Web Experiences]
+    EW[Employee Workspace]
+    AC[Admin Console]
+  end
+
+  subgraph EDGE[API Role]
+    AUTH[OIDC Session Adapter]
+    API[Versioned Command / Query API]
+    SSE[Replayable SSE Presenter]
+  end
+
+  subgraph APP[Application Modules]
+    CONV[Conversations]
+    EXEC[Execution / Harness]
+    AGENT[Agents]
+    MODEL[Models]
+    TOOL[Tools]
+    CTX[Context]
+    ART[Artifacts]
+    AUTO[Automation]
+    GOV[Identity & Governance]
+  end
+
+  subgraph WORKER[Worker Role]
+    DISPATCH[Run Dispatcher / Lease]
+    ENGINE[Agent Engine Adapters]
+    PROVIDERS[Tool Provider Host]
+  end
+
+  subgraph DATA[State and Integration Adapters]
+    PG[(PostgreSQL)]
+    BLOBS[(Artifact Content Store)]
+    IDP[Internal OIDC Provider]
+    LLMS[Model Providers]
+    EXTERNAL[Enterprise Systems / MCP]
+    OTEL[OTel Collector]
+  end
+
+  EW --> API
+  AC --> API
+  EW <-->|UI stream| SSE
+  AUTH <--> IDP
+  API --> CONV
+  API --> EXEC
+  API --> AGENT
+  API --> ART
+  EXEC --> DISPATCH
+  DISPATCH --> ENGINE
+  ENGINE --> MODEL
+  ENGINE --> TOOL
+  EXEC --> CTX
+  EXEC --> GOV
+  TOOL --> PROVIDERS
+  MODEL --> LLMS
+  PROVIDERS --> EXTERNAL
+  CONV --> PG
+  EXEC --> PG
+  AGENT --> PG
+  TOOL --> PG
+  ART --> PG
+  ART --> BLOBS
+  AUTO --> PG
+  GOV --> PG
+  APP -. telemetry .-> OTEL
+  WORKER -. telemetry .-> OTEL

@@ -1,5 +1,7 @@
 # CMaster Bot — 企业员工 AI 助手操作系统
 
+> **实现状态说明**：本文描述当前可运行的技术验证原型。下一代规范性架构与增量重构计划以 [`docs/architecture/README.md`](./docs/architecture/README.md)、[`CONTEXT.md`](./CONTEXT.md) 和 [`docs/adr/`](./docs/adr/) 为准；不要从本文推导未来 Module、数据模型或部署设计。
+
 **融合知识检索、数据查询、流程自动化，会自我进化** — 面向 HR、财务、业务、运营等企业员工，无需 IT 人员维护。
 
 [![Node.js >=22](https://img.shields.io/badge/node-%3E%3D22-brightgreen)](https://nodejs.org/)

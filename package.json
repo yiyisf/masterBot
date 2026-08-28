@@ -47,6 +47,7 @@
     "test": "vitest",
     "test:run": "vitest run",
     "eval": "tsx --conditions=development evals/runner.ts",
+    "prototype:architecture": "tsx prototypes/architecture-model/tui.ts",
     "lint": "eslint src --ext .ts",
     "setup": "bash scripts/install.sh || powershell -ExecutionPolicy Bypass -File scripts/install.ps1",
     "prepublishOnly": "npm run build",

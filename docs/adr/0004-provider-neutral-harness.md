@@ -1,0 +1,3 @@
+# Keep the Harness provider-neutral
+
+The Harness will be the execution control system for Runs and Invocation trees, owning lifecycle, limits, cancellation, policy and human-interaction gates, retries, outcome evaluation, and normalized Run Events. Agent loops are supplied by Agent Engine adapters, tools by a Tool Runtime, context by a Context Builder, and persistence by Run and Event store adapters; transport, UI, database, provider SDK, tool-source, scheduling, and workflow details remain outside the Harness. This replaces the current Harness that constructs concrete engines and mixes execution control with persistence and streaming concerns, allowing engines and surrounding technologies to evolve independently.

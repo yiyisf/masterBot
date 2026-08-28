@@ -1,0 +1,3 @@
+# Constrain and audit model fallback
+
+Model routing may retry or select a fallback only from policy-approved Model Profiles that satisfy the Invocation's capabilities, context capacity, data handling, Engine compatibility, and cost ceiling. Failures before visible output or Tool activity may switch transparently; partial output is discarded and restarted explicitly, completed side effects require continuation from a safe Checkpoint, managed sessions that cannot transfer fail or hand off through a new Invocation, and safety or content-policy refusals are never bypassed by provider switching. Every selection and fallback records the actual Model Profile in Run Events and traces, giving employees a concise degradation notice and administrators detailed routing evidence.

@@ -1,0 +1,27 @@
+erDiagram
+  ORGANIZATION ||--o{ PRINCIPAL : contains
+  ORGANIZATION ||--o{ CONVERSATION : owns
+  CONVERSATION ||--o{ MESSAGE : contains
+  ORGANIZATION ||--o{ RUN : owns
+  MESSAGE o|--o{ RUN : triggers
+  RUN ||--o{ INVOCATION : contains
+  INVOCATION o|--o{ INVOCATION : delegates
+  INVOCATION ||--o{ MODEL_CALL : makes
+  INVOCATION ||--o{ TOOL_CALL : makes
+  RUN ||--o{ RUN_EVENT : records
+  RUN ||--o{ CHECKPOINT : saves
+  RUN ||--o{ ARTIFACT : produces
+  ARTIFACT ||--|{ ARTIFACT_VERSION : versions
+  ARTIFACT_VERSION }o--|| ARTIFACT_CONTENT : references
+  AGENT ||--|{ AGENT_REVISION : versions
+  AGENT_REVISION ||--o{ INVOCATION : configures
+  MODEL_PROFILE ||--o{ MODEL_CALL : selected_for
+  TOOL ||--o{ TOOL_CALL : invoked_as
+  TOOL_PROVIDER ||--o{ TOOL : contributes
+  SKILL }o--o{ TOOL : requires
+  TASK ||--o{ RUN : attempts
+  WORKFLOW_REVISION ||--o{ WORKFLOW_EXECUTION : instantiates
+  WORKFLOW_EXECUTION ||--o{ TASK : coordinates
+  POLICY_REVISION ||--o{ RUN : pinned_by
+  EVAL_SUITE ||--o{ EVAL_EVIDENCE : produces
+  AGENT_REVISION ||--o{ EVAL_EVIDENCE : evaluated_by

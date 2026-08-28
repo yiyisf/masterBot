@@ -1,0 +1,3 @@
+# Deliver a single-host Production Starter first
+
+The first production profile targets one enterprise-internal host running the Web app, API and one or more Worker processes, PostgreSQL, and a shared persistent local Artifact volume, deployed with a minimal container or controlled-process setup and explicit backup and restore procedures. It is not advertised as highly available; API/Worker role and adapter seams remain identical to a later HA profile that can add multiple hosts, PostgreSQL HA, S3-compatible storage, and a dedicated live-event bus. We will not build every Kubernetes, Helm, OpenShift, and Compose variant initially, and no production profile may treat ephemeral node-local storage as durable Artifact storage.

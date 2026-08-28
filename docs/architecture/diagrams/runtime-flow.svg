@@ -1,0 +1,52 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1500" height="930" viewBox="0 0 1500 930" role="img" aria-label="CMaster Bot — Asynchronous Run Flow">
+<defs><marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#7186a0"/></marker></defs>
+
+<style>
+  .title{font:700 28px Inter,Arial,sans-serif;fill:#10243e}.subtitle{font:400 14px Inter,Arial,sans-serif;fill:#52657a}
+  .group{fill:#f7f9fc;stroke:#b8c5d6;stroke-width:1.5}.group-title{font:700 16px Inter,Arial,sans-serif;fill:#253b56}
+  .box{fill:#fff;stroke:#7186a0;stroke-width:1.4}.accent{fill:#eaf3ff;stroke:#3978c5}.green{fill:#eaf8f1;stroke:#3d9069}.gold{fill:#fff7df;stroke:#b68a25}.purple{fill:#f3edff;stroke:#7c59b8}.red{fill:#fff0f0;stroke:#b85d5d}
+  .label{font:600 13px Inter,Arial,sans-serif;fill:#182d47}.small{font:400 11px Inter,Arial,sans-serif;fill:#52657a}.edge{stroke:#7186a0;stroke-width:1.5;fill:none;marker-end:url(#arrow)}
+  .dash{stroke-dasharray:6 5}.card-title{font:700 14px Inter,Arial,sans-serif;fill:#182d47}.card-text{font:400 12px Inter,Arial,sans-serif;fill:#40556d}
+</style>
+<rect width="1500" height="930" fill="#ffffff"/><text class="title" x="40" y="45">CMaster Bot — Asynchronous Run Flow</text>
+<text class="subtitle" x="40" y="70">Commands are accepted synchronously; execution and UI updates remain recoverable and asynchronous</text>
+<rect class="accent" x="100" y="95" width="160" height="55" rx="10"/>
+<text class="label" x="180.0" y="119" text-anchor="middle">Browser</text>
+<line x1="180" y1="150" x2="180" y2="850" stroke="#c5cfdb" stroke-width="1" stroke-dasharray="5 5"/>
+<rect class="box" x="380" y="95" width="160" height="55" rx="10"/>
+<text class="label" x="460.0" y="119" text-anchor="middle">API Role</text>
+<line x1="460" y1="150" x2="460" y2="850" stroke="#c5cfdb" stroke-width="1" stroke-dasharray="5 5"/>
+<rect class="red" x="680" y="95" width="160" height="55" rx="10"/>
+<text class="label" x="760.0" y="119" text-anchor="middle">PostgreSQL</text>
+<line x1="760" y1="150" x2="760" y2="850" stroke="#c5cfdb" stroke-width="1" stroke-dasharray="5 5"/>
+<rect class="box" x="980" y="95" width="160" height="55" rx="10"/>
+<text class="label" x="1060.0" y="119" text-anchor="middle">Worker</text>
+<line x1="1060" y1="150" x2="1060" y2="850" stroke="#c5cfdb" stroke-width="1" stroke-dasharray="5 5"/>
+<rect class="box" x="1260" y="95" width="160" height="55" rx="10"/>
+<text class="label" x="1340.0" y="119" text-anchor="middle">Harness / Engine</text>
+<line x1="1340" y1="150" x2="1340" y2="850" stroke="#c5cfdb" stroke-width="1" stroke-dasharray="5 5"/>
+<path class="edge" d="M 180 205 L 460 205"/>
+<text class="small" x="320.0" y="197" text-anchor="middle">POST /api/v1/runs</text>
+<path class="edge" d="M 460 255 L 760 255"/>
+<text class="small" x="610.0" y="247" text-anchor="middle">Insert Run + Outbox</text>
+<path class="edge dash" d="M 460 305 L 180 305"/>
+<text class="small" x="320.0" y="297" text-anchor="middle">202 runId + eventsUrl</text>
+<path class="edge" d="M 180 355 L 460 355"/>
+<text class="small" x="320.0" y="347" text-anchor="middle">SSE subscribe (Last-Event-ID)</text>
+<path class="edge" d="M 460 405 L 760 405"/>
+<text class="small" x="610.0" y="397" text-anchor="middle">Replay events after sequence</text>
+<path class="edge" d="M 1060 475 L 760 475"/>
+<text class="small" x="910.0" y="467" text-anchor="middle">Lease pending Run</text>
+<path class="edge" d="M 1060 535 L 1340 535"/>
+<text class="small" x="1200.0" y="527" text-anchor="middle">Start or resume Invocation</text>
+<path class="edge dash" d="M 1340 595 L 1060 595"/>
+<text class="small" x="1200.0" y="587" text-anchor="middle">EngineEvent / OutputDelta</text>
+<path class="edge" d="M 1060 655 L 760 655"/>
+<text class="small" x="910.0" y="647" text-anchor="middle">State + RunEvent + Checkpoint</text>
+<path class="edge dash" d="M 760 715 L 460 715"/>
+<text class="small" x="610.0" y="707" text-anchor="middle">LISTEN/NOTIFY wake-up</text>
+<path class="edge" d="M 460 765 L 760 765"/>
+<text class="small" x="610.0" y="757" text-anchor="middle">Read ordered events</text>
+<path class="edge dash" d="M 460 825 L 180 825"/>
+<text class="small" x="320.0" y="817" text-anchor="middle">SSE UI projection</text>
+</svg>

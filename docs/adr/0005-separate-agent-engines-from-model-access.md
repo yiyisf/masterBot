@@ -1,0 +1,3 @@
+# Separate Agent Engines from model access
+
+Agent Engines define how an Invocation reasons and acts, while the model module owns approved Model Profiles, capability- and policy-based selection, provider access, normalized streaming, usage, and failure handling. The Harness and Engines must request capabilities rather than branch on provider names; provider SDK types stay inside adapters, and managed Engines that perform their own model calls must still emit the same model-call, usage, and audit records. This preserves independent evolution of execution runtimes and model integrations instead of treating provider, model, and Agent Engine as one choice.

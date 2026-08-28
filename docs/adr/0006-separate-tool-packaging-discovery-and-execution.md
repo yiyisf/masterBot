@@ -1,0 +1,3 @@
+# Separate tool packaging, discovery, and execution
+
+A Skill is a versioned package of instructions and resources that may contribute Tools, while a Connector is a configured enterprise-system connection and MCP is only one Tool Provider protocol. Stable Tool identities and contracts are owned by the Tool Catalog; Agents and the Harness invoke permitted Tools only through the Tool Runtime, which centralizes validation, policy, credentials, execution limits, error normalization, and output redaction. Installation and Provider management remain outside the execution interface, replacing the current Skill Registry that mixes package management, discovery, permissions, and invocation and allowing Tool implementations to change without affecting Agents or Runs.

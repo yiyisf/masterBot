@@ -1,5 +1,7 @@
 # CMaster Bot — 10 分钟快速上手
 
+> **当前原型文档**：本指南用于运行尚未完成下一代重构的现有实现。未来部署、身份、PostgreSQL 和 API/Worker 设计以 [`docs/architecture/`](./architecture/README.md) 为准，并在对应 Vertical Slice 落地后重写本指南。
+
 ## 步骤 1：部署
 
 ### Docker（最简单）

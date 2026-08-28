@@ -1,0 +1,3 @@
+# Make Artifacts first-class and storage-independent
+
+Documents, tables, charts, files, workflows, code bundles, and other reusable Run outputs will be represented as durable, versioned Artifacts rather than embedded only in Messages, tool results, or UI parts. Artifact metadata records provenance, media type, version, access policy, and an opaque content reference, while bytes are managed through a replaceable artifact storage port; the initial adapter may use a server-local directory and later adapters may use S3-compatible, Azure Blob, or other storage without changing Artifact identities or contracts. Messages and later Runs reference Artifacts instead of owning or copying their content, and UI renderers are selected by Artifact kind and media type.
