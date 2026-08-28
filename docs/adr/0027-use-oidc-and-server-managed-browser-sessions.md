@@ -1,0 +1,3 @@
+# Use OIDC and server-managed browser sessions
+
+Employee authentication will integrate with the enterprise's internal OIDC Provider using Authorization Code with PKCE and map trusted external subjects, groups, and claims into internal Organization and Principal identities. Browser credentials are held in HttpOnly, Secure, SameSite sessions rather than local storage, SSE uses the same authenticated session, state-changing commands receive CSRF protection, and callers cannot assert their own Organization or Principal context. Scoped, expiring API keys are limited to Service Principals, a development identity adapter supports local work, and future internal-provider or SCIM adapters remain outside the domain model.

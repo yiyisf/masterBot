@@ -1,0 +1,3 @@
+# Make enterprise Web delivery with server-side execution the primary product shape
+
+CMaster Bot will first ship as an enterprise Web application whose governed execution capabilities run on the enterprise backend. This gives the UI, Harness, model routing, tools, memory, and audit layers one clear deployment boundary; a future local or Electron runtime may reuse the core through an adapter, but local execution and offline access are not requirements of this refactor. We chose this over delivering Web and local execution together because browser access to local files, shells, and MCP processes would otherwise force two security and deployment models before the core boundaries are stable.

@@ -1,0 +1,100 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="1050" viewBox="0 0 1600 1050" role="img" aria-label="CMaster Bot — Target Architecture">
+<defs><marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#7186a0"/></marker></defs>
+
+<style>
+  .title{font:700 28px Inter,Arial,sans-serif;fill:#10243e}.subtitle{font:400 14px Inter,Arial,sans-serif;fill:#52657a}
+  .group{fill:#f7f9fc;stroke:#b8c5d6;stroke-width:1.5}.group-title{font:700 16px Inter,Arial,sans-serif;fill:#253b56}
+  .box{fill:#fff;stroke:#7186a0;stroke-width:1.4}.accent{fill:#eaf3ff;stroke:#3978c5}.green{fill:#eaf8f1;stroke:#3d9069}.gold{fill:#fff7df;stroke:#b68a25}.purple{fill:#f3edff;stroke:#7c59b8}.red{fill:#fff0f0;stroke:#b85d5d}
+  .label{font:600 13px Inter,Arial,sans-serif;fill:#182d47}.small{font:400 11px Inter,Arial,sans-serif;fill:#52657a}.edge{stroke:#7186a0;stroke-width:1.5;fill:none;marker-end:url(#arrow)}
+  .dash{stroke-dasharray:6 5}.card-title{font:700 14px Inter,Arial,sans-serif;fill:#182d47}.card-text{font:400 12px Inter,Arial,sans-serif;fill:#40556d}
+</style>
+<rect width="1600" height="1050" fill="#ffffff"/><text class="title" x="40" y="45">CMaster Bot — Target Architecture</text>
+<text class="subtitle" x="40" y="70">Enterprise Web-first, modular monolith, API/Worker runtime roles</text>
+<rect class="group" x="35" y="95" width="1530" height="135" rx="14"/>
+<text class="group-title" x="51" y="120">Web Experiences &amp; Contract Edge</text>
+<rect class="accent" x="70" y="135" width="270" height="65" rx="10"/>
+<text class="label" x="205.0" y="159" text-anchor="middle">Employee Workspace</text>
+<text class="small" x="205.0" y="178" text-anchor="middle">Conversations · Tasks · Artifacts</text>
+<rect class="purple" x="370" y="135" width="250" height="65" rx="10"/>
+<text class="label" x="495.0" y="159" text-anchor="middle">Admin Console</text>
+<text class="small" x="495.0" y="178" text-anchor="middle">Agents · Tools · Models · Policy</text>
+<rect class="green" x="700" y="125" width="380" height="80" rx="10"/>
+<text class="label" x="890.0" y="149" text-anchor="middle">API Role</text>
+<text class="small" x="890.0" y="168" text-anchor="middle">OIDC sessions · Commands/Queries</text>
+<text class="small" x="890.0" y="183" text-anchor="middle">Replayable SSE · UI Presenter</text>
+<rect class="gold" x="1130" y="135" width="380" height="65" rx="10"/>
+<text class="label" x="1320.0" y="159" text-anchor="middle">Versioned Contracts</text>
+<text class="small" x="1320.0" y="178" text-anchor="middle">Zod · OpenAPI · typed client</text>
+<rect class="group" x="35" y="255" width="1530" height="320" rx="14"/>
+<text class="group-title" x="51" y="280">Application Modules</text>
+<rect class="box" x="70" y="300" width="260" height="85" rx="10"/>
+<text class="label" x="200.0" y="324" text-anchor="middle">Identity &amp; Governance</text>
+<text class="small" x="200.0" y="343" text-anchor="middle">Principal · Delegation · Policy</text>
+<rect class="box" x="368" y="300" width="260" height="85" rx="10"/>
+<text class="label" x="498.0" y="324" text-anchor="middle">Conversations</text>
+<text class="small" x="498.0" y="343" text-anchor="middle">Conversation · Message</text>
+<rect class="accent" x="666" y="300" width="260" height="85" rx="10"/>
+<text class="label" x="796.0" y="324" text-anchor="middle">Execution</text>
+<text class="small" x="796.0" y="343" text-anchor="middle">Run · Invocation · Harness</text>
+<rect class="box" x="964" y="300" width="260" height="85" rx="10"/>
+<text class="label" x="1094.0" y="324" text-anchor="middle">Agents</text>
+<text class="small" x="1094.0" y="343" text-anchor="middle">Agent · Revision · Eval</text>
+<rect class="box" x="1262" y="300" width="260" height="85" rx="10"/>
+<text class="label" x="1392.0" y="324" text-anchor="middle">Models</text>
+<text class="small" x="1392.0" y="343" text-anchor="middle">Catalog · Router · Gateway</text>
+<rect class="box" x="70" y="425" width="260" height="85" rx="10"/>
+<text class="label" x="200.0" y="449" text-anchor="middle">Tools</text>
+<text class="small" x="200.0" y="468" text-anchor="middle">Skill · Catalog · Runtime</text>
+<rect class="box" x="368" y="425" width="260" height="85" rx="10"/>
+<text class="label" x="498.0" y="449" text-anchor="middle">Context</text>
+<text class="small" x="498.0" y="468" text-anchor="middle">Memory · Knowledge · Builder</text>
+<rect class="box" x="666" y="425" width="260" height="85" rx="10"/>
+<text class="label" x="796.0" y="449" text-anchor="middle">Artifacts</text>
+<text class="small" x="796.0" y="468" text-anchor="middle">Version · Content Ref</text>
+<rect class="box" x="964" y="425" width="260" height="85" rx="10"/>
+<text class="label" x="1094.0" y="449" text-anchor="middle">Automation</text>
+<text class="small" x="1094.0" y="468" text-anchor="middle">Task · Workflow · Runbook</text>
+<rect class="group" x="35" y="600" width="1530" height="185" rx="14"/>
+<text class="group-title" x="51" y="625">Worker Runtime &amp; Adapters</text>
+<rect class="green" x="75" y="645" width="300" height="90" rx="10"/>
+<text class="label" x="225.0" y="669" text-anchor="middle">Run Dispatcher</text>
+<text class="small" x="225.0" y="688" text-anchor="middle">PostgreSQL lease · heartbeat</text>
+<text class="small" x="225.0" y="703" text-anchor="middle">checkpoint recovery</text>
+<rect class="purple" x="410" y="645" width="300" height="90" rx="10"/>
+<text class="label" x="560.0" y="669" text-anchor="middle">Agent Engine Adapters</text>
+<text class="small" x="560.0" y="688" text-anchor="middle">AI SDK default · Claude SDK</text>
+<text class="small" x="560.0" y="703" text-anchor="middle">future runtimes</text>
+<rect class="gold" x="745" y="645" width="300" height="90" rx="10"/>
+<text class="label" x="895.0" y="669" text-anchor="middle">Tool Provider Host</text>
+<text class="small" x="895.0" y="688" text-anchor="middle">Built-in · isolated extension</text>
+<text class="small" x="895.0" y="703" text-anchor="middle">MCP · remote</text>
+<rect class="box" x="1080" y="645" width="430" height="90" rx="10"/>
+<text class="label" x="1295.0" y="669" text-anchor="middle">Cross-cutting Adapters</text>
+<text class="small" x="1295.0" y="688" text-anchor="middle">Credential Broker · OTel · LiveEventBus</text>
+<text class="small" x="1295.0" y="703" text-anchor="middle">Artifact Content · OIDC</text>
+<rect class="group" x="35" y="810" width="1530" height="190" rx="14"/>
+<text class="group-title" x="51" y="835">Infrastructure</text>
+<rect class="red" x="70" y="860" width="260" height="85" rx="10"/>
+<text class="label" x="200.0" y="884" text-anchor="middle">PostgreSQL</text>
+<text class="small" x="200.0" y="903" text-anchor="middle">state · events · outbox · queue</text>
+<rect class="box" x="368" y="860" width="260" height="85" rx="10"/>
+<text class="label" x="498.0" y="884" text-anchor="middle">Artifact Store</text>
+<text class="small" x="498.0" y="903" text-anchor="middle">local persistent volume → S3</text>
+<rect class="box" x="666" y="860" width="260" height="85" rx="10"/>
+<text class="label" x="796.0" y="884" text-anchor="middle">Internal Identity</text>
+<text class="small" x="796.0" y="903" text-anchor="middle">enterprise OIDC provider</text>
+<rect class="box" x="964" y="860" width="260" height="85" rx="10"/>
+<text class="label" x="1094.0" y="884" text-anchor="middle">Model Providers</text>
+<text class="small" x="1094.0" y="903" text-anchor="middle">through AI SDK adapters</text>
+<rect class="box" x="1262" y="860" width="260" height="85" rx="10"/>
+<text class="label" x="1392.0" y="884" text-anchor="middle">Enterprise Systems</text>
+<text class="small" x="1392.0" y="903" text-anchor="middle">MCP · HTTP · connectors</text>
+<path class="edge" d="M 890 205 L 890 255"/>
+<path class="edge" d="M 890 575 L 225 645"/>
+<path class="edge" d="M 375 690 L 410 690"/>
+<path class="edge" d="M 710 690 L 745 690"/>
+<path class="edge" d="M 225 735 L 200 860"/>
+<path class="edge" d="M 560 735 L 1095 860"/>
+<path class="edge" d="M 895 735 L 1390 860"/>
+<path class="edge dash" d="M 1295 735 L 500 860"/>
+</svg>

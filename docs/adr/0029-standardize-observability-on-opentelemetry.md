@@ -1,0 +1,3 @@
+# Standardize observability on OpenTelemetry
+
+All modules will propagate correlation, Run, Invocation, model-call, Tool-call, and Artifact identities through OpenTelemetry traces, structured logs, and low-cardinality metrics exposed behind an Observability port. Run Events remain the business execution timeline while OTel serves diagnosis and performance; API and Worker roles propagate trace context, queue wait is measured separately from execution, and model usage is normalized by the model module. OTLP, Langfuse, Datadog, or an internal platform are replaceable adapters, and prompts, Tool inputs, Artifact content, and other sensitive payloads are excluded by default unless an Organization policy explicitly enables governed capture.

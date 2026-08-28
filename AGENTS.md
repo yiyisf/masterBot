@@ -1,6 +1,6 @@
-# CLAUDE.md
+# AGENTS.md
 
-本文件为在 CMaster Bot 仓库中工作的 Claude Code 提供强制指引。
+本文件为在 CMaster Bot 仓库中工作的编码 Agent 提供强制指引。
 
 ## 1. 先读规范
 
@@ -166,7 +166,7 @@ npm run prototype:architecture
 
 Node.js 要求以根 `package.json` 为准，当前为 Node.js >= 22。
 
-Workspace 落地后应同步更新本文件和 `AGENTS.md`，不得保留失效命令。
+Workspace 落地后应同步更新本文件和 `CLAUDE.md`，不得保留失效命令。
 
 ## 10. 文档维护
 

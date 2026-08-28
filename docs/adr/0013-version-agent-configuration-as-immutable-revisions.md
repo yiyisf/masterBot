@@ -1,0 +1,3 @@
+# Version Agent configuration as immutable Revisions
+
+An Agent keeps a stable organizational identity while its published instructions, required Engine capabilities, model requirements, Tool grant, context policy, execution policy, and optional outcome policy are captured in immutable Agent Revisions. Drafts may change, but publication creates a new Revision; each Run pins the Agent Revision and the resolved Engine, Model, and policy versions it actually used, while credentials and transient runtime state remain outside configuration. Activation and rollback select a Revision rather than mutating history, enabling reproducibility, audit, evaluation, staged rollout, and safe configuration upgrades.

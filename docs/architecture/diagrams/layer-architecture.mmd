@@ -1,0 +1,19 @@
+flowchart TB
+  L1[Experience Layer\nEmployee Workspace | Admin Console]
+  L2[Contract & Transport Layer\nREST Commands/Queries | SSE | AI SDK UI Presenter]
+  L3[Application Layer\nConversation | Run Coordinator | Agent Catalog | Automation]
+  L4[Execution Control Layer\nProvider-neutral Harness | Policy | Checkpoint | Outcome]
+  L5[Runtime Capability Layer\nAgent Engines | Model Module | Tool Runtime | Context Builder]
+  L6[Domain Layer\nOrganization | Conversation | Run | Invocation | Artifact | Task]
+  L7[Persistence & Messaging Layer\nRepositories | Event Store | Outbox | Dispatcher | LiveEventBus]
+  L8[External Adapter Layer\nOIDC | AI SDK | MCP | Tool Provider Host | Artifact Store | OTel]
+  L9[Infrastructure\nPostgreSQL | Local Volume/S3 | Internal IdP | Model/Enterprise Systems]
+
+  L1 --> L2 --> L3 --> L4 --> L5 --> L6
+  L3 --> L6
+  L4 --> L6
+  L5 --> L6
+  L3 --> L7
+  L4 --> L7
+  L5 --> L8
+  L7 --> L8 --> L9

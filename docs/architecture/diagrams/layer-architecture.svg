@@ -1,0 +1,50 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1400" height="1040" viewBox="0 0 1400 1040" role="img" aria-label="CMaster Bot — Layer Architecture">
+<defs><marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#7186a0"/></marker></defs>
+
+<style>
+  .title{font:700 28px Inter,Arial,sans-serif;fill:#10243e}.subtitle{font:400 14px Inter,Arial,sans-serif;fill:#52657a}
+  .group{fill:#f7f9fc;stroke:#b8c5d6;stroke-width:1.5}.group-title{font:700 16px Inter,Arial,sans-serif;fill:#253b56}
+  .box{fill:#fff;stroke:#7186a0;stroke-width:1.4}.accent{fill:#eaf3ff;stroke:#3978c5}.green{fill:#eaf8f1;stroke:#3d9069}.gold{fill:#fff7df;stroke:#b68a25}.purple{fill:#f3edff;stroke:#7c59b8}.red{fill:#fff0f0;stroke:#b85d5d}
+  .label{font:600 13px Inter,Arial,sans-serif;fill:#182d47}.small{font:400 11px Inter,Arial,sans-serif;fill:#52657a}.edge{stroke:#7186a0;stroke-width:1.5;fill:none;marker-end:url(#arrow)}
+  .dash{stroke-dasharray:6 5}.card-title{font:700 14px Inter,Arial,sans-serif;fill:#182d47}.card-text{font:400 12px Inter,Arial,sans-serif;fill:#40556d}
+</style>
+<rect width="1400" height="1040" fill="#ffffff"/><text class="title" x="40" y="45">CMaster Bot — Layer Architecture</text>
+<text class="subtitle" x="40" y="70">Dependencies point toward stable domain and module interfaces; adapters absorb technology change</text>
+<rect class="accent" x="165" y="95" width="1070" height="70" rx="10"/>
+<text class="label" x="700.0" y="119" text-anchor="middle">1 · Experience</text>
+<text class="small" x="700.0" y="138" text-anchor="middle">Employee Workspace · Admin Console</text>
+<path class="edge" d="M 700 165 L 700 195"/>
+<rect class="green" x="165" y="195" width="1070" height="70" rx="10"/>
+<text class="label" x="700.0" y="219" text-anchor="middle">2 · Contracts &amp; Transport</text>
+<text class="small" x="700.0" y="238" text-anchor="middle">REST commands/queries · replayable SSE · AI SDK UI presenter</text>
+<path class="edge" d="M 700 265 L 700 295"/>
+<rect class="box" x="165" y="295" width="1070" height="70" rx="10"/>
+<text class="label" x="700.0" y="319" text-anchor="middle">3 · Application Modules</text>
+<text class="small" x="700.0" y="338" text-anchor="middle">Conversations · Run Coordinator · Agent Catalog · Automation</text>
+<path class="edge" d="M 700 365 L 700 395"/>
+<rect class="purple" x="165" y="395" width="1070" height="70" rx="10"/>
+<text class="label" x="700.0" y="419" text-anchor="middle">4 · Execution Control</text>
+<text class="small" x="700.0" y="438" text-anchor="middle">Provider-neutral Harness · Policy obligations · Checkpoint · Outcome</text>
+<path class="edge" d="M 700 465 L 700 495"/>
+<rect class="gold" x="165" y="495" width="1070" height="70" rx="10"/>
+<text class="label" x="700.0" y="519" text-anchor="middle">5 · Runtime Capabilities</text>
+<text class="small" x="700.0" y="538" text-anchor="middle">Agent Engines · Model Module · Tool Runtime · Context Builder</text>
+<path class="edge" d="M 700 565 L 700 595"/>
+<rect class="accent" x="165" y="595" width="1070" height="70" rx="10"/>
+<text class="label" x="700.0" y="619" text-anchor="middle">6 · Domain Model</text>
+<text class="small" x="700.0" y="638" text-anchor="middle">Organization · Conversation · Run · Invocation · Artifact · Task</text>
+<path class="edge" d="M 700 665 L 700 695"/>
+<rect class="green" x="165" y="695" width="1070" height="70" rx="10"/>
+<text class="label" x="700.0" y="719" text-anchor="middle">7 · Persistence &amp; Messaging</text>
+<text class="small" x="700.0" y="738" text-anchor="middle">Repositories · Event Store · Outbox · Dispatcher · LiveEventBus</text>
+<path class="edge" d="M 700 765 L 700 795"/>
+<rect class="box" x="165" y="795" width="1070" height="70" rx="10"/>
+<text class="label" x="700.0" y="819" text-anchor="middle">8 · External Adapters</text>
+<text class="small" x="700.0" y="838" text-anchor="middle">OIDC · AI SDK · MCP · Provider Host · Artifact Store · OTel</text>
+<path class="edge" d="M 700 865 L 700 895"/>
+<rect class="red" x="165" y="895" width="1070" height="70" rx="10"/>
+<text class="label" x="700.0" y="919" text-anchor="middle">9 · Infrastructure</text>
+<text class="small" x="700.0" y="938" text-anchor="middle">PostgreSQL · persistent volume/S3 · internal IdP · model and enterprise systems</text>
+<text class="small" x="1245" y="425">Stable semantics</text><path class="edge dash" d="M 1235 440 L 1235 690"/>
+<text class="small" x="55" y="740">Replaceable technology</text><path class="edge dash" d="M 150 725 L 150 895"/>
+</svg>

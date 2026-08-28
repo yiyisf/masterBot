@@ -1,0 +1,3 @@
+# Use state tables with an append-only Run log
+
+CMaster Bot will not use full event sourcing. Current Run, Invocation, Task, and related entity state remains queryable in authoritative state tables, while ordered, versioned Run Events provide the append-only execution timeline and audit record; long executions add periodic Checkpoints, and a transactional Outbox supports reliable external publication. State changes, events, and outbox entries are committed together, recovery starts from a Checkpoint and applies later events, token-level Output Deltas may be coalesced, and old event schemas are read through upcasters. This retains replay, recovery, and observability without forcing every query, migration, or repair through aggregate reconstruction.

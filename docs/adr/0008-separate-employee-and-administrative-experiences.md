@@ -1,0 +1,3 @@
+# Separate the Employee Workspace from the Admin Console
+
+The Web application will present an Employee Workspace organized around Conversations, active and background Tasks, approvals, and work outputs, while platform configuration and operation live in a role-gated Admin Console for Agents, Tools, Skills, Connectors, Models, policies, audit, automation, and settings. Both experiences remain in one deployable frontend initially, but they use separate navigation and UI projections. This avoids exposing implementation concepts as the employee product and replaces the current flat sidebar that gives every backend capability equal prominence.

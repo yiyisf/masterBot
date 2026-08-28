@@ -1,0 +1,96 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1700" height="1230" viewBox="0 0 1700 1230" role="img" aria-label="CMaster Bot — Domain Data Model">
+<defs><marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#7186a0"/></marker></defs>
+
+<style>
+  .title{font:700 28px Inter,Arial,sans-serif;fill:#10243e}.subtitle{font:400 14px Inter,Arial,sans-serif;fill:#52657a}
+  .group{fill:#f7f9fc;stroke:#b8c5d6;stroke-width:1.5}.group-title{font:700 16px Inter,Arial,sans-serif;fill:#253b56}
+  .box{fill:#fff;stroke:#7186a0;stroke-width:1.4}.accent{fill:#eaf3ff;stroke:#3978c5}.green{fill:#eaf8f1;stroke:#3d9069}.gold{fill:#fff7df;stroke:#b68a25}.purple{fill:#f3edff;stroke:#7c59b8}.red{fill:#fff0f0;stroke:#b85d5d}
+  .label{font:600 13px Inter,Arial,sans-serif;fill:#182d47}.small{font:400 11px Inter,Arial,sans-serif;fill:#52657a}.edge{stroke:#7186a0;stroke-width:1.5;fill:none;marker-end:url(#arrow)}
+  .dash{stroke-dasharray:6 5}.card-title{font:700 14px Inter,Arial,sans-serif;fill:#182d47}.card-text{font:400 12px Inter,Arial,sans-serif;fill:#40556d}
+</style>
+<rect width="1700" height="1230" fill="#ffffff"/><text class="title" x="40" y="45">CMaster Bot — Domain Data Model</text>
+<text class="subtitle" x="40" y="70">Core ownership, execution, catalog, output, and automation relationships</text>
+<rect class="box" x="55" y="110" width="260" height="105" rx="10"/>
+<text class="label" x="185.0" y="134" text-anchor="middle">Organization</text>
+<text class="small" x="185.0" y="153" text-anchor="middle">policy/data isolation scope</text>
+<rect class="box" x="55" y="270" width="260" height="105" rx="10"/>
+<text class="label" x="185.0" y="294" text-anchor="middle">Principal</text>
+<text class="small" x="185.0" y="313" text-anchor="middle">employee or service identity</text>
+<rect class="box" x="380" y="110" width="270" height="105" rx="10"/>
+<text class="label" x="515.0" y="134" text-anchor="middle">Conversation</text>
+<text class="small" x="515.0" y="153" text-anchor="middle">ordered employee-visible history</text>
+<rect class="box" x="380" y="270" width="270" height="105" rx="10"/>
+<text class="label" x="515.0" y="294" text-anchor="middle">Message</text>
+<text class="small" x="515.0" y="313" text-anchor="middle">immutable canonical content</text>
+<rect class="accent" x="720" y="110" width="280" height="120" rx="10"/>
+<text class="label" x="860.0" y="134" text-anchor="middle">Run</text>
+<text class="small" x="860.0" y="153" text-anchor="middle">one authorized work attempt</text>
+<text class="small" x="860.0" y="168" text-anchor="middle">typed Trigger · pinned revisions</text>
+<rect class="box" x="720" y="300" width="280" height="120" rx="10"/>
+<text class="label" x="860.0" y="324" text-anchor="middle">Invocation</text>
+<text class="small" x="860.0" y="343" text-anchor="middle">Agent participation tree</text>
+<text class="small" x="860.0" y="358" text-anchor="middle">parentInvocationId</text>
+<rect class="box" x="720" y="500" width="280" height="105" rx="10"/>
+<text class="label" x="860.0" y="524" text-anchor="middle">Run Event</text>
+<text class="small" x="860.0" y="543" text-anchor="middle">ordered · versioned · replayable</text>
+<rect class="box" x="720" y="675" width="280" height="105" rx="10"/>
+<text class="label" x="860.0" y="699" text-anchor="middle">Checkpoint</text>
+<text class="small" x="860.0" y="718" text-anchor="middle">safe recovery state</text>
+<rect class="purple" x="1070" y="110" width="270" height="105" rx="10"/>
+<text class="label" x="1205.0" y="134" text-anchor="middle">Agent / Revision</text>
+<text class="small" x="1205.0" y="153" text-anchor="middle">stable identity · immutable config</text>
+<rect class="box" x="1070" y="270" width="270" height="105" rx="10"/>
+<text class="label" x="1205.0" y="294" text-anchor="middle">Model Call / Profile</text>
+<text class="small" x="1205.0" y="313" text-anchor="middle">selected capability and usage</text>
+<rect class="box" x="1070" y="430" width="270" height="120" rx="10"/>
+<text class="label" x="1205.0" y="454" text-anchor="middle">Tool Call / Tool</text>
+<text class="small" x="1205.0" y="473" text-anchor="middle">ledger · outcome · idempotency</text>
+<rect class="box" x="1070" y="625" width="270" height="105" rx="10"/>
+<text class="label" x="1205.0" y="649" text-anchor="middle">Tool Provider / Skill</text>
+<text class="small" x="1205.0" y="668" text-anchor="middle">implementation source · instructions</text>
+<rect class="accent" x="1410" y="110" width="240" height="120" rx="10"/>
+<text class="label" x="1530.0" y="134" text-anchor="middle">Artifact</text>
+<text class="small" x="1530.0" y="153" text-anchor="middle">versioned work output</text>
+<text class="small" x="1530.0" y="168" text-anchor="middle">content reference</text>
+<rect class="box" x="1410" y="300" width="240" height="105" rx="10"/>
+<text class="label" x="1530.0" y="324" text-anchor="middle">Artifact Content</text>
+<text class="small" x="1530.0" y="343" text-anchor="middle">hash · adapter key · size</text>
+<rect class="box" x="1410" y="500" width="240" height="105" rx="10"/>
+<text class="label" x="1530.0" y="524" text-anchor="middle">Task</text>
+<text class="small" x="1530.0" y="543" text-anchor="middle">durable work unit</text>
+<rect class="box" x="1410" y="675" width="240" height="120" rx="10"/>
+<text class="label" x="1530.0" y="699" text-anchor="middle">Workflow Execution</text>
+<text class="small" x="1530.0" y="718" text-anchor="middle">published revision → Task graph</text>
+<rect class="purple" x="55" y="470" width="260" height="105" rx="10"/>
+<text class="label" x="185.0" y="494" text-anchor="middle">Policy Revision</text>
+<text class="small" x="185.0" y="513" text-anchor="middle">decision + obligations</text>
+<rect class="box" x="1070" y="820" width="270" height="105" rx="10"/>
+<text class="label" x="1205.0" y="844" text-anchor="middle">Eval Evidence</text>
+<text class="small" x="1205.0" y="863" text-anchor="middle">suite + candidate versions</text>
+<path class="edge" d="M 185.0 162.5 L 185.0 322.5"/>
+<path class="edge" d="M 185.0 162.5 L 515.0 162.5"/>
+<path class="edge" d="M 185.0 162.5 L 860.0 170.0"/>
+<path class="edge" d="M 185.0 322.5 L 860.0 170.0"/>
+<path class="edge" d="M 515.0 162.5 L 515.0 322.5"/>
+<path class="edge" d="M 515.0 322.5 L 860.0 170.0"/>
+<path class="edge" d="M 860.0 170.0 L 860.0 360.0"/>
+<path class="edge" d="M 860.0 170.0 L 860.0 552.5"/>
+<path class="edge" d="M 860.0 170.0 L 860.0 727.5"/>
+<path class="edge" d="M 1205.0 162.5 L 860.0 360.0"/>
+<path class="edge" d="M 860.0 360.0 L 1205.0 322.5"/>
+<path class="edge" d="M 860.0 360.0 L 1205.0 490.0"/>
+<path class="edge" d="M 1205.0 677.5 L 1205.0 490.0"/>
+<path class="edge" d="M 860.0 170.0 L 1530.0 170.0"/>
+<path class="edge" d="M 1530.0 170.0 L 1530.0 352.5"/>
+<path class="edge" d="M 1530.0 552.5 L 860.0 170.0"/>
+<path class="edge" d="M 1530.0 735.0 L 1530.0 552.5"/>
+<path class="edge" d="M 185.0 522.5 L 860.0 170.0"/>
+<path class="edge" d="M 1205.0 162.5 L 1205.0 872.5"/>
+<rect class="group" x="55" y="1000" width="1595" height="165" rx="14"/>
+<text class="group-title" x="80" y="1035">Key invariants</text>
+<text class="card-text" x="90" y="1070">• Messages are canonical; Runs reference them rather than copy history.</text>
+<text class="card-text" x="850" y="1070">• A Run contains an Invocation tree; provider Engine Sessions remain adapter state.</text>
+<text class="card-text" x="90" y="1104">• State tables are authoritative for queries; Run Events are append-only timelines.</text>
+<text class="card-text" x="850" y="1104">• Artifacts reference replaceable content storage; Tool effects use a call ledger.</text>
+<text class="card-text" x="90" y="1138">• Every owned record is Organization-scoped and every Run pins configuration/policy versions.</text>
+</svg>

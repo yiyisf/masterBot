@@ -1,0 +1,3 @@
+# Allow Runs from multiple Trigger types
+
+A Run represents one complete attempt to fulfill a work request authorized by a Principal and is not required to belong to a Conversation. Its typed Trigger records a Message, Task, webhook event, schedule, API request, or parent Run; employee chat Runs require Conversation and Message references, while automated Runs use an explicit Service Principal and must not fabricate user Messages. Agent delegation remains a child Invocation in the same Run unless independent lifecycle, retry, or isolation deliberately creates a child Run. This gives interactive and automated execution one Harness model without conflating their origins.

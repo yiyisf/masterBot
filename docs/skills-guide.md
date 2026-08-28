@@ -1,5 +1,7 @@
 # 技能开发手册
 
+> **当前原型文档**：本文描述旧的 `SKILL.md + index.ts` 执行格式。目标架构采用 Agent Skills 作为首选外部格式，并将 Skill 与 Tool Provider 分离，见 [`ADR-0016`](./adr/0016-adopt-agent-skills-as-the-external-skill-format.md)。在 Tool Runtime Slice 完成前，维护现有代码时仍可参考本文，但不得将该格式扩展为新的长期 Contract。
+
 ## SKILL.md 协议
 
 每个技能目录包含：

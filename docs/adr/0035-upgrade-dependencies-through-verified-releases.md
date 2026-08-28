@@ -1,0 +1,3 @@
+# Upgrade dependencies through verified releases
+
+Production dependency versions and build artifacts will be deterministic and locked. Automation may propose dependency upgrade pull requests, but AI SDK, Agent Engine, provider, Tool protocol, framework, and database-driver changes enter releases only after adapter contract tests, integration tests, relevant Eval Suites, migration checks, and risk-based canary use; the production server will not implement an automatic self-update mechanism at this stage. Adapter seams concentrate most SDK changes, rolling deployments preserve a defined compatibility window, Event upcasters keep history readable, and Checkpoints record Engine adapter versions so incompatible resume behavior fails explicitly or uses a deliberate migrator.

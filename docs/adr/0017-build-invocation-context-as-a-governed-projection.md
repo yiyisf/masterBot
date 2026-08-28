@@ -1,0 +1,3 @@
+# Build Invocation Context as a governed projection
+
+Conversation history, Run-scoped Working State, recallable Memory, governed Knowledge, Skill content, Artifacts, and Agent Revision instructions remain distinct canonical sources. A Context Builder selects from them for one Invocation according to access policy, relevance, token budget, and compression policy, records provenance and content hashes in a Context Manifest, and returns an engine-neutral Invocation Context that each Agent Engine adapter converts to provider messages. Summaries remain derived data, Tool outputs do not automatically become Memory, Memory does not override authoritative Knowledge, and Context construction does not own source storage, ingestion, Tool execution, or provider formatting.

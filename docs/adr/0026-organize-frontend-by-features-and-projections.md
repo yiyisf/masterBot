@@ -1,0 +1,3 @@
+# Organize the frontend by features and replayable projections
+
+The Web app will organize employee and administrative behavior into feature modules rather than large route pages, and will separate cached server state, sequence-driven active-Run streaming projections, and local interaction state. All backend access uses the generated contract client; UI stream adapters feed replayable projection reducers that can recover from snapshots plus later events, while Tool, Artifact, and Run-detail renderers are selected through registries with generic fallbacks. Framework-specific assistant-ui and Vercel AI SDK hooks stay behind adapters, design tokens stay outside business features, and route modules compose features rather than owning data access or execution logic.

@@ -1,0 +1,3 @@
+# Set a desktop-first accessible UI baseline
+
+The Employee Workspace will provide the complete experience on desktop browsers and responsive core Conversation, Run status, approval, and Artifact access on mobile, while the Admin Console is desktop-first and does not initially reproduce complex editing and diagnostics on small screens. A project-owned semantic design system, initially implemented with Tailwind and Radix/shadcn, centralizes tokens and keeps framework primitives out of feature interfaces. Chinese is the first language but copy is internationalized, WCAG 2.2 AA, keyboard access, non-color status cues, reduced motion, virtualized long timelines, and localized streaming updates are acceptance requirements.

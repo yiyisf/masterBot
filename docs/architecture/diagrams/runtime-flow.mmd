@@ -1,0 +1,24 @@
+sequenceDiagram
+  participant B as Browser
+  participant A as API Role
+  participant P as PostgreSQL
+  participant W as Worker Role
+  participant H as Harness
+  participant E as Agent Engine
+  participant T as Tool Runtime
+
+  B->>A: POST /api/v1/runs
+  A->>P: Insert Run + Outbox
+  A-->>B: 202 runId/eventsUrl
+  B->>A: GET /runs/{id}/events (Last-Event-ID)
+  A->>P: Replay events after sequence
+  P-->>W: Lease pending Run
+  W->>H: Start/Resume Run
+  H->>E: Execute Invocation
+  E->>T: Invoke governed Tool
+  T-->>E: ToolOutcome
+  E-->>H: EngineEvent / OutputDelta
+  H->>P: State + RunEvent + Checkpoint
+  P-->>A: LISTEN/NOTIFY wake-up
+  A->>P: Read new ordered events
+  A-->>B: SSE RunEvent/UI projection

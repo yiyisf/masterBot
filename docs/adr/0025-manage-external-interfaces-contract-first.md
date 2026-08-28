@@ -1,0 +1,3 @@
+# Manage external interfaces contract-first
+
+Browser and external integrations will use explicitly versioned REST commands and queries plus replayable SSE events defined as runtime-validated Zod contracts in a contracts package. OpenAPI and a typed client are generated from those schemas, domain objects are mapped rather than serialized directly, errors use a stable problem-details envelope, and Run Event envelopes carry their own schema version and sequence. Compatible additive changes remain within a version while semantic changes create a new version; AI SDK UI streams are presentation adapters rather than the canonical interface, and GraphQL is deferred until demonstrated query needs justify another contract and operational model.
