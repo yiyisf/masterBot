@@ -21,7 +21,9 @@ Future Module ownership is listed in `packages/README.md`; placeholder business 
 npm install
 npm run next:db:up
 export DATABASE_URL=postgresql://cmaster:cmaster_dev@localhost:5432/cmaster_next
+npm run next:db:migrate
 export NEXT_ARCHITECTURE_ENABLED=true
+export CMASTER_DEVELOPMENT_IDENTITY_ENABLED=true
 npm run next:server -- --role=all
 # another terminal
 npm run next:web

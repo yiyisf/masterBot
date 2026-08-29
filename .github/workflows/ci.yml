@@ -77,5 +77,8 @@ jobs:
       - name: Check workspace foundation
         run: npm run next:check
 
+      - name: Migrate PostgreSQL
+        run: npm run next:db:migrate
+
       - name: Test PostgreSQL integration
         run: npm run next:test:integration

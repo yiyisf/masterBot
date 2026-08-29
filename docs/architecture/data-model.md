@@ -64,6 +64,14 @@ Run
 └── lastSequence / currentCheckpointId?
 ```
 
+首个 Walking Skeleton 的 Run 状态为：
+
+```text
+accepted | queued | running | succeeded | failed | cancelled
+```
+
+`invocation.output_ready` 是当前 Echo Run 的取消边界：取消事务先提交时后续输出被丢弃；输出先持久化时取消返回 `run_cancellation_too_late`，并继续幂等交付最终 Assistant Message。不提前引入 `cancelling` 或 `completing` 状态。
+
 ### Invocation
 
 ```text
@@ -189,6 +197,8 @@ Plan 不是持久 Task。Schedule/Webhook 只产生 Trigger。Runbook 是带风�
 | governance | policy_revisions, approvals, audit_records, credential_references |
 
 表名只是建议；关键约束是所有权。跨 Module 查询通过 Interface 或专用 Projection，不直接 JOIN 私有表。
+
+首个模块化单体使用同一 PostgreSQL `public` Schema，不按 Module 拆分 Schema 或数据库 Role。Migration 和 Repository 留在所属 Package；同 Module 建立完整 FK，跨 Module FK 只沿单向依赖建立。只有真实权限隔离或独立部署需求出现后，才重新评估多 Schema。
 
 ## 10. 索引与保留基线
 

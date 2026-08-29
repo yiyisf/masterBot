@@ -3,6 +3,10 @@
   "references": [
     { "path": "./packages/kernel" },
     { "path": "./packages/contracts" },
+    { "path": "./packages/identity" },
+    { "path": "./packages/agents" },
+    { "path": "./packages/conversations" },
+    { "path": "./packages/execution" },
     { "path": "./apps/server" }
   ]
 }

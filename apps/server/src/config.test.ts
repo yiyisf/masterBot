@@ -29,4 +29,12 @@ describe('loadServerConfig', () => {
       argv,
     )).toThrow();
   });
+
+  it('rejects Development Identity in production', () => {
+    expect(() => loadServerConfig({
+      DATABASE_URL: 'postgresql://localhost/cmaster',
+      CMASTER_RUNTIME_ENV: 'production',
+      CMASTER_DEVELOPMENT_IDENTITY_ENABLED: 'true',
+    }, [])).toThrow('Development Identity cannot be enabled in production');
+  });
 });

@@ -5,7 +5,7 @@ export interface DatabaseHealth {
 }
 
 export class PostgresConnection implements DatabaseHealth {
-  private readonly pool: Pool;
+  readonly pool: Pool;
 
   constructor(connectionString: string) {
     this.pool = new Pool({ connectionString });

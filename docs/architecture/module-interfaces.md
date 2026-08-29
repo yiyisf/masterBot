@@ -55,6 +55,8 @@ interface ConversationModule {
 - Message 追加后不可修改；修订通过新 Message 或显式元数据表达。
 - Run 只引用 Message，不由 Conversation Module 执行。
 - Context Builder 通过受控读接口获取历史，不能直查表。
+- Slice 1 的 Browser Command 明确拆分为创建 Conversation、追加 Employee Message、以 Message Trigger 创建 Run；不提供重新耦合三者的 `/chat` Command。
+- Message 使用 Conversation 内严格递增 sequence；外部暂只接受一个 Provider-neutral Text Part。
 
 ## 4. Execution
 
@@ -83,6 +85,8 @@ interface RunQueries {
 - Run Event 按 Run 严格 sequence，传输为 at-least-once。
 - Harness 只通过 Agent Engine、Tool Runtime、Context Builder、Policy、Artifact 等公开 Interface 协作。
 - Checkpoint 只在声明的安全点产生；不兼容 Engine version 必须显式失败或迁移。
+
+Slice 1 的 Echo Walking Skeleton 使用 `accepted | queued | running | succeeded | failed | cancelled`。`output_ready` 是取消边界：若取消先提交则丢弃后续 Engine 输出；若输出先提交则取消太晚，继续幂等追加 Assistant Message。该规则不提前引入 `cancelling/completing`。
 
 ### Agent Engine Port
 

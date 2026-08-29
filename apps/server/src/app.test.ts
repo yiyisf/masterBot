@@ -1,16 +1,16 @@
 import { describe, expect, it } from 'vitest';
 import { buildApi } from './app.js';
-import type { ServerConfig } from './config.js';
+import { loadServerConfig } from './config.js';
 import { InMemoryFeatureFlags } from './feature-flags.js';
 import type { DatabaseHealth } from './postgres.js';
 
-const config: ServerConfig = {
-  role: 'api',
-  apiPort: 3100,
-  databaseUrl: 'postgresql://unused-in-unit-test',
-  webOrigin: 'http://localhost:3101',
-  features: { nextArchitecture: true },
-};
+const config = loadServerConfig({
+  DATABASE_URL: 'postgresql://unused-in-unit-test',
+  CMASTER_SERVER_ROLE: 'api',
+  CMASTER_RUNTIME_ENV: 'test',
+  NEXT_ARCHITECTURE_ENABLED: 'true',
+  CMASTER_DEVELOPMENT_IDENTITY_ENABLED: 'true',
+}, []);
 
 function database(available: boolean): DatabaseHealth {
   return { check: async () => available };
