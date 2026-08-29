@@ -1,0 +1,82 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "CMaster Bot API",
+    "version": "1.0.0"
+  },
+  "components": {
+    "schemas": {
+      "SystemStatus": {
+        "type": "object",
+        "properties": {
+          "contractVersion": {
+            "type": "string",
+            "enum": [
+              "v1"
+            ]
+          },
+          "service": {
+            "type": "string",
+            "enum": [
+              "cmaster-next"
+            ]
+          },
+          "role": {
+            "type": "string",
+            "enum": [
+              "api",
+              "worker",
+              "all"
+            ]
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "ok",
+              "degraded"
+            ]
+          },
+          "postgres": {
+            "type": "string",
+            "enum": [
+              "available",
+              "unavailable"
+            ]
+          },
+          "nextArchitectureEnabled": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "contractVersion",
+          "service",
+          "role",
+          "status",
+          "postgres",
+          "nextArchitectureEnabled"
+        ]
+      }
+    },
+    "parameters": {}
+  },
+  "paths": {
+    "/api/v1/system/status": {
+      "get": {
+        "summary": "Read the next-architecture system status",
+        "responses": {
+          "200": {
+            "description": "Current non-sensitive service status",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SystemStatus"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "webhooks": {}
+}

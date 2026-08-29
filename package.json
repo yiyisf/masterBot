@@ -4,6 +4,10 @@
   "description": "Enterprise AI Assistant with extensible skill system",
   "main": "dist/index.js",
   "type": "module",
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
   "repository": {
     "type": "git",
     "url": "https://github.com/yiyisf/masterBot.git"
@@ -48,6 +52,19 @@
     "test:run": "vitest run",
     "eval": "tsx --conditions=development evals/runner.ts",
     "prototype:architecture": "tsx prototypes/architecture-model/tui.ts",
+    "next:build": "tsc -b tsconfig.next.json && npm run build -w @cmaster/web",
+    "next:test": "vitest run --config vitest.next.config.ts",
+    "next:test:integration": "vitest run --config vitest.next.integration.config.ts",
+    "next:lint": "eslint --config eslint.next.config.mjs \"apps/server/**/*.ts\" \"packages/**/*.ts\" \"tooling/**/*.mjs\" && npm run lint -w @cmaster/web",
+    "next:boundaries": "depcruise --config dependency-cruiser.config.cjs apps packages && node --test tooling/module-boundaries.test.mjs",
+    "next:check": "npm run contracts:check && npm run next:boundaries && npm run next:lint && npm run next:build && npm run next:test",
+    "next:server": "npm run dev -w @cmaster/server --",
+    "next:web": "npm run dev -w @cmaster/web",
+    "next:db:up": "docker compose -f infra/dev/postgres.compose.yml up -d",
+    "next:db:down": "docker compose -f infra/dev/postgres.compose.yml down",
+    "next:db:reset": "docker compose -f infra/dev/postgres.compose.yml down -v && docker compose -f infra/dev/postgres.compose.yml up -d",
+    "contracts:generate": "npm run generate -w @cmaster/contracts",
+    "contracts:check": "npm run contracts:generate && git diff --exit-code -- packages/contracts/openapi packages/contracts/src/generated",
     "lint": "eslint src --ext .ts",
     "setup": "bash scripts/install.sh || powershell -ExecutionPolicy Bypass -File scripts/install.ps1",
     "prepublishOnly": "npm run build",
@@ -100,6 +117,7 @@
     "@types/node": "^22.10.6",
     "@typescript-eslint/eslint-plugin": "^8.20.0",
     "@typescript-eslint/parser": "^8.20.0",
+    "dependency-cruiser": "18.2.0",
     "eslint": "^9.18.0",
     "tsx": "^4.19.2",
     "typescript": "^5.7.3",

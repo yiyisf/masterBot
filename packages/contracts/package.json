@@ -1,0 +1,28 @@
+{
+  "name": "@cmaster/contracts",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "development": "./src/index.ts",
+      "import": "./dist/index.js",
+      "default": "./dist/index.js"
+    }
+  },
+  "files": ["dist", "openapi"],
+  "scripts": {
+    "build": "tsc -b",
+    "generate": "tsx scripts/generate-openapi.ts && openapi-typescript openapi/openapi.v1.json -o src/generated/openapi.d.ts",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "openapi-fetch": "0.17.0",
+    "zod": "4.4.3"
+  },
+  "devDependencies": {
+    "@asteasolutions/zod-to-openapi": "9.1.0",
+    "openapi-typescript": "7.13.0"
+  }
+}

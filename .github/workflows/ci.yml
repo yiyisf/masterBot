@@ -37,3 +37,45 @@ jobs:
 
       - name: Build frontend
         run: cd web && npm ci && npm run build
+
+  workspace-foundation:
+    name: Workspace Foundation
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_USER: cmaster
+          POSTGRES_PASSWORD: cmaster_dev
+          POSTGRES_DB: cmaster_next
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U cmaster -d cmaster_next"
+          --health-interval 2s
+          --health-timeout 3s
+          --health-retries 20
+
+    env:
+      DATABASE_URL: postgresql://cmaster:cmaster_dev@localhost:5432/cmaster_next
+      NEXT_ARCHITECTURE_ENABLED: "true"
+      NEXT_PUBLIC_CMASTER_API_URL: http://localhost:3100
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+
+      - name: Install workspace dependencies
+        run: npm ci
+
+      - name: Check workspace foundation
+        run: npm run next:check
+
+      - name: Test PostgreSQL integration
+        run: npm run next:test:integration

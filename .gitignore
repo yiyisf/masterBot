@@ -1,5 +1,7 @@
 node_modules/
 dist/
+.next/
+*.tsbuildinfo
 .env
 *.log
 .DS_Store

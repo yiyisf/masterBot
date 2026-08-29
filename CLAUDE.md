@@ -79,6 +79,8 @@ git status --short
 - 不先做全目录移动；行为被新 Module 替换时再迁移代码。
 - 替代完成后删除旧代码和只验证旧实现细节的测试。
 - 不开发旧 SQLite 数据迁移、旧 API 兼容或旧 Harness 恢复。
+- `src/`、`tests/`、`web/`、`skills/`、`agents/` 属于冻结的 Legacy，只读参考；新代码不得导入它们。
+- 可复用逻辑必须复制到新 Workspace，按新 Interface 重写并添加新测试；只有紧急安全/数据完整性修复可走独立 `legacy-fix/*` 分支。
 
 ## 5. Module 与依赖纪律
 
