@@ -22,13 +22,13 @@ Only urgent security or data-integrity defects may modify frozen paths, through 
 
 | Legacy area | Target Module/App | Planned Slice | Status |
 |---|---|---:|---|
-| `src/gateway`, old API/SSE | `apps/server`, `packages/execution` | 1 | Not started |
-| `src/core/agent*`, `src/core/harness` | `packages/execution`, Engine adapters | 1–2 | Not started |
+| `src/gateway`, old API/SSE | `apps/server`, `packages/execution` | 1 | Run Walking Skeleton started; legacy not yet replaced |
+| `src/core/agent*`, `src/core/harness` | `packages/execution`, Engine adapters | 1–2 | Echo Engine foundation started; legacy not yet replaced |
 | `src/llm` | `packages/models` | 2 | Not started |
 | `src/skills`, `skills/` | `packages/tools`, Provider Host | 3 | Not started |
 | `src/memory`, context manager | `packages/context` | 4 | Not started |
 | attachments and generated outputs | `packages/artifacts` | 4 | Not started |
-| `web/` | `apps/web` | 5 | Foundation started |
+| `web/` | `apps/web` | 5 | Minimal Employee Workspace started; legacy not yet replaced |
 | task DAG/workflow/runbook | `packages/automation` | Later | Not started |
 
 Update this table only when a Slice PR establishes or retires a replacement path.

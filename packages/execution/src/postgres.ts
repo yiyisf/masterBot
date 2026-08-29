@@ -1,0 +1,635 @@
+import { createHash, randomUUID } from 'node:crypto';
+import type { ResolvedAgentRevision } from '@cmaster/agents';
+import type { ConversationId, MessageId } from '@cmaster/conversations';
+import type { OrganizationId, PrincipalId, RequestIdentity } from '@cmaster/identity';
+import type { Pool, PoolClient } from 'pg';
+import {
+  type AcceptRunCommand,
+  type CancelRunResult,
+  type CommandResult,
+  type DispatchAttemptId,
+  type ExecutionModule,
+  type InvocationId,
+  type InvocationStatus,
+  type RunCommandId,
+  type RunEventEnvelope,
+  type RunEventType,
+  type RunFailure,
+  type RunId,
+  RunIdempotencyConflictError,
+  RunNotFoundError,
+  type RunSnapshot,
+  type RunStatus,
+  StaleLeaseError,
+} from './types.js';
+
+interface RunRow {
+  id: string;
+  organization_id: string;
+  initiating_principal_id: string;
+  conversation_id: string;
+  trigger_ref: string;
+  agent_id: string;
+  agent_revision_id: string;
+  resolved_engine_kind: 'echo';
+  resolved_engine_version: '1';
+  root_invocation_id: string;
+  status: RunStatus;
+  last_sequence: number;
+  assistant_message_id: string | null;
+  failure: RunFailure | null;
+  idempotency_key: string;
+  request_hash: string;
+  created_at: Date;
+  started_at: Date | null;
+  completed_at: Date | null;
+  invocation_status: InvocationStatus;
+  prepared_output: { text: string } | null;
+}
+
+interface EventRow {
+  event_id: string;
+  run_id: string;
+  sequence: number;
+  schema_version: 1;
+  event_type: RunEventType;
+  event_data: unknown;
+  causation_id: string | null;
+  correlation_id: string;
+  created_at: Date;
+}
+
+export interface RunLease {
+  runId: RunId;
+  organizationId: OrganizationId;
+  initiatingPrincipalId: PrincipalId;
+  conversationId: ConversationId;
+  messageId: MessageId;
+  invocationId: InvocationId;
+  engineKind: 'echo';
+  engineVersion: '1';
+  leaseToken: string;
+  attemptId: DispatchAttemptId;
+  attemptNumber: number;
+  preparedOutput?: string;
+}
+
+function digest(value: unknown): string {
+  return createHash('sha256').update(JSON.stringify(value)).digest('hex');
+}
+
+function mapRun(row: RunRow): RunSnapshot {
+  return {
+    id: row.id as RunId,
+    organizationId: row.organization_id as OrganizationId,
+    initiatingPrincipalId: row.initiating_principal_id as PrincipalId,
+    conversationId: row.conversation_id as ConversationId,
+    trigger: { type: 'message', messageId: row.trigger_ref as MessageId },
+    agentId: row.agent_id as RunSnapshot['agentId'],
+    agentRevisionId: row.agent_revision_id as RunSnapshot['agentRevisionId'],
+    engine: { kind: row.resolved_engine_kind, version: row.resolved_engine_version },
+    rootInvocation: {
+      id: row.root_invocation_id as InvocationId,
+      status: row.invocation_status,
+    },
+    status: row.status,
+    cancellable: ['accepted', 'queued', 'running'].includes(row.status) && row.prepared_output === null,
+    lastSequence: row.last_sequence,
+    ...(row.assistant_message_id === null
+      ? {}
+      : { assistantMessageId: row.assistant_message_id as MessageId }),
+    ...(row.failure === null ? {} : { failure: row.failure }),
+    createdAt: row.created_at,
+    ...(row.started_at === null ? {} : { startedAt: row.started_at }),
+    ...(row.completed_at === null ? {} : { completedAt: row.completed_at }),
+  };
+}
+
+function mapEvent(row: EventRow): RunEventEnvelope {
+  return {
+    schemaVersion: row.schema_version,
+    eventId: row.event_id as RunEventEnvelope['eventId'],
+    runId: row.run_id as RunId,
+    sequence: row.sequence,
+    type: row.event_type,
+    timestamp: row.created_at,
+    ...(row.causation_id === null ? {} : { causationId: row.causation_id }),
+    correlationId: row.correlation_id as RunId,
+    data: row.event_data,
+  };
+}
+
+const runSelect = `
+  SELECT r.*, i.status AS invocation_status, i.prepared_output
+  FROM runs r
+  JOIN invocations i
+    ON i.organization_id = r.organization_id
+   AND i.id = r.root_invocation_id
+`;
+
+async function selectRun(
+  client: Pool | PoolClient,
+  organizationId: string,
+  runId: string,
+  lock = false,
+): Promise<RunRow | undefined> {
+  const result = await client.query<RunRow>(
+    `${runSelect} WHERE r.organization_id = $1 AND r.id = $2${lock ? ' FOR UPDATE OF r' : ''}`,
+    [organizationId, runId],
+  );
+  return result.rows[0];
+}
+
+async function appendEvent(
+  client: PoolClient,
+  organizationId: string,
+  runId: string,
+  type: RunEventType,
+  data: unknown,
+  causationId?: string,
+): Promise<RunEventEnvelope> {
+  const sequenceResult = await client.query<{ last_sequence: number }>(
+    `UPDATE runs SET last_sequence = last_sequence + 1
+     WHERE organization_id = $1 AND id = $2
+     RETURNING last_sequence`,
+    [organizationId, runId],
+  );
+  const sequence = sequenceResult.rows[0]?.last_sequence;
+  if (sequence === undefined) throw new RunNotFoundError();
+  const inserted = await client.query<EventRow>(
+    `INSERT INTO run_events (
+       event_id, organization_id, run_id, sequence, event_type,
+       event_data, causation_id, correlation_id
+     ) VALUES ($1, $2, $3, $4, $5, $6, $7, $3)
+     RETURNING *`,
+    [randomUUID(), organizationId, runId, sequence, type, JSON.stringify(data), causationId ?? null],
+  );
+  await client.query(`SELECT pg_notify('cmaster_run_events', $1)`, [
+    JSON.stringify({ runId, lastSequence: sequence }),
+  ]);
+  return mapEvent(inserted.rows[0]!);
+}
+
+async function verifyLease(
+  client: PoolClient,
+  lease: RunLease,
+): Promise<void> {
+  const result = await client.query(
+    `SELECT 1 FROM run_dispatch
+     WHERE run_id = $1 AND organization_id = $2 AND status = 'pending'
+       AND lease_token = $3 AND lease_expires_at > clock_timestamp()
+     FOR UPDATE`,
+    [lease.runId, lease.organizationId, lease.leaseToken],
+  );
+  if (result.rowCount !== 1) throw new StaleLeaseError();
+}
+
+export class PostgresExecutionModule implements ExecutionModule {
+  constructor(private readonly pool: Pool) {}
+
+  async acceptRun(
+    identity: RequestIdentity,
+    command: AcceptRunCommand,
+  ): Promise<CommandResult<RunSnapshot>> {
+    const requestHash = digest({ messageId: command.messageId });
+    const client = await this.pool.connect();
+    try {
+      await client.query('BEGIN');
+      await client.query(`SELECT pg_advisory_xact_lock(hashtextextended($1, 0))`, [
+        `run:${identity.organizationId}:${command.commandId}`,
+      ]);
+      const existing = await client.query<RunRow>(
+        `${runSelect} WHERE r.organization_id = $1 AND r.idempotency_key = $2`,
+        [identity.organizationId, command.commandId],
+      );
+      const previous = existing.rows[0];
+      if (previous) {
+        if (previous.request_hash !== requestHash) throw new RunIdempotencyConflictError();
+        await client.query('COMMIT');
+        return { value: mapRun(previous), replayed: true };
+      }
+
+      const runId = randomUUID();
+      const invocationId = randomUUID();
+      await client.query(
+        `INSERT INTO runs (
+           id, organization_id, initiating_principal_id, conversation_id,
+           trigger_type, trigger_ref, agent_id, agent_revision_id,
+           resolved_engine_kind, resolved_engine_version, root_invocation_id,
+           status, idempotency_key, request_hash
+         ) VALUES ($1, $2, $3, $4, 'message', $5, $6, $7, $8, $9, $10, 'accepted', $11, $12)`,
+        [runId, identity.organizationId, identity.principalId, command.conversationId,
+          command.messageId, command.agent.agentId, command.agent.agentRevisionId,
+          command.agent.engineKind, command.agent.engineVersion, invocationId,
+          command.commandId, requestHash],
+      );
+      await client.query(
+        `INSERT INTO invocations (
+           id, organization_id, run_id, agent_revision_id,
+           engine_kind, engine_version, status
+         ) VALUES ($1, $2, $3, $4, $5, $6, 'pending')`,
+        [invocationId, identity.organizationId, runId, command.agent.agentRevisionId,
+          command.agent.engineKind, command.agent.engineVersion],
+      );
+      await appendEvent(client, identity.organizationId, runId, 'run.accepted', {
+        triggerType: 'message', messageId: command.messageId,
+      }, command.commandId);
+      await appendEvent(client, identity.organizationId, runId, 'invocation.created', {
+        invocationId, agentRevisionId: command.agent.agentRevisionId,
+      }, command.commandId);
+      await client.query(
+        `INSERT INTO execution_outbox (
+           id, organization_id, aggregate_id, event_type, payload
+         ) VALUES ($1, $2, $3, 'run.dispatch.requested', $4)`,
+        [randomUUID(), identity.organizationId, runId, JSON.stringify({ runId })],
+      );
+      const created = await selectRun(client, identity.organizationId, runId);
+      await client.query('COMMIT');
+      return { value: mapRun(created!), replayed: false };
+    } catch (error) {
+      await client.query('ROLLBACK');
+      throw error;
+    } finally {
+      client.release();
+    }
+  }
+
+  async getRun(identity: RequestIdentity, runId: RunId): Promise<RunSnapshot> {
+    const row = await selectRun(this.pool, identity.organizationId, runId);
+    if (!row) throw new RunNotFoundError();
+    return mapRun(row);
+  }
+
+  async cancelRun(
+    identity: RequestIdentity,
+    runId: RunId,
+    commandId: RunCommandId,
+  ): Promise<CancelRunResult> {
+    const requestHash = digest({ runId });
+    const client = await this.pool.connect();
+    try {
+      await client.query('BEGIN');
+      await client.query(`SELECT pg_advisory_xact_lock(hashtextextended($1, 0))`, [
+        `cancel:${identity.organizationId}:${commandId}`,
+      ]);
+      const receipt = await client.query<{
+        target_run_id: string;
+        request_hash: string;
+        response_body: { kind: 'cancelled' | 'too_late' };
+      }>(
+        `SELECT target_run_id, request_hash, response_body
+         FROM run_command_receipts
+         WHERE organization_id = $1 AND command_type = 'cancel' AND idempotency_key = $2`,
+        [identity.organizationId, commandId],
+      );
+      const prior = receipt.rows[0];
+      if (prior) {
+        if (prior.request_hash !== requestHash || prior.target_run_id !== runId) {
+          throw new RunIdempotencyConflictError();
+        }
+        const current = await selectRun(client, identity.organizationId, runId);
+        if (!current) throw new RunNotFoundError();
+        await client.query('COMMIT');
+        return { kind: prior.response_body.kind, run: mapRun(current), replayed: true };
+      }
+
+      // Worker transitions lock Dispatch before Run; cancellation uses the same order.
+      await client.query(
+        `SELECT run_id FROM run_dispatch
+         WHERE organization_id = $1 AND run_id = $2 FOR UPDATE`,
+        [identity.organizationId, runId],
+      );
+      const row = await selectRun(client, identity.organizationId, runId, true);
+      if (!row) throw new RunNotFoundError();
+      const tooLate = row.prepared_output !== null || ['succeeded', 'failed'].includes(row.status);
+      const kind: 'cancelled' | 'too_late' = tooLate ? 'too_late' : 'cancelled';
+      if (!tooLate && row.status !== 'cancelled') {
+        await client.query(
+          `UPDATE runs SET status = 'cancelled', completed_at = clock_timestamp()
+           WHERE organization_id = $1 AND id = $2`,
+          [identity.organizationId, runId],
+        );
+        await client.query(
+          `UPDATE invocations SET status = 'cancelled', completed_at = clock_timestamp()
+           WHERE organization_id = $1 AND id = $2`,
+          [identity.organizationId, row.root_invocation_id],
+        );
+        await client.query(
+          `UPDATE run_dispatch SET status = 'cancelled', updated_at = clock_timestamp()
+           WHERE organization_id = $1 AND run_id = $2`,
+          [identity.organizationId, runId],
+        );
+        await appendEvent(client, identity.organizationId, runId, 'invocation.cancelled', {
+          invocationId: row.root_invocation_id,
+        }, commandId);
+        await appendEvent(client, identity.organizationId, runId, 'run.cancelled', {}, commandId);
+      }
+      await client.query(
+        `INSERT INTO run_command_receipts (
+           organization_id, command_type, idempotency_key, target_run_id,
+           request_hash, response_status, response_body
+         ) VALUES ($1, 'cancel', $2, $3, $4, $5, $6)`,
+        [identity.organizationId, commandId, runId, requestHash,
+          kind === 'cancelled' ? 200 : 409, JSON.stringify({ kind })],
+      );
+      const current = await selectRun(client, identity.organizationId, runId);
+      await client.query('COMMIT');
+      return { kind, run: mapRun(current!), replayed: false };
+    } catch (error) {
+      await client.query('ROLLBACK');
+      throw error;
+    } finally {
+      client.release();
+    }
+  }
+
+  async readEvents(
+    identity: RequestIdentity,
+    runId: RunId,
+    afterSequence: number,
+  ): Promise<RunEventEnvelope[]> {
+    await this.getRun(identity, runId);
+    const result = await this.pool.query<EventRow>(
+      `SELECT * FROM run_events
+       WHERE organization_id = $1 AND run_id = $2 AND sequence > $3
+       ORDER BY sequence ASC`,
+      [identity.organizationId, runId, afterSequence],
+    );
+    return result.rows.map(mapEvent);
+  }
+
+  async relayNextOutbox(): Promise<boolean> {
+    const client = await this.pool.connect();
+    try {
+      await client.query('BEGIN');
+      const selected = await client.query<{ id: string; organization_id: string; aggregate_id: string }>(
+        `SELECT id, organization_id, aggregate_id FROM execution_outbox
+         WHERE status = 'pending' AND available_at <= clock_timestamp()
+         ORDER BY created_at ASC FOR UPDATE SKIP LOCKED LIMIT 1`,
+      );
+      const item = selected.rows[0];
+      if (!item) {
+        await client.query('COMMIT');
+        return false;
+      }
+      const run = await selectRun(client, item.organization_id, item.aggregate_id, true);
+      if (run && run.status === 'accepted') {
+        await client.query(
+          `INSERT INTO run_dispatch (run_id, organization_id)
+           VALUES ($1, $2) ON CONFLICT (run_id) DO NOTHING`,
+          [run.id, run.organization_id],
+        );
+        await client.query(
+          `UPDATE runs SET status = 'queued' WHERE organization_id = $1 AND id = $2`,
+          [run.organization_id, run.id],
+        );
+        await appendEvent(client, run.organization_id, run.id, 'run.queued', {}, item.id);
+      }
+      await client.query(
+        `UPDATE execution_outbox
+         SET status = 'published', published_at = clock_timestamp(), attempts = attempts + 1
+         WHERE id = $1`,
+        [item.id],
+      );
+      await client.query('COMMIT');
+      return true;
+    } catch (error) {
+      await client.query('ROLLBACK');
+      throw error;
+    } finally {
+      client.release();
+    }
+  }
+
+  async leaseNext(
+    owner: string,
+    leaseTtlMs: number,
+    maxAttempts: number,
+  ): Promise<RunLease | undefined> {
+    const client = await this.pool.connect();
+    try {
+      await client.query('BEGIN');
+      const selected = await client.query<{ run_id: string; organization_id: string; attempt_number: number }>(
+        `SELECT run_id, organization_id, attempt_number FROM run_dispatch
+         WHERE status = 'pending' AND available_at <= clock_timestamp()
+           AND (lease_expires_at IS NULL OR lease_expires_at <= clock_timestamp())
+         ORDER BY available_at ASC, created_at ASC
+         FOR UPDATE SKIP LOCKED LIMIT 1`,
+      );
+      const candidate = selected.rows[0];
+      if (!candidate) {
+        await client.query('COMMIT');
+        return undefined;
+      }
+      const run = await selectRun(client, candidate.organization_id, candidate.run_id, true);
+      if (!run || ['succeeded', 'failed', 'cancelled'].includes(run.status)) {
+        await client.query(
+          `UPDATE run_dispatch SET status = $2, updated_at = clock_timestamp() WHERE run_id = $1`,
+          [candidate.run_id, run?.status === 'cancelled' ? 'cancelled' : 'completed'],
+        );
+        await client.query('COMMIT');
+        return undefined;
+      }
+      // Once output_ready commits, delivery is the point of no return. Keep reconciling the
+      // idempotent Assistant Message even when Engine-attempt recovery is exhausted.
+      if (candidate.attempt_number >= maxAttempts && run.prepared_output === null) {
+        const failure: RunFailure = {
+          code: 'dispatch_attempts_exhausted',
+          message: 'The run could not be recovered after repeated worker interruptions.',
+          retryable: true,
+        };
+        await client.query(
+          `UPDATE runs SET status = 'failed', failure = $3, completed_at = clock_timestamp()
+           WHERE organization_id = $1 AND id = $2`,
+          [run.organization_id, run.id, JSON.stringify(failure)],
+        );
+        await client.query(
+          `UPDATE invocations SET status = 'failed', completed_at = clock_timestamp()
+           WHERE organization_id = $1 AND id = $2`,
+          [run.organization_id, run.root_invocation_id],
+        );
+        await client.query(
+          `UPDATE run_dispatch SET status = 'failed', updated_at = clock_timestamp() WHERE run_id = $1`,
+          [run.id],
+        );
+        await appendEvent(client, run.organization_id, run.id, 'run.failed', { failure });
+        await client.query('COMMIT');
+        return undefined;
+      }
+
+      const leaseToken = randomUUID();
+      const attemptId = randomUUID();
+      const attemptNumber = candidate.attempt_number + 1;
+      await client.query(
+        `UPDATE run_dispatch SET lease_owner = $2, lease_token = $3,
+           lease_expires_at = clock_timestamp() + ($4 * interval '1 millisecond'),
+           attempt_number = $5, updated_at = clock_timestamp()
+         WHERE run_id = $1`,
+        [run.id, owner, leaseToken, leaseTtlMs, attemptNumber],
+      );
+      if (run.status === 'queued' || run.status === 'accepted') {
+        await client.query(
+          `UPDATE runs SET status = 'running', started_at = COALESCE(started_at, clock_timestamp())
+           WHERE organization_id = $1 AND id = $2`,
+          [run.organization_id, run.id],
+        );
+        await client.query(
+          `UPDATE invocations SET status = 'running', started_at = COALESCE(started_at, clock_timestamp())
+           WHERE organization_id = $1 AND id = $2`,
+          [run.organization_id, run.root_invocation_id],
+        );
+        await appendEvent(client, run.organization_id, run.id, 'run.started', {}, attemptId);
+        await appendEvent(client, run.organization_id, run.id, 'invocation.started', {
+          invocationId: run.root_invocation_id,
+        }, attemptId);
+      } else if (attemptNumber > 1) {
+        await appendEvent(client, run.organization_id, run.id, 'run.recovery_started', {
+          attemptNumber,
+        }, attemptId);
+      }
+      await client.query('COMMIT');
+      return {
+        runId: run.id as RunId,
+        organizationId: run.organization_id as OrganizationId,
+        initiatingPrincipalId: run.initiating_principal_id as PrincipalId,
+        conversationId: run.conversation_id as ConversationId,
+        messageId: run.trigger_ref as MessageId,
+        invocationId: run.root_invocation_id as InvocationId,
+        engineKind: run.resolved_engine_kind,
+        engineVersion: run.resolved_engine_version,
+        leaseToken,
+        attemptId: attemptId as DispatchAttemptId,
+        attemptNumber,
+        ...(run.prepared_output === null ? {} : { preparedOutput: run.prepared_output.text }),
+      };
+    } catch (error) {
+      await client.query('ROLLBACK');
+      throw error;
+    } finally {
+      client.release();
+    }
+  }
+
+  async heartbeat(lease: RunLease, leaseTtlMs: number): Promise<void> {
+    const result = await this.pool.query(
+      `UPDATE run_dispatch SET
+         lease_expires_at = clock_timestamp() + ($4 * interval '1 millisecond'),
+         updated_at = clock_timestamp()
+       WHERE run_id = $1 AND organization_id = $2 AND lease_token = $3 AND status = 'pending'`,
+      [lease.runId, lease.organizationId, lease.leaseToken, leaseTtlMs],
+    );
+    if (result.rowCount !== 1) throw new StaleLeaseError();
+  }
+
+  async saveOutputReady(lease: RunLease, text: string): Promise<'ready' | 'cancelled'> {
+    const client = await this.pool.connect();
+    try {
+      await client.query('BEGIN');
+      await verifyLease(client, lease);
+      const run = await selectRun(client, lease.organizationId, lease.runId, true);
+      if (!run || run.status !== 'running') {
+        await client.query('COMMIT');
+        return 'cancelled';
+      }
+      if (run.prepared_output !== null) {
+        await client.query('COMMIT');
+        return 'ready';
+      }
+      await client.query(
+        `UPDATE invocations SET prepared_output = $3, output_ready_at = clock_timestamp()
+         WHERE organization_id = $1 AND id = $2`,
+        [lease.organizationId, lease.invocationId, JSON.stringify({ text })],
+      );
+      await appendEvent(client, lease.organizationId, lease.runId, 'invocation.output_ready', {
+        invocationId: lease.invocationId,
+        text,
+      }, lease.attemptId);
+      await client.query('COMMIT');
+      return 'ready';
+    } catch (error) {
+      await client.query('ROLLBACK');
+      throw error;
+    } finally {
+      client.release();
+    }
+  }
+
+  async complete(lease: RunLease, assistantMessageId: MessageId): Promise<void> {
+    const client = await this.pool.connect();
+    try {
+      await client.query('BEGIN');
+      await verifyLease(client, lease);
+      const run = await selectRun(client, lease.organizationId, lease.runId, true);
+      if (!run || run.status !== 'running' || run.prepared_output === null) throw new StaleLeaseError();
+      await client.query(
+        `UPDATE invocations SET status = 'succeeded', completed_at = clock_timestamp()
+         WHERE organization_id = $1 AND id = $2`,
+        [lease.organizationId, lease.invocationId],
+      );
+      await client.query(
+        `UPDATE runs SET status = 'succeeded', assistant_message_id = $3,
+           completed_at = clock_timestamp()
+         WHERE organization_id = $1 AND id = $2`,
+        [lease.organizationId, lease.runId, assistantMessageId],
+      );
+      await client.query(
+        `UPDATE run_dispatch SET status = 'completed', updated_at = clock_timestamp()
+         WHERE run_id = $1`,
+        [lease.runId],
+      );
+      await appendEvent(client, lease.organizationId, lease.runId, 'assistant_message.appended', {
+        messageId: assistantMessageId,
+      }, lease.attemptId);
+      await appendEvent(client, lease.organizationId, lease.runId, 'invocation.succeeded', {
+        invocationId: lease.invocationId,
+      }, lease.attemptId);
+      await appendEvent(client, lease.organizationId, lease.runId, 'run.succeeded', {}, lease.attemptId);
+      await client.query('COMMIT');
+    } catch (error) {
+      await client.query('ROLLBACK');
+      throw error;
+    } finally {
+      client.release();
+    }
+  }
+
+  async fail(lease: RunLease, failure: RunFailure): Promise<void> {
+    const client = await this.pool.connect();
+    try {
+      await client.query('BEGIN');
+      await verifyLease(client, lease);
+      const run = await selectRun(client, lease.organizationId, lease.runId, true);
+      if (!run || run.status !== 'running' || run.prepared_output !== null) throw new StaleLeaseError();
+      await client.query(
+        `UPDATE invocations SET status = 'failed', completed_at = clock_timestamp()
+         WHERE organization_id = $1 AND id = $2`,
+        [lease.organizationId, lease.invocationId],
+      );
+      await client.query(
+        `UPDATE runs SET status = 'failed', failure = $3, completed_at = clock_timestamp()
+         WHERE organization_id = $1 AND id = $2`,
+        [lease.organizationId, lease.runId, JSON.stringify(failure)],
+      );
+      await client.query(`UPDATE run_dispatch SET status = 'failed' WHERE run_id = $1`, [lease.runId]);
+      await appendEvent(client, lease.organizationId, lease.runId, 'run.failed', { failure }, lease.attemptId);
+      await client.query('COMMIT');
+    } catch (error) {
+      await client.query('ROLLBACK');
+      throw error;
+    } finally {
+      client.release();
+    }
+  }
+}
+
+export function resolvedEchoAgent(
+  agentId: string,
+  agentRevisionId: string,
+): ResolvedAgentRevision {
+  return {
+    agentId: agentId as ResolvedAgentRevision['agentId'],
+    agentRevisionId: agentRevisionId as ResolvedAgentRevision['agentRevisionId'],
+    engineKind: 'echo',
+    engineVersion: '1',
+  };
+}

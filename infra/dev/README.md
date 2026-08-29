@@ -12,6 +12,12 @@ Use:
 DATABASE_URL=postgresql://cmaster:cmaster_dev@localhost:5432/cmaster_next
 ```
 
+Apply the Module-owned migrations explicitly:
+
+```bash
+npm run next:db:migrate
+```
+
 Reset all local next-architecture database state:
 
 ```bash

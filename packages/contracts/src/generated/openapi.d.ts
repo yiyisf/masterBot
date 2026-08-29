@@ -11,7 +11,7 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** Read the next-architecture system status */
+        /** Read system status */
         get: {
             parameters: {
                 query?: never;
@@ -21,7 +21,7 @@ export interface paths {
             };
             requestBody?: never;
             responses: {
-                /** @description Current non-sensitive service status */
+                /** @description Current status */
                 200: {
                     headers: {
                         [name: string]: unknown;
@@ -40,10 +40,716 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/conversations": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Create a Conversation */
+        post: {
+            parameters: {
+                query?: never;
+                header: {
+                    "idempotency-key": string;
+                };
+                path?: never;
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": {
+                        title?: string;
+                    };
+                };
+            };
+            responses: {
+                /** @description Conversation created or replayed */
+                201: {
+                    headers: {
+                        "Idempotency-Replayed": "true" | "false";
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Conversation"];
+                    };
+                };
+                /** @description Invalid command */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/problem+json": components["schemas"]["ProblemDetails"];
+                    };
+                };
+                /** @description Idempotency conflict */
+                409: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/problem+json": components["schemas"]["ProblemDetails"];
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/conversations/{conversationId}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Read a Conversation */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    conversationId: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Conversation */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Conversation"];
+                    };
+                };
+                /** @description Invalid request */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/problem+json": components["schemas"]["ProblemDetails"];
+                    };
+                };
+                /** @description Not found */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/problem+json": components["schemas"]["ProblemDetails"];
+                    };
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/conversations/{conversationId}/messages": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Read ordered Messages */
+        get: {
+            parameters: {
+                query?: {
+                    afterSequence?: number | null;
+                    limit?: number;
+                };
+                header?: never;
+                path: {
+                    conversationId: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Message page */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["MessagePage"];
+                    };
+                };
+                /** @description Invalid request */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/problem+json": components["schemas"]["ProblemDetails"];
+                    };
+                };
+                /** @description Not found */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/problem+json": components["schemas"]["ProblemDetails"];
+                    };
+                };
+            };
+        };
+        put?: never;
+        /** Append an Employee Message */
+        post: {
+            parameters: {
+                query?: never;
+                header: {
+                    "idempotency-key": string;
+                };
+                path: {
+                    conversationId: string;
+                };
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": {
+                        parts: [
+                            {
+                                /** @enum {string} */
+                                type: "text";
+                                text: string;
+                            }
+                        ];
+                    };
+                };
+            };
+            responses: {
+                /** @description Message appended or replayed */
+                201: {
+                    headers: {
+                        "Idempotency-Replayed": "true" | "false";
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Message"];
+                    };
+                };
+                /** @description Invalid command */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/problem+json": components["schemas"]["ProblemDetails"];
+                    };
+                };
+                /** @description Not found */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/problem+json": components["schemas"]["ProblemDetails"];
+                    };
+                };
+                /** @description Idempotency conflict */
+                409: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/problem+json": components["schemas"]["ProblemDetails"];
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/runs": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Accept a Run */
+        post: {
+            parameters: {
+                query?: never;
+                header: {
+                    "idempotency-key": string;
+                };
+                path?: never;
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": {
+                        trigger: {
+                            /** @enum {string} */
+                            type: "message";
+                            /** Format: uuid */
+                            messageId: string;
+                        };
+                    };
+                };
+            };
+            responses: {
+                /** @description Run accepted or replayed */
+                202: {
+                    headers: {
+                        "Idempotency-Replayed": "true" | "false";
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["AcceptRunResponse"];
+                    };
+                };
+                /** @description Invalid command */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/problem+json": components["schemas"]["ProblemDetails"];
+                    };
+                };
+                /** @description Trigger not found */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/problem+json": components["schemas"]["ProblemDetails"];
+                    };
+                };
+                /** @description Idempotency conflict */
+                409: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/problem+json": components["schemas"]["ProblemDetails"];
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/runs/{runId}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Read a Run Snapshot */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    runId: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Run Snapshot */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["RunSnapshot"];
+                    };
+                };
+                /** @description Invalid request */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/problem+json": components["schemas"]["ProblemDetails"];
+                    };
+                };
+                /** @description Not found */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/problem+json": components["schemas"]["ProblemDetails"];
+                    };
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/runs/{runId}/events": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Stream replayable Run Events */
+        get: {
+            parameters: {
+                query?: {
+                    afterSequence?: number | null;
+                };
+                header?: {
+                    "last-event-id"?: string;
+                };
+                path: {
+                    runId: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description SSE stream; each data field is a RunEvent */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "text/event-stream": string;
+                    };
+                };
+                /** @description Invalid request */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/problem+json": components["schemas"]["ProblemDetails"];
+                    };
+                };
+                /** @description Not found */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/problem+json": components["schemas"]["ProblemDetails"];
+                    };
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/runs/{runId}/commands/cancel": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Cancel a Run */
+        post: {
+            parameters: {
+                query?: never;
+                header: {
+                    "idempotency-key": string;
+                };
+                path: {
+                    runId: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Run cancelled or replayed */
+                200: {
+                    headers: {
+                        "Idempotency-Replayed": "true" | "false";
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["CancelRunResponse"];
+                    };
+                };
+                /** @description Invalid request */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/problem+json": components["schemas"]["ProblemDetails"];
+                    };
+                };
+                /** @description Not found */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/problem+json": components["schemas"]["ProblemDetails"];
+                    };
+                };
+                /** @description Cancellation too late or idempotency conflict */
+                409: {
+                    headers: {
+                        "Idempotency-Replayed"?: "true" | "false";
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/problem+json": components["schemas"]["ProblemDetails"];
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        ProblemDetails: {
+            /** Format: uri */
+            type: string;
+            title: string;
+            status: number;
+            code: string;
+            detail: string;
+            instance: string;
+        };
+        Conversation: {
+            /** Format: uuid */
+            id: string;
+            /** Format: uuid */
+            organizationId: string;
+            /** Format: uuid */
+            createdByPrincipalId: string;
+            title?: string;
+            lastMessageSequence: number;
+            /** Format: date-time */
+            createdAt: string;
+            /** Format: date-time */
+            updatedAt: string;
+        };
+        Message: {
+            /** Format: uuid */
+            id: string;
+            /** Format: uuid */
+            organizationId: string;
+            /** Format: uuid */
+            conversationId: string;
+            sequence: number;
+            /** @enum {string} */
+            author: "employee" | "assistant";
+            parts: [
+                {
+                    /** @enum {string} */
+                    type: "text";
+                    text: string;
+                }
+            ];
+            /** Format: date-time */
+            createdAt: string;
+            /** Format: uuid */
+            sourceRunId?: string;
+            /** Format: uuid */
+            sourceInvocationId?: string;
+        };
+        MessagePage: {
+            items: {
+                /** Format: uuid */
+                id: string;
+                /** Format: uuid */
+                organizationId: string;
+                /** Format: uuid */
+                conversationId: string;
+                sequence: number;
+                /** @enum {string} */
+                author: "employee" | "assistant";
+                parts: [
+                    {
+                        /** @enum {string} */
+                        type: "text";
+                        text: string;
+                    }
+                ];
+                /** Format: date-time */
+                createdAt: string;
+                /** Format: uuid */
+                sourceRunId?: string;
+                /** Format: uuid */
+                sourceInvocationId?: string;
+            }[];
+            nextSequence: number;
+        };
+        RunSnapshot: {
+            /** Format: uuid */
+            id: string;
+            /** Format: uuid */
+            organizationId: string;
+            /** Format: uuid */
+            initiatingPrincipalId: string;
+            /** Format: uuid */
+            conversationId: string;
+            trigger: {
+                /** @enum {string} */
+                type: "message";
+                /** Format: uuid */
+                messageId: string;
+            };
+            /** Format: uuid */
+            agentId: string;
+            /** Format: uuid */
+            agentRevisionId: string;
+            engine: {
+                /** @enum {string} */
+                kind: "echo";
+                /** @enum {string} */
+                version: "1";
+            };
+            rootInvocation: {
+                /** Format: uuid */
+                id: string;
+                /** @enum {string} */
+                status: "pending" | "running" | "succeeded" | "failed" | "cancelled";
+            };
+            /** @enum {string} */
+            status: "accepted" | "queued" | "running" | "succeeded" | "failed" | "cancelled";
+            cancellable: boolean;
+            lastSequence: number;
+            /** Format: uuid */
+            assistantMessageId?: string;
+            failure?: {
+                /** @enum {string} */
+                code: "engine_failed" | "dispatch_attempts_exhausted" | "output_delivery_failed";
+                message: string;
+                retryable: boolean;
+            };
+            /** Format: date-time */
+            createdAt: string;
+            /** Format: date-time */
+            startedAt?: string;
+            /** Format: date-time */
+            completedAt?: string;
+        };
+        AcceptRunResponse: {
+            /** Format: uuid */
+            runId: string;
+            eventsUrl: string;
+        };
+        RunEvent: {
+            /** @enum {number} */
+            schemaVersion: 1;
+            /** Format: uuid */
+            eventId: string;
+            /** Format: uuid */
+            runId: string;
+            sequence: number;
+            type: string;
+            /** Format: date-time */
+            timestamp: string;
+            /** Format: uuid */
+            causationId?: string;
+            /** Format: uuid */
+            correlationId: string;
+            data: {
+                [key: string]: unknown;
+            };
+        };
+        CancelRunResponse: {
+            /** @enum {string} */
+            outcome: "cancelled";
+            run: {
+                /** Format: uuid */
+                id: string;
+                /** Format: uuid */
+                organizationId: string;
+                /** Format: uuid */
+                initiatingPrincipalId: string;
+                /** Format: uuid */
+                conversationId: string;
+                trigger: {
+                    /** @enum {string} */
+                    type: "message";
+                    /** Format: uuid */
+                    messageId: string;
+                };
+                /** Format: uuid */
+                agentId: string;
+                /** Format: uuid */
+                agentRevisionId: string;
+                engine: {
+                    /** @enum {string} */
+                    kind: "echo";
+                    /** @enum {string} */
+                    version: "1";
+                };
+                rootInvocation: {
+                    /** Format: uuid */
+                    id: string;
+                    /** @enum {string} */
+                    status: "pending" | "running" | "succeeded" | "failed" | "cancelled";
+                };
+                /** @enum {string} */
+                status: "accepted" | "queued" | "running" | "succeeded" | "failed" | "cancelled";
+                cancellable: boolean;
+                lastSequence: number;
+                /** Format: uuid */
+                assistantMessageId?: string;
+                failure?: {
+                    /** @enum {string} */
+                    code: "engine_failed" | "dispatch_attempts_exhausted" | "output_delivery_failed";
+                    message: string;
+                    retryable: boolean;
+                };
+                /** Format: date-time */
+                createdAt: string;
+                /** Format: date-time */
+                startedAt?: string;
+                /** Format: date-time */
+                completedAt?: string;
+            };
+        };
         SystemStatus: {
             /** @enum {string} */
             contractVersion: "v1";

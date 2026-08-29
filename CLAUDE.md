@@ -167,8 +167,9 @@ packages/governance
 # 一次性质量门禁：Contract 漂移、边界、Lint、Build、Unit/Contract Test
 npm run next:check
 
-# PostgreSQL 17 开发环境
+# PostgreSQL 17 开发环境与显式 Migration
 npm run next:db:up
+npm run next:db:migrate
 npm run next:db:down
 npm run next:db:reset
 
@@ -186,7 +187,7 @@ npm run contracts:generate
 npm run contracts:check
 ```
 
-完整配置和启动顺序见 [`docs/engineering/workspace-foundation.md`](./docs/engineering/workspace-foundation.md)。
+完整配置和启动顺序见 [`docs/engineering/workspace-foundation.md`](./docs/engineering/workspace-foundation.md) 与 [`docs/engineering/run-walking-skeleton.md`](./docs/engineering/run-walking-skeleton.md)。
 
 ### 冻结的 Legacy 验证命令
 

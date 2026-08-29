@@ -63,6 +63,7 @@
     "next:db:up": "docker compose -f infra/dev/postgres.compose.yml up -d",
     "next:db:down": "docker compose -f infra/dev/postgres.compose.yml down",
     "next:db:reset": "docker compose -f infra/dev/postgres.compose.yml down -v && docker compose -f infra/dev/postgres.compose.yml up -d",
+    "next:db:migrate": "node tooling/migrate.mjs",
     "contracts:generate": "npm run generate -w @cmaster/contracts",
     "contracts:check": "npm run contracts:generate && git diff --exit-code -- packages/contracts/openapi packages/contracts/src/generated",
     "lint": "eslint src --ext .ts",
@@ -119,6 +120,7 @@
     "@typescript-eslint/parser": "^8.20.0",
     "dependency-cruiser": "18.2.0",
     "eslint": "^9.18.0",
+    "node-pg-migrate": "9.0.0",
     "tsx": "^4.19.2",
     "typescript": "^5.7.3",
     "vitest": "^4.0.18"

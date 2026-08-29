@@ -48,20 +48,32 @@
 
 ### 交付
 
-- Development Identity、Organization/Principal Request Context
-- Conversation/Message 最小 Module
-- Run/Invocation/RunEvent 状态与 Repository
-- Outbox、PostgreSQL Dispatcher/Lease、API/Worker/all roles
-- `POST /api/v1/runs`、Run Query、Command、Replayable SSE
-- Run sequence、前端去重和 Snapshot + Event Projection
-- 最小 Employee Workspace 页面
+- 仅非生产可用的固定 Development Organization/Employee Principal；身份由 Server 注入，Browser 不声明身份
+- `identity`、`agents`、`conversations`、`execution` 四个真实 Module；固定 Development Echo Agent Revision
+- Conversation、Employee Message、Run 三步 Command；Message 与 Run 生命周期分离
+- Text Message Part、Conversation Message sequence、所有创建 Command 的 `Idempotency-Key`
+- Run/Invocation/RunEvent 状态、Outbox、PostgreSQL Dispatcher/Lease 和 Echo Agent Engine
+- `pg` 参数化 SQL、Module-owned `node-pg-migrate` Migration、单一 PostgreSQL `public` Schema
+- `POST/GET` Conversation、Message、Run、Cancel 与 Replayable SSE v1 Contract
+- `LISTEN/NOTIFY` 只唤醒；EventStore Replay 和 2 秒补读保证恢复
+- `/workspace` 与 `/workspace/runs/{runId}` 最小 Employee Workspace
+
+### 已确认语义
+
+- Run 状态为 `accepted | queued | running | succeeded | failed | cancelled`
+- `invocation.output_ready` 是取消的不可逆边界；取消先提交则不再持久化输出，输出先提交则取消返回 409
+- Assistant Message 通过 `(organizationId, sourceRunId)` 幂等追加；失败不创建 Assistant Message
+- SSE `id` 使用 Run sequence；首次连接可用 `afterSequence`，自动重连使用 `Last-Event-ID`
+- Module 使用同一 PostgreSQL Schema；所有权由 Migration、Repository、依赖规则和测试维护，不提前建立 Schema/Role 隔离
 
 ### 关键测试
 
 - Run 接受后 API 退出不丢失
 - 两 Worker 不同时持有同一有效 Lease
 - SSE 断线按 Last-Event-ID 补读，无重复 UI 状态
-- Worker 崩溃后 Lease 到期恢复 Fake Run
+- Worker 崩溃后 Lease 到期恢复同一 Run/Invocation
+- Cancel 与 `output_ready` 事务竞争结果确定
+- Organization 隔离、幂等冲突和 UI sequence Reducer
 
 ## 4. Slice 2 — AI SDK Runtime
 

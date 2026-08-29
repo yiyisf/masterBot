@@ -6,7 +6,11 @@
     "tsBuildInfoFile": "dist/.tsbuildinfo"
   },
   "references": [
-    { "path": "../../packages/contracts" }
+    { "path": "../../packages/contracts" },
+    { "path": "../../packages/identity" },
+    { "path": "../../packages/agents" },
+    { "path": "../../packages/conversations" },
+    { "path": "../../packages/execution" }
   ],
   "include": ["src/**/*.ts"],
   "exclude": ["src/**/*.test.ts"]
