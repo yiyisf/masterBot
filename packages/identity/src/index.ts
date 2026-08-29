@@ -18,6 +18,11 @@ export interface DevelopmentIdentityConfig {
   principalDisplayName: string;
 }
 
+/**
+ * Supplies a trusted, server-created RequestIdentity; callers never provide Organization or Principal IDs.
+ * Development provisioning is idempotent and performs a bounded number of indexed writes.
+ * Provisioning rejects database/constraint failures; request resolution is synchronous and allocation-only.
+ */
 export interface IdentityModule {
   provision(): Promise<void>;
   resolveRequest(): RequestIdentity;

@@ -14,12 +14,14 @@ export {
 } from './conversations.js';
 export { problemDetailsSchema, type ProblemDetails } from './problem.js';
 export {
+  acceptRunResponseSchema,
   cancelRunResponseSchema,
   createRunRequestSchema,
   runEventEnvelopeSchema,
   runFailureSchema,
   runSnapshotSchema,
   runStatusSchema,
+  type AcceptRunResponseContract,
   type RunEventContract,
   type RunSnapshotContract,
 } from './runs.js';

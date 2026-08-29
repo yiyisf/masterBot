@@ -12,6 +12,10 @@ export const runFailureSchema = z.object({
 export const createRunRequestSchema = z.object({
   trigger: z.object({ type: z.literal('message'), messageId: uuidSchema }),
 });
+export const acceptRunResponseSchema = z.object({
+  runId: uuidSchema,
+  eventsUrl: z.string().startsWith('/api/v1/runs/').endsWith('/events'),
+});
 export const runSnapshotSchema = z.object({
   id: uuidSchema,
   organizationId: uuidSchema,
@@ -39,6 +43,7 @@ export const runEventEnvelopeSchema = z.object({
   eventId: uuidSchema,
   runId: uuidSchema,
   sequence: z.number().int().positive(),
+  // Unknown additive event types remain valid so older UI clients can render a generic fallback.
   type: z.string().min(1),
   timestamp: isoDateTimeSchema,
   causationId: uuidSchema.optional(),
@@ -50,5 +55,6 @@ export const cancelRunResponseSchema = z.object({
   run: runSnapshotSchema,
 });
 
+export type AcceptRunResponseContract = z.infer<typeof acceptRunResponseSchema>;
 export type RunSnapshotContract = z.infer<typeof runSnapshotSchema>;
 export type RunEventContract = z.infer<typeof runEventEnvelopeSchema>;

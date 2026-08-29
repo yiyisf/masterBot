@@ -1,4 +1,5 @@
 import {
+  acceptRunResponseSchema,
   appendMessageRequestSchema,
   conversationSchema,
   createConversationRequestSchema,
@@ -187,7 +188,10 @@ export function registerRunApi(app: FastifyInstance, dependencies: RunApiDepende
         agent,
       });
       reply.header('Idempotency-Replayed', String(result.replayed));
-      return reply.status(201).send(runContract(result.value));
+      return reply.status(202).send(acceptRunResponseSchema.parse({
+        runId: result.value.id,
+        eventsUrl: `/api/v1/runs/${result.value.id}/events`,
+      }));
     } catch (error) {
       return sendRunApiError(error, request, reply);
     }

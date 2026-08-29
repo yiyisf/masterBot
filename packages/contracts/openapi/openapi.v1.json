@@ -407,6 +407,22 @@
           "createdAt"
         ]
       },
+      "AcceptRunResponse": {
+        "type": "object",
+        "properties": {
+          "runId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "eventsUrl": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "runId",
+          "eventsUrl"
+        ]
+      },
       "RunEvent": {
         "type": "object",
         "properties": {
@@ -745,6 +761,18 @@
         "responses": {
           "201": {
             "description": "Conversation created or replayed",
+            "headers": {
+              "Idempotency-Replayed": {
+                "schema": {
+                  "type": "string",
+                  "enum": [
+                    "true",
+                    "false"
+                  ]
+                },
+                "required": true
+              }
+            },
             "content": {
               "application/json": {
                 "schema": {
@@ -889,6 +917,18 @@
         "responses": {
           "201": {
             "description": "Message appended or replayed",
+            "headers": {
+              "Idempotency-Replayed": {
+                "schema": {
+                  "type": "string",
+                  "enum": [
+                    "true",
+                    "false"
+                  ]
+                },
+                "required": true
+              }
+            },
             "content": {
               "application/json": {
                 "schema": {
@@ -1049,12 +1089,24 @@
           }
         },
         "responses": {
-          "201": {
+          "202": {
             "description": "Run accepted or replayed",
+            "headers": {
+              "Idempotency-Replayed": {
+                "schema": {
+                  "type": "string",
+                  "enum": [
+                    "true",
+                    "false"
+                  ]
+                },
+                "required": true
+              }
+            },
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/RunSnapshot"
+                  "$ref": "#/components/schemas/AcceptRunResponse"
                 }
               }
             }
@@ -1235,6 +1287,18 @@
         "responses": {
           "200": {
             "description": "Run cancelled or replayed",
+            "headers": {
+              "Idempotency-Replayed": {
+                "schema": {
+                  "type": "string",
+                  "enum": [
+                    "true",
+                    "false"
+                  ]
+                },
+                "required": true
+              }
+            },
             "content": {
               "application/json": {
                 "schema": {
@@ -1265,6 +1329,18 @@
           },
           "409": {
             "description": "Cancellation too late or idempotency conflict",
+            "headers": {
+              "Idempotency-Replayed": {
+                "schema": {
+                  "type": "string",
+                  "enum": [
+                    "true",
+                    "false"
+                  ]
+                },
+                "required": false
+              }
+            },
             "content": {
               "application/problem+json": {
                 "schema": {

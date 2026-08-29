@@ -52,6 +52,13 @@ export class ConversationNotFoundError extends Error {}
 export class MessageNotFoundError extends Error {}
 export class IdempotencyConflictError extends Error {}
 
+/**
+ * Owns immutable, Organization-scoped Conversations and ordered Messages.
+ * Creation and Employee append commands are idempotent; key reuse with another payload throws
+ * IdempotencyConflictError. Missing or cross-Organization resources throw the corresponding
+ * not-found error. Appends serialize on the Conversation and assign a strictly increasing sequence.
+ * Message listing uses the (conversationId, sequence) index and is linear in the requested limit.
+ */
 export interface ConversationModule {
   create(
     identity: RequestIdentity,

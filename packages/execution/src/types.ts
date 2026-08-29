@@ -11,6 +11,20 @@ export type RunCommandId = Brand<string, 'RunCommandId'>;
 
 export type RunStatus = 'accepted' | 'queued' | 'running' | 'succeeded' | 'failed' | 'cancelled';
 export type InvocationStatus = 'pending' | 'running' | 'succeeded' | 'failed' | 'cancelled';
+export type RunEventType =
+  | 'run.accepted'
+  | 'invocation.created'
+  | 'run.queued'
+  | 'run.started'
+  | 'invocation.started'
+  | 'run.recovery_started'
+  | 'invocation.output_ready'
+  | 'assistant_message.appended'
+  | 'invocation.succeeded'
+  | 'run.succeeded'
+  | 'invocation.cancelled'
+  | 'run.cancelled'
+  | 'run.failed';
 
 export interface RunFailure {
   code: 'engine_failed' | 'dispatch_attempts_exhausted' | 'output_delivery_failed';
@@ -46,7 +60,7 @@ export interface RunEventEnvelope {
   eventId: RunEventId;
   runId: RunId;
   sequence: number;
-  type: string;
+  type: RunEventType;
   timestamp: Date;
   causationId?: string;
   correlationId: RunId;
@@ -69,6 +83,13 @@ export type CancelRunResult =
   | { kind: 'cancelled'; run: RunSnapshot; replayed: boolean }
   | { kind: 'too_late'; run: RunSnapshot; replayed: boolean };
 
+/**
+ * Owns durable Run acceptance, cancellation, snapshots, and ordered Event replay.
+ * Acceptance atomically persists the Run, root Invocation, initial Events, and Outbox entry before returning.
+ * Commands are Organization-scoped and idempotent; key reuse with another payload throws
+ * RunIdempotencyConflictError. Missing or cross-Organization resources throw RunNotFoundError.
+ * Event reads are indexed by (runId, sequence), return strict ascending order, and are linear in the page read.
+ */
 export interface ExecutionModule {
   acceptRun(identity: RequestIdentity, command: AcceptRunCommand): Promise<CommandResult<RunSnapshot>>;
   getRun(identity: RequestIdentity, runId: RunId): Promise<RunSnapshot>;

@@ -14,6 +14,7 @@ import {
   runId,
   RunNotFoundError,
   RunWorker,
+  StaleLeaseError,
 } from '@cmaster/execution';
 import {
   organizationId,
@@ -101,11 +102,20 @@ async function acceptRunThroughHttp(text: string) {
     headers: { 'idempotency-key': randomUUID() },
     payload: { trigger: { type: 'message', messageId: message.id } },
   });
-  expect(runResponse.statusCode).toBe(201);
-  const run = runResponse.json<{ id: string; lastSequence: number }>();
+  expect(runResponse.statusCode).toBe(202);
+  expect(runResponse.headers['idempotency-replayed']).toBe('false');
+  const accepted = runResponse.json<{ runId: string; eventsUrl: string }>();
+  expect(accepted.eventsUrl).toBe(`/api/v1/runs/${accepted.runId}/events`);
+  const snapshotResponse = await app.inject({ method: 'GET', url: `/api/v1/runs/${accepted.runId}` });
+  expect(snapshotResponse.statusCode).toBe(200);
+  const snapshot = snapshotResponse.json<{ lastSequence: number }>();
   await app.close();
   await apiPool.end();
-  return { conversation, message, run };
+  return {
+    conversation,
+    message,
+    run: { id: accepted.runId, lastSequence: snapshot.lastSequence },
+  };
 }
 
 function worker(workerId: string, leaseTtlMs = 1_000): RunWorker {
@@ -169,6 +179,41 @@ describe('Run Walking Skeleton', () => {
     await execution.complete(recovered!, recoveredMessage.value.id);
   });
 
+  it('finishes idempotent output delivery even after the Engine attempt limit', async () => {
+    const accepted = await acceptRunThroughHttp('recover prepared output');
+    await worker('relay-prepared').relayOne();
+    const firstLease = await execution.leaseNext('worker-prepared-a', 50, 1);
+    expect(firstLease).toBeDefined();
+    await execution.saveOutputReady(firstLease!, 'recover prepared output');
+    const firstMessage = await conversations.appendAssistantMessage({
+      organizationId: firstLease!.organizationId,
+      conversationId: firstLease!.conversationId,
+      sourceRunId: firstLease!.runId,
+      sourceInvocationId: firstLease!.invocationId,
+      parts: [{ type: 'text', text: 'recover prepared output' }],
+    });
+
+    await new Promise((resolve) => setTimeout(resolve, 80));
+    const deliveryLease = await execution.leaseNext('worker-prepared-b', 1_000, 1);
+    expect(deliveryLease?.preparedOutput).toBe('recover prepared output');
+    const replayedMessage = await conversations.appendAssistantMessage({
+      organizationId: deliveryLease!.organizationId,
+      conversationId: deliveryLease!.conversationId,
+      sourceRunId: deliveryLease!.runId,
+      sourceInvocationId: deliveryLease!.invocationId,
+      parts: [{ type: 'text', text: deliveryLease!.preparedOutput! }],
+    });
+    expect(replayedMessage).toMatchObject({ replayed: true, value: { id: firstMessage.value.id } });
+    await execution.complete(deliveryLease!, replayedMessage.value.id);
+
+    const snapshot = await execution.getRun(identity.resolveRequest(), runId(accepted.run.id));
+    expect(snapshot.status).toBe('succeeded');
+    const messages = await conversations.listMessages(
+      identity.resolveRequest(), conversationId(accepted.conversation.id), 0, 100,
+    );
+    expect(messages.filter((message) => message.author === 'assistant')).toHaveLength(1);
+  });
+
   it('serializes cancellation against the output-ready boundary', async () => {
     const beforeOutput = await acceptRunThroughHttp('cancel first');
     const cancelled = await execution.cancelRun(
@@ -193,6 +238,35 @@ describe('Run Walking Skeleton', () => {
       parts: [{ type: 'text', text: 'output first' }],
     });
     await execution.complete(lease!, delivered.value.id);
+
+    const racing = await acceptRunThroughHttp('race cancellation');
+    await drainOutbox(worker('relay-race'));
+    const racingLease = await execution.leaseNext('worker-race', 1_000, 5);
+    expect(racingLease?.runId).toBe(racing.run.id);
+    const [outputResult, cancellationResult] = await Promise.allSettled([
+      execution.saveOutputReady(racingLease!, 'race cancellation'),
+      execution.cancelRun(identity.resolveRequest(), runId(racing.run.id), runCommandId(randomUUID())),
+    ]);
+    expect(cancellationResult.status).toBe('fulfilled');
+    if (outputResult.status === 'fulfilled') {
+      expect(outputResult.value).toBe('ready');
+      expect(cancellationResult.status === 'fulfilled' && cancellationResult.value.kind).toBe('too_late');
+      const racingMessage = await conversations.appendAssistantMessage({
+        organizationId: racingLease!.organizationId,
+        conversationId: racingLease!.conversationId,
+        sourceRunId: racingLease!.runId,
+        sourceInvocationId: racingLease!.invocationId,
+        parts: [{ type: 'text', text: 'race cancellation' }],
+      });
+      await execution.complete(racingLease!, racingMessage.value.id);
+    } else {
+      expect(outputResult.reason).toBeInstanceOf(StaleLeaseError);
+      expect(cancellationResult.status === 'fulfilled' && cancellationResult.value.kind).toBe('cancelled');
+      const messages = await conversations.listMessages(
+        identity.resolveRequest(), conversationId(racing.conversation.id), 0, 100,
+      );
+      expect(messages.filter((message) => message.author === 'assistant')).toHaveLength(0);
+    }
   });
 
   it('replays SSE strictly after Last-Event-ID and hides other Organizations', async () => {

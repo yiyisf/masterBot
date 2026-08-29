@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { appendMessageRequestSchema } from './conversations.js';
-import { runEventEnvelopeSchema } from './runs.js';
+import { acceptRunResponseSchema, runEventEnvelopeSchema } from './runs.js';
 
 describe('Run Walking Skeleton contracts', () => {
   it('preserves non-empty employee text without accepting whitespace-only input', () => {
@@ -10,6 +10,16 @@ describe('Run Walking Skeleton contracts', () => {
     expect(appendMessageRequestSchema.safeParse({
       parts: [{ type: 'text', text: '   ' }],
     }).success).toBe(false);
+  });
+
+  it('describes an asynchronously accepted Run with its Event stream URL', () => {
+    expect(acceptRunResponseSchema.parse({
+      runId: '00000000-0000-4000-8000-000000000002',
+      eventsUrl: '/api/v1/runs/00000000-0000-4000-8000-000000000002/events',
+    })).toEqual({
+      runId: '00000000-0000-4000-8000-000000000002',
+      eventsUrl: '/api/v1/runs/00000000-0000-4000-8000-000000000002/events',
+    });
   });
 
   it('requires a positive replay sequence', () => {

@@ -32,6 +32,12 @@ describe('RunProjection', () => {
     expect(state).toMatchObject({ status: 'succeeded', cancellable: false, lastAppliedSequence: 5 });
   });
 
+  it('keeps an unknown additive event in the generic timeline', () => {
+    const state = applyRunEvent(projectionFromSnapshot(snapshot), event(5, 'future.event'));
+    expect(state).toMatchObject({ status: 'running', lastAppliedSequence: 5, hasGap: false });
+    expect(state.events[0]?.type).toBe('future.event');
+  });
+
   it('stops cancellation once output is ready', () => {
     const state = applyRunEvent(projectionFromSnapshot(snapshot), event(5, 'invocation.output_ready'));
     expect(state.cancellable).toBe(false);

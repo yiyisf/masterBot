@@ -36,7 +36,9 @@ POST Conversation
 → succeeded
 ```
 
-All mutating requests require a UUID `Idempotency-Key`. Reusing a key with a different normalized command returns Problem Details with `idempotency_conflict`.
+All mutating requests require a UUID `Idempotency-Key`. Successful responses expose `Idempotency-Replayed: true|false`. Reusing a key with a different normalized command returns Problem Details with `idempotency_conflict`.
+
+Run acceptance returns `202 Accepted` with `{ runId, eventsUrl }`; the Run Snapshot remains available from `GET /api/v1/runs/{runId}`.
 
 ## Cancellation
 
@@ -45,7 +47,7 @@ All mutating requests require a UUID `Idempotency-Key`. Reusing a key with a dif
 - Cancellation commits first: Run becomes `cancelled`; later output is discarded and no Assistant Message is created.
 - Output commits first: cancellation returns `409 run_cancellation_too_late`; the prepared output is delivered.
 
-Slice 1 does not attempt cross-process interruption of an Engine already computing.
+Slice 1 does not attempt cross-process interruption of an Engine already computing. Engine-attempt exhaustion may fail a Run only before `output_ready`; after that boundary, Workers continue the idempotent Assistant Message delivery reconciliation until completion.
 
 ## Event replay
 

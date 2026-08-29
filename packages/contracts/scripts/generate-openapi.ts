@@ -20,11 +20,16 @@ const conversation = registry.register('Conversation', conversations.conversatio
 const message = registry.register('Message', conversations.messageSchema);
 const messagePage = registry.register('MessagePage', conversations.messagePageSchema);
 const run = registry.register('RunSnapshot', runs.runSnapshotSchema);
+const acceptRunResponse = registry.register('AcceptRunResponse', runs.acceptRunResponseSchema);
 registry.register('RunEvent', runs.runEventEnvelopeSchema);
 const cancelResponse = registry.register('CancelRunResponse', runs.cancelRunResponseSchema);
 const systemStatus = registry.register('SystemStatus', systemStatusSchema);
 
 const idempotencyHeaders = z.object({ 'idempotency-key': z.uuid() });
+const idempotencyReplayHeaders = z.object({ 'Idempotency-Replayed': z.enum(['true', 'false']) });
+const optionalIdempotencyReplayHeaders = z.object({
+  'Idempotency-Replayed': z.enum(['true', 'false']).optional(),
+});
 const idPath = (name: string) => z.object({ [name]: z.uuid() });
 const problemResponse = (description: string) => ({
   description,
@@ -39,7 +44,7 @@ registry.registerPath({
   method: 'post', path: '/api/v1/conversations', summary: 'Create a Conversation',
   request: { headers: idempotencyHeaders, body: { required: true, content: { 'application/json': { schema: conversations.createConversationRequestSchema } } } },
   responses: {
-    201: { description: 'Conversation created or replayed', content: { 'application/json': { schema: conversation } } },
+    201: { description: 'Conversation created or replayed', headers: idempotencyReplayHeaders, content: { 'application/json': { schema: conversation } } },
     400: problemResponse('Invalid command'), 409: problemResponse('Idempotency conflict'),
   },
 });
@@ -55,7 +60,7 @@ registry.registerPath({
     body: { required: true, content: { 'application/json': { schema: conversations.appendMessageRequestSchema } } },
   },
   responses: {
-    201: { description: 'Message appended or replayed', content: { 'application/json': { schema: message } } },
+    201: { description: 'Message appended or replayed', headers: idempotencyReplayHeaders, content: { 'application/json': { schema: message } } },
     400: problemResponse('Invalid command'), 404: problemResponse('Not found'), 409: problemResponse('Idempotency conflict'),
   },
 });
@@ -71,7 +76,7 @@ registry.registerPath({
   method: 'post', path: '/api/v1/runs', summary: 'Accept a Run',
   request: { headers: idempotencyHeaders, body: { required: true, content: { 'application/json': { schema: runs.createRunRequestSchema } } } },
   responses: {
-    201: { description: 'Run accepted or replayed', content: { 'application/json': { schema: run } } },
+    202: { description: 'Run accepted or replayed', headers: idempotencyReplayHeaders, content: { 'application/json': { schema: acceptRunResponse } } },
     400: problemResponse('Invalid command'), 404: problemResponse('Trigger not found'), 409: problemResponse('Idempotency conflict'),
   },
 });
@@ -96,8 +101,9 @@ registry.registerPath({
   method: 'post', path: '/api/v1/runs/{runId}/commands/cancel', summary: 'Cancel a Run',
   request: { params: idPath('runId'), headers: idempotencyHeaders },
   responses: {
-    200: { description: 'Run cancelled or replayed', content: { 'application/json': { schema: cancelResponse } } },
-    400: problemResponse('Invalid request'), 404: problemResponse('Not found'), 409: problemResponse('Cancellation too late or idempotency conflict'),
+    200: { description: 'Run cancelled or replayed', headers: idempotencyReplayHeaders, content: { 'application/json': { schema: cancelResponse } } },
+    400: problemResponse('Invalid request'), 404: problemResponse('Not found'),
+    409: { ...problemResponse('Cancellation too late or idempotency conflict'), headers: optionalIdempotencyReplayHeaders },
   },
 });
 

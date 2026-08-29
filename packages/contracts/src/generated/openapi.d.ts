@@ -70,6 +70,7 @@ export interface paths {
                 /** @description Conversation created or replayed */
                 201: {
                     headers: {
+                        "Idempotency-Replayed": "true" | "false";
                         [name: string]: unknown;
                     };
                     content: {
@@ -239,6 +240,7 @@ export interface paths {
                 /** @description Message appended or replayed */
                 201: {
                     headers: {
+                        "Idempotency-Replayed": "true" | "false";
                         [name: string]: unknown;
                     };
                     content: {
@@ -313,12 +315,13 @@ export interface paths {
             };
             responses: {
                 /** @description Run accepted or replayed */
-                201: {
+                202: {
                     headers: {
+                        "Idempotency-Replayed": "true" | "false";
                         [name: string]: unknown;
                     };
                     content: {
-                        "application/json": components["schemas"]["RunSnapshot"];
+                        "application/json": components["schemas"]["AcceptRunResponse"];
                     };
                 };
                 /** @description Invalid command */
@@ -498,6 +501,7 @@ export interface paths {
                 /** @description Run cancelled or replayed */
                 200: {
                     headers: {
+                        "Idempotency-Replayed": "true" | "false";
                         [name: string]: unknown;
                     };
                     content: {
@@ -525,6 +529,7 @@ export interface paths {
                 /** @description Cancellation too late or idempotency conflict */
                 409: {
                     headers: {
+                        "Idempotency-Replayed"?: "true" | "false";
                         [name: string]: unknown;
                     };
                     content: {
@@ -666,6 +671,11 @@ export interface components {
             startedAt?: string;
             /** Format: date-time */
             completedAt?: string;
+        };
+        AcceptRunResponse: {
+            /** Format: uuid */
+            runId: string;
+            eventsUrl: string;
         };
         RunEvent: {
             /** @enum {number} */

@@ -13,6 +13,7 @@ import {
   type InvocationStatus,
   type RunCommandId,
   type RunEventEnvelope,
+  type RunEventType,
   type RunFailure,
   type RunId,
   RunIdempotencyConflictError,
@@ -51,7 +52,7 @@ interface EventRow {
   run_id: string;
   sequence: number;
   schema_version: 1;
-  event_type: string;
+  event_type: RunEventType;
   event_data: unknown;
   causation_id: string | null;
   correlation_id: string;
@@ -143,7 +144,7 @@ async function appendEvent(
   client: PoolClient,
   organizationId: string,
   runId: string,
-  type: string,
+  type: RunEventType,
   data: unknown,
   causationId?: string,
 ): Promise<RunEventEnvelope> {
@@ -429,7 +430,9 @@ export class PostgresExecutionModule implements ExecutionModule {
         await client.query('COMMIT');
         return undefined;
       }
-      if (candidate.attempt_number >= maxAttempts) {
+      // Once output_ready commits, delivery is the point of no return. Keep reconciling the
+      // idempotent Assistant Message even when Engine-attempt recovery is exhausted.
+      if (candidate.attempt_number >= maxAttempts && run.prepared_output === null) {
         const failure: RunFailure = {
           code: 'dispatch_attempts_exhausted',
           message: 'The run could not be recovered after repeated worker interruptions.',

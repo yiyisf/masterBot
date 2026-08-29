@@ -33,7 +33,7 @@ export default function WorkspacePage() {
         body: { trigger: { type: 'message', messageId: message.data.id } },
       });
       if (!run.data) throw new Error('Run could not be accepted');
-      router.push(`/workspace/runs/${run.data.id}`);
+      router.push(`/workspace/runs/${run.data.runId}`);
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : 'Unable to start the Run');
       setSubmitting(false);

@@ -18,6 +18,11 @@ export interface DevelopmentAgentConfig {
   name: string;
 }
 
+/**
+ * Provisions and resolves the fixed immutable Development Echo Agent Revision.
+ * Operations are Organization-scoped and use indexed identity lookups; provisioning is idempotent.
+ * Resolution rejects when the configured published Echo Revision is absent or incompatible.
+ */
 export interface AgentModule {
   provision(organizationId: OrganizationId): Promise<void>;
   resolveDefault(organizationId: OrganizationId): Promise<ResolvedAgentRevision>;

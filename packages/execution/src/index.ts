@@ -14,6 +14,7 @@ export {
   type InvocationId,
   type RunCommandId,
   type RunEventEnvelope,
+  type RunEventType,
   type RunFailure,
   type RunId,
   type RunSnapshot,
