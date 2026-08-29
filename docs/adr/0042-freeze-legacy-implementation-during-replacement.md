@@ -1,0 +1,3 @@
+# Freeze the legacy implementation during replacement
+
+The existing root `src/`, `tests/`, `web/`, `skills/`, and `agents/` trees are read-only reference implementations while next-generation behavior is built in `apps/` and `packages/`. Reusable logic is copied and reshaped behind the new Module interfaces with new tests; new code must not import legacy code, and accepted replacement slices delete the corresponding legacy capability rather than evolving both paths. Only urgent security or data-integrity defects may change frozen code through an explicit `legacy-fix/*` branch. This deliberate duplication avoids bending the new contracts around prototype internals and makes replacement status auditable.

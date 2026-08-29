@@ -8,6 +8,8 @@
 
 采用 Walking Skeleton + Vertical Slice：每个 Slice 从最新 `master` 创建短期分支，通过 PR 合入；未完成能力用 Feature Flag 或未挂载路由隔离。当前原型未推广，因此不迁移旧 SQLite 数据、不兼容旧 API/SSE/`ExecutionStep`。
 
+根据 ADR-0042，旧 `src/`、`tests/`、`web/`、`skills/`、`agents/` 在替换期间冻结为只读参考。可复用逻辑复制到新 Workspace 并按新 Interface 与测试重写；新代码不得反向导入 Legacy。
+
 完整分支规则见 [`docs/engineering/refactor-branching.md`](../engineering/refactor-branching.md)。
 
 ## 2. Slice 0 — Workspace Foundation
@@ -21,12 +23,13 @@
 ### 交付
 
 - npm Workspaces：`apps/server`、`apps/web`、`packages/contracts`、最小 `packages/kernel`
-- 首批 `conversations`、`execution` package 空壳和公开 exports
-- ESLint/package exports 禁止 deep import 和跨 Module 私有访问
-- Zod Contract → OpenAPI/typed client 最小生成链
-- PostgreSQL 开发/CI 环境；SQLite 仅开发 Adapter 约定
-- Feature Flag 与组合根模式
-- 架构 Contract tests 基础设施
+- `packages/README.md` 记录后续 Module 路线；业务 Package 只在有真实 Interface、行为和测试时创建
+- Package exports、TypeScript Project References、dependency-cruiser 禁止 deep import、循环依赖和跨 Module 私有访问
+- Zod → OpenAPI → openapi-typescript/openapi-fetch 最小 Contract 生成链
+- PostgreSQL 17 本地/CI 环境与连接/事务 Smoke；SQLite 仅保留后续开发 Adapter 约定
+- Fastify `api|worker|all` 与 Next.js Server Runtime 最小组合根
+- 类型安全 Environment Feature Flag，默认关闭
+- 架构边界 Fixture、Module Contract 和独立 Workspace CI
 
 ### 验收/退出
 

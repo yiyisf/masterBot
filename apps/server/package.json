@@ -1,0 +1,30 @@
+{
+  "name": "@cmaster/server",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "development": "./src/index.ts",
+      "import": "./dist/index.js",
+      "default": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc -b",
+    "dev": "tsx --conditions=development src/index.ts",
+    "start": "node dist/index.js",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@cmaster/contracts": "0.0.0",
+    "@fastify/cors": "10.1.0",
+    "fastify": "5.7.2",
+    "pg": "8.23.0",
+    "zod": "4.4.3"
+  },
+  "devDependencies": {
+    "@types/pg": "8.23.1"
+  }
+}

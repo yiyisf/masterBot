@@ -79,6 +79,8 @@ git status --short
 - 不先做全目录移动；行为被新 Module 替换时再迁移代码。
 - 替代完成后删除旧代码和只验证旧实现细节的测试。
 - 不开发旧 SQLite 数据迁移、旧 API 兼容或旧 Harness 恢复。
+- `src/`、`tests/`、`web/`、`skills/`、`agents/` 属于冻结的 Legacy，只读参考；新代码不得导入它们。
+- 可复用逻辑必须复制到新 Workspace，按新 Interface 重写并添加新测试；只有紧急安全/数据完整性修复可走独立 `legacy-fix/*` 分支。
 
 ## 5. Module 与依赖纪律
 
@@ -157,30 +159,49 @@ packages/governance
 - 真实付费模型测试可以默认 skip，但发布前相关 Eval 必须运行。
 - 依赖精确锁定；升级经 Contract/Integration/Eval/Canary，不做生产服务器自动更新。
 
-## 9. 当前原型命令
+## 9. 当前命令
 
-目标 Workspace 尚未落地前，继续使用现有命令：
+### 下一代 Workspace
 
 ```bash
-# 后端（仓库根目录）
-npm run dev
-npm run build
-npm run test:run
-npm run lint
+# 一次性质量门禁：Contract 漂移、边界、Lint、Build、Unit/Contract Test
+npm run next:check
 
-# 前端
-cd web
-npm run dev
-npm run build
-npm run lint
+# PostgreSQL 17 开发环境
+npm run next:db:up
+npm run next:db:down
+npm run next:db:reset
 
-# 架构状态模型原型
-npm run prototype:architecture
+# Server :3100（需要 DATABASE_URL；Role 为 api | worker | all）
+npm run next:server -- --role=all
+
+# Web :3101
+npm run next:web
+
+# 显式 PostgreSQL Integration Test（需要 DATABASE_URL）
+npm run next:test:integration
+
+# Contract 生成
+npm run contracts:generate
+npm run contracts:check
 ```
 
-Node.js 要求以根 `package.json` 为准，当前为 Node.js >= 22。
+完整配置和启动顺序见 [`docs/engineering/workspace-foundation.md`](./docs/engineering/workspace-foundation.md)。
 
-Workspace 落地后应同步更新本文件和 `AGENTS.md`，不得保留失效命令。
+### 冻结的 Legacy 验证命令
+
+Legacy 业务代码只读，但独立 CI 在替换完成前继续验证其 Build/Test：
+
+```bash
+npm run build
+npm run test:run
+
+(cd web && npm run build && npm run lint)
+```
+
+架构状态模型原型仍可通过 `npm run prototype:architecture` 运行。Node.js 要求以根 `package.json` 为准，当前为 Node.js >= 22。
+
+后续 Slice 新增或移除命令时，必须同步更新本文件和 `AGENTS.md`。
 
 ## 10. 文档维护
 
