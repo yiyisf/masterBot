@@ -24,10 +24,10 @@ export interface ServerConfig {
 
 function roleFromArguments(argv: readonly string[]): string | undefined {
   const inline = argv.find((value) => value.startsWith('--role='));
-  if (inline) return inline.slice('--role='.length);
+  if (inline !== undefined) return inline.slice('--role='.length);
 
   const roleIndex = argv.indexOf('--role');
-  return roleIndex >= 0 ? argv[roleIndex + 1] : undefined;
+  return roleIndex >= 0 ? (argv[roleIndex + 1] ?? '') : undefined;
 }
 
 export function loadServerConfig(
@@ -37,7 +37,7 @@ export function loadServerConfig(
   const argumentRole = roleFromArguments(argv);
   const parsed = environmentSchema.parse({
     ...environment,
-    ...(argumentRole ? { CMASTER_SERVER_ROLE: argumentRole } : {}),
+    ...(argumentRole !== undefined ? { CMASTER_SERVER_ROLE: argumentRole } : {}),
   });
 
   return {

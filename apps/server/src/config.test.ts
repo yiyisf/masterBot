@@ -22,4 +22,11 @@ describe('loadServerConfig', () => {
   it('fails fast when DATABASE_URL is absent', () => {
     expect(() => loadServerConfig({}, [])).toThrow();
   });
+
+  it.each([['--role'], ['--role=']])('fails fast when %s has no value', (...argv) => {
+    expect(() => loadServerConfig(
+      { DATABASE_URL: 'postgresql://localhost/cmaster' },
+      argv,
+    )).toThrow();
+  });
 });
