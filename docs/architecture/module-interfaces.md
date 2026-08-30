@@ -86,7 +86,7 @@ interface RunQueries {
 - Harness 只通过 Agent Engine、Tool Runtime、Context Builder、Policy、Artifact 等公开 Interface 协作。
 - Checkpoint 只在声明的安全点产生；不兼容 Engine version 必须显式失败或迁移。
 
-当前 Walking Skeleton 使用 `accepted | queued | running | succeeded | failed | cancelled`。`output_ready` 是取消边界：若取消先提交则丢弃后续 Engine 输出；若输出先提交则取消太晚，继续幂等追加 Assistant Message。该规则同时适用于 Echo 和 AI SDK Engine，不提前引入 `cancelling/completing`。Slice 2 在此 Interface 内增加按 generation 排序的聚合 output events；Lease 恢复或部分输出 Fallback 必须先写 reset，最终 Assistant Message 仍是权威输出。
+Slice 2 使用 `accepted | queued | running | succeeded | failed | cancelled`；Slice 3 增加非终态 `waiting`，具体原因由持久化 Interrupt 表达，Invocation 等待时为 `interrupted` 且不持有 Worker Lease。`output_ready` 是取消边界：若取消先提交则丢弃后续 Engine 输出；若输出先提交则取消太晚，继续幂等追加 Assistant Message。Tool Provider in-flight 期间暂时不可取消，Tool boundary 持久化后恢复可取消，不引入 `cancelling/completing`。Slice 2 在此 Interface 内增加按 generation 排序的聚合 output events；Slice 3 在 Tool/Interrupt 安全点写 Engine-neutral Checkpoint，Lease 恢复不得重复已完成 ToolCall。
 
 ### Agent Engine Port
 
@@ -132,7 +132,8 @@ interface ModelModule {
 ```
 
 - 调用者请求能力而非散落判断 Provider 名称。
-- AI SDK Provider 类型在 Adapter 内终止。
+- AI SDK Provider 类型在 Adapter 内终止；Slice 3 只跨 Seam 暴露 Provider-neutral Model Message、Available Tool、Model Tool Request 和 Tool Outcome projection。
+- Model Tool Request 只有在完整成功并记录 usage 的 Model Step 后才可交给 Tool Runtime；失败/Fallback 丢弃该 Step 的候选请求。
 - Fallback 不能绕过数据分类、安全拒绝或成本上限。
 - Managed Engine 自行调用模型时也必须上报统一 ModelCall/usage/trace。
 - Slice 2 的 `ModelGateway` 在一次 Invocation 内最多尝试一个 Primary 和一个 Fallback；每次尝试都先持久化 ModelCall，AI SDK `maxRetries` 固定为 `0`。
@@ -141,7 +142,7 @@ interface ModelModule {
 
 ## 7. Tools
 
-**拥有**：Skill Descriptor、Tool、Tool Provider、Connector、Tool Grant、Tool-call Ledger。
+**拥有**：Tool Capability、不可变 Tool Revision、Skill Descriptor、Tool Provider、Connector、Tool Grant、Tool-call Ledger。
 
 ```ts
 interface ToolCatalog {
@@ -155,11 +156,13 @@ interface ToolRuntime {
 }
 ```
 
+- 模型提出的候选操作是 Model Tool Request；只有 Runtime 校验、授权并持久接受后才成为 ToolCall。
 - `ToolOutcome` 是结构化值，Tool 失败不以未分类异常跨 Seam。
-- `invoke` 在外部调用前持久化 Ledger 和 idempotency key。
-- Policy、Credential Lease、输入校验、超时、脱敏与审计由 Runtime 统一处理。
-- Tool 安装/Provider 管理不暴露在执行 Interface。
-- Agent Skills 和 Legacy Skill 都先归一化为内部 Descriptor。
+- `invoke` 在外部调用前持久化 Ledger 和稳定 idempotency key；一个 ToolCall 可有多个 Dispatch Attempt。
+- Agent Revision 授予稳定 Tool Capability major version；Invocation 解析并固定实际 Tool Revision。
+- Policy、Employee Confirmation、Credential Lease、输入校验、超时、脱敏与审计由 Runtime 协调执行。
+- Slice 3 只消费通用 governed-tool Principal Entitlement，不建设本地逐 Principal/逐 Tool RBAC。
+- Tool 安装/Provider 管理不暴露在执行 Interface；Agent Skills/Legacy Parser 与完整隔离 Provider 管理后置到独立 Slice。
 
 ## 8. Context
 
@@ -217,9 +220,11 @@ interface ApprovalModule {
 ```
 
 - 默认拒绝未知 Action/Resource。
-- Decision 必须包含 Policy version 和 reason。
+- Decision 必须包含 Policy version、safe reason 和 obligation。
+- Slice 3 的 Approval 是 initiating Employee 对精确不可变 ToolCall Subject 的一次性确认；拒绝产生 denied ToolOutcome，不直接失败或取消 Run。
+- Confirmation 不冻结授权；恢复时重新求权限交集后才可签发 Credential Lease。
 - Harness/Tool Runtime 执行 obligation，不解析策略语言。
-- OPA/Cedar/内部策略平台是后续 Adapter。
+- OPA/Cedar/内部策略平台是后续 Adapter；细粒度 Principal Entitlement 来自企业 IAM/Policy，而非 CMaster 本地 RBAC。
 
 ### Credential Broker Port
 

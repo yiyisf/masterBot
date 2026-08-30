@@ -104,6 +104,10 @@
 
 **分支**：`refactor/tool-runtime`
 
+**详细设计**：[`docs/design/slice-3-governed-tool-runtime.html`](../design/slice-3-governed-tool-runtime.html)
+
+**实施追踪**：[#104](https://github.com/yiyisf/masterBot/issues/104)
+
 ### 目标
 
 让所有 Engine 通过同一 Tool Runtime 调用工具。
@@ -115,9 +119,10 @@
 - 进程内 Policy Adapter、Agent Grant/Delegation 检查
 - Tool-call Ledger、idempotency/reconciliation 状态
 - Interrupt/Approval Command 与 UI Projection
-- 2–3 个审查后的 Built-in Tools
-- 隔离 Provider Host 骨架；MCP/扩展不进主进程
-- Agent Skills 标准 Parser 与 Legacy Adapter 骨架
+- 3 个仅用于验证端到端治理流程的过渡 Built-in Tools：`cmaster.utility.current_time`、`cmaster.utility.text_statistics`、`cmaster.http.fetch`
+- 上述 Tool 不是最终产品能力；真实有用的 Tool/Connector 覆盖同等验收后必须按 [#103](https://github.com/yiyisf/masterBot/issues/103) 删除替换
+- 不可配置、不可生产启用的隔离 Provider Host 协议/崩溃隔离骨架；MCP/扩展不进主进程
+- 完整安装、沙箱、MCP 与 Provider 生命周期管理归入首里程碑后的 Agent Skills & Isolated Provider Management Slice
 - Credential Reference 和开发 Broker Adapter
 
 ### 验收/退出
@@ -212,7 +217,7 @@
 优先顺序在第一里程碑真实反馈后重新评估：
 
 1. Agent Revision + Admin Console + Eval 发布门禁
-2. Agent Skills Catalog、安装验证与隔离 Provider 管理
+2. Agent Skills & Isolated Provider Management：Agent Skills Parser、Catalog、安装/升级验证、Legacy Skill Adapter/迁移、MCP Adapter、Provider 生命周期，以及文件系统/网络/资源/Credential 隔离；在此之前生产仅运行仓库内审查的 Built-in Tools
 3. Memory/Knowledge ingestion、检索和 Context Policy
 4. Task/Workflow/Runbook/Schedule/Webhook 统一自动化
 5. 企业 Credential Broker Adapter
