@@ -4,7 +4,9 @@ import { runner } from 'node-pg-migrate';
 const databaseUrl = process.env.DATABASE_URL;
 if (!databaseUrl) throw new Error('DATABASE_URL is required to run migrations');
 
-const modules = ['identity', 'agents', 'conversations', 'execution', 'models'];
+const modules = [
+  'identity', 'agents', 'conversations', 'execution', 'models', 'governance', 'tools',
+];
 for (const moduleName of modules) {
   await runner({
     databaseUrl,

@@ -5,6 +5,8 @@
     { "path": "./packages/contracts" },
     { "path": "./packages/identity" },
     { "path": "./packages/agents" },
+    { "path": "./packages/governance" },
+    { "path": "./packages/tools" },
     { "path": "./packages/conversations" },
     { "path": "./packages/models" },
     { "path": "./packages/execution" },

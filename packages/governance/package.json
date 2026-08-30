@@ -1,0 +1,23 @@
+{
+  "name": "@cmaster/governance",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "development": "./src/index.ts",
+      "import": "./dist/index.js",
+      "default": "./dist/index.js"
+    }
+  },
+  "files": ["dist", "migrations"],
+  "scripts": { "build": "tsc -b", "test": "vitest run" },
+  "dependencies": {
+    "@cmaster/agents": "0.0.0",
+    "@cmaster/identity": "0.0.0",
+    "@cmaster/kernel": "0.0.0",
+    "pg": "8.23.0"
+  },
+  "devDependencies": { "@types/pg": "8.23.1" }
+}
