@@ -7,12 +7,13 @@
 开始设计或实现前，按顺序阅读：
 
 1. [`CONTEXT.md`](./CONTEXT.md) — 领域术语与禁止混用的名称
-2. [`docs/architecture/README.md`](./docs/architecture/README.md) — 下一代架构规范入口
-3. [`docs/architecture/target-architecture.md`](./docs/architecture/target-architecture.md)
-4. [`docs/architecture/module-interfaces.md`](./docs/architecture/module-interfaces.md)
-5. [`docs/architecture/data-model.md`](./docs/architecture/data-model.md)
-6. [`docs/architecture/refactor-plan.md`](./docs/architecture/refactor-plan.md)
-7. 与当前改动相关的 [`docs/adr/`](./docs/adr/) 决策
+2. [`CODING_STANDARDS.md`](./CODING_STANDARDS.md) — 代码、注释、测试与安全规范
+3. [`docs/architecture/README.md`](./docs/architecture/README.md) — 下一代架构规范入口
+4. [`docs/architecture/target-architecture.md`](./docs/architecture/target-architecture.md)
+5. [`docs/architecture/module-interfaces.md`](./docs/architecture/module-interfaces.md)
+6. [`docs/architecture/data-model.md`](./docs/architecture/data-model.md)
+7. [`docs/architecture/refactor-plan.md`](./docs/architecture/refactor-plan.md)
+8. 与当前改动相关的 [`docs/adr/`](./docs/adr/) 决策
 
 上述文档是未来实施的规范基线。旧的 Phase 路线图、Harness patch、能力差距报告和 v3/v3.1 重构方案已移除，不得从 Git 历史中的旧文档恢复设计约束。
 
@@ -164,7 +165,7 @@ packages/governance
 ### 下一代 Workspace
 
 ```bash
-# 一次性质量门禁：Contract 漂移、边界、Lint、Build、Unit/Contract Test
+# 一次性质量门禁：Contract 漂移、边界、Lint、源码/测试 Typecheck、Build、Unit/Contract Test
 npm run next:check
 
 # PostgreSQL 17 开发环境与显式 Migration

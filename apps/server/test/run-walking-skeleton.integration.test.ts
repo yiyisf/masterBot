@@ -24,9 +24,9 @@ import {
 } from '@cmaster/identity';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { Pool } from 'pg';
-import { buildApi } from './app.js';
-import { loadServerConfig } from './config.js';
-import { PollingRunEventNotifier } from './run-event-notifier.js';
+import { buildApi } from '../src/app.js';
+import { loadServerConfig } from '../src/config.js';
+import { PollingRunEventNotifier } from '../src/run-event-notifier.js';
 
 const databaseUrl = process.env.DATABASE_URL;
 if (!databaseUrl) throw new Error('DATABASE_URL is required for PostgreSQL integration tests');

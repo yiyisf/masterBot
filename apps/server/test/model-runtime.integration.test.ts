@@ -240,7 +240,7 @@ describe('AI SDK Model Runtime', () => {
       organizationId: crashedLease.organizationId,
       runId: crashedLease.runId,
       invocationId: crashedLease.invocationId,
-      prompt: crashedLease.employeeText,
+      prompt: 'model input',
       signal: new AbortController().signal,
     })[Symbol.asyncIterator]();
     expect((await interrupted.next()).value?.type).toBe('model_selected');

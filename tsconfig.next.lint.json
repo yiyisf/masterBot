@@ -8,5 +8,6 @@
     "apps/server/**/*.ts",
     "packages/**/*.ts",
     "tooling/**/*.ts"
-  ]
+  ],
+  "exclude": []
 }
