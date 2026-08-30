@@ -64,6 +64,6 @@ DATABASE_URL=postgresql://cmaster:cmaster_dev@localhost:5432/cmaster_next \
   npm run next:test:integration
 ```
 
-`next:check` runs Contract drift, Module boundaries, ESLint, production builds, and non-Docker tests. Integration tests are explicit and fail fast when `DATABASE_URL` is absent.
+`next:check` runs Contract drift, Module boundaries, ESLint, production/test TypeScript checks, production builds, and non-Docker tests. Integration tests are explicit and fail fast when `DATABASE_URL` is absent.
 
 The legacy and Workspace CI jobs remain independent. See `docs/engineering/legacy-freeze.md` for replacement rules and status.

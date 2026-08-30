@@ -37,12 +37,14 @@ test('PostgreSQL adapters query only tables owned by their Module', async () => 
     agents: new Set(['agents', 'agent_revisions']),
     conversations: new Set(['conversations', 'messages']),
     execution: new Set(['runs', 'invocations', 'run_events', 'execution_outbox', 'run_dispatch', 'run_command_receipts']),
+    models: new Set(['model_profiles', 'model_calls']),
   };
   const files = {
     identity: 'packages/identity/src/index.ts',
     agents: 'packages/agents/src/index.ts',
     conversations: 'packages/conversations/src/index.ts',
     execution: 'packages/execution/src/postgres.ts',
+    models: 'packages/models/src/postgres.ts',
   };
   for (const [moduleName, relativeFile] of Object.entries(files)) {
     const source = await readFile(path.join(root, relativeFile), 'utf8');

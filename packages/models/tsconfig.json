@@ -1,13 +1,9 @@
 {
   "extends": "../../tsconfig.next.base.json",
   "compilerOptions": { "rootDir": "src", "outDir": "dist", "tsBuildInfoFile": "dist/.tsbuildinfo" },
+  "include": ["src/**/*.ts"],
   "references": [
     { "path": "../kernel" },
-    { "path": "../identity" },
-    { "path": "../agents" },
-    { "path": "../conversations" },
-    { "path": "../models" }
-  ],
-  "include": ["src/**/*.ts"],
-  "exclude": ["src/**/*.test.ts"]
+    { "path": "../identity" }
+  ]
 }

@@ -1,6 +1,7 @@
 import { systemStatusSchema } from '@cmaster/contracts';
 import cors from '@fastify/cors';
 import Fastify, { type FastifyInstance } from 'fastify';
+import { registerAiUiPresenter } from './ai-ui-presenter.js';
 import type { ServerConfig } from './config.js';
 import { EnvironmentFeatureFlags, type FeatureFlags } from './feature-flags.js';
 import type { DatabaseHealth } from './postgres.js';
@@ -33,7 +34,10 @@ export function buildApi(dependencies: ApiDependencies): FastifyInstance {
   });
 
   if (featureFlags.isEnabled('nextArchitecture')) {
-    if (dependencies.runApi) registerRunApi(app, dependencies.runApi);
+    if (dependencies.runApi) {
+      registerRunApi(app, dependencies.runApi);
+      registerAiUiPresenter(app, dependencies.runApi);
+    }
 
     app.get('/api/v1/system/status', async () => {
       const postgresAvailable = await dependencies.database.check();

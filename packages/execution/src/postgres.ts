@@ -2,6 +2,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import type { ResolvedAgentRevision } from '@cmaster/agents';
 import type { ConversationId, MessageId } from '@cmaster/conversations';
 import type { OrganizationId, PrincipalId, RequestIdentity } from '@cmaster/identity';
+import type { ModelProfileId, ModelUsage } from '@cmaster/models';
 import type { Pool, PoolClient } from 'pg';
 import {
   type AcceptRunCommand,
@@ -9,6 +10,7 @@ import {
   type CommandResult,
   type DispatchAttemptId,
   type ExecutionModule,
+  type ExecutionProgressEvent,
   type InvocationId,
   type InvocationStatus,
   type RunCommandId,
@@ -31,12 +33,16 @@ interface RunRow {
   trigger_ref: string;
   agent_id: string;
   agent_revision_id: string;
-  resolved_engine_kind: 'echo';
+  resolved_engine_kind: 'echo' | 'ai-sdk';
   resolved_engine_version: '1';
   root_invocation_id: string;
   status: RunStatus;
   last_sequence: number;
   assistant_message_id: string | null;
+  resolved_model_profile_id: string | null;
+  resolved_model_display_name: string | null;
+  model_fallback_used: boolean;
+  model_usage: ModelUsage | null;
   failure: RunFailure | null;
   idempotency_key: string;
   request_hash: string;
@@ -45,6 +51,8 @@ interface RunRow {
   completed_at: Date | null;
   invocation_status: InvocationStatus;
   prepared_output: { text: string } | null;
+  output_generation: number;
+  has_streamed_output: boolean;
 }
 
 interface EventRow {
@@ -66,11 +74,13 @@ export interface RunLease {
   conversationId: ConversationId;
   messageId: MessageId;
   invocationId: InvocationId;
-  engineKind: 'echo';
+  engineKind: 'echo' | 'ai-sdk';
   engineVersion: '1';
   leaseToken: string;
   attemptId: DispatchAttemptId;
   attemptNumber: number;
+  outputGeneration: number;
+  hasStreamedOutput: boolean;
   preparedOutput?: string;
 }
 
@@ -98,6 +108,16 @@ function mapRun(row: RunRow): RunSnapshot {
     ...(row.assistant_message_id === null
       ? {}
       : { assistantMessageId: row.assistant_message_id as MessageId }),
+    ...(row.resolved_model_profile_id === null || row.resolved_model_display_name === null
+      ? {}
+      : {
+        model: {
+          profileId: row.resolved_model_profile_id as ModelProfileId,
+          displayName: row.resolved_model_display_name,
+          fallbackUsed: row.model_fallback_used,
+        },
+      }),
+    ...(row.model_usage === null ? {} : { usage: row.model_usage }),
     ...(row.failure === null ? {} : { failure: row.failure }),
     createdAt: row.created_at,
     ...(row.started_at === null ? {} : { startedAt: row.started_at }),
@@ -120,7 +140,8 @@ function mapEvent(row: EventRow): RunEventEnvelope {
 }
 
 const runSelect = `
-  SELECT r.*, i.status AS invocation_status, i.prepared_output
+  SELECT r.*, i.status AS invocation_status, i.prepared_output,
+         i.output_generation, i.has_streamed_output
   FROM runs r
   JOIN invocations i
     ON i.organization_id = r.organization_id
@@ -500,6 +521,8 @@ export class PostgresExecutionModule implements ExecutionModule {
         leaseToken,
         attemptId: attemptId as DispatchAttemptId,
         attemptNumber,
+        outputGeneration: run.output_generation,
+        hasStreamedOutput: run.has_streamed_output,
         ...(run.prepared_output === null ? {} : { preparedOutput: run.prepared_output.text }),
       };
     } catch (error) {
@@ -519,6 +542,126 @@ export class PostgresExecutionModule implements ExecutionModule {
       [lease.runId, lease.organizationId, lease.leaseToken, leaseTtlMs],
     );
     if (result.rowCount !== 1) throw new StaleLeaseError();
+  }
+
+  async recordProgress(lease: RunLease, events: readonly ExecutionProgressEvent[]): Promise<void> {
+    if (events.length === 0) return;
+    const client = await this.pool.connect();
+    try {
+      await client.query('BEGIN');
+      await verifyLease(client, lease);
+      const run = await selectRun(client, lease.organizationId, lease.runId, true);
+      if (!run || run.status !== 'running' || run.prepared_output !== null) throw new StaleLeaseError();
+      let currentGeneration = run.output_generation;
+
+      for (const event of events) {
+        switch (event.type) {
+          case 'model_selected':
+            await client.query(
+              `UPDATE runs SET resolved_model_profile_id = $3,
+                 resolved_model_display_name = $4,
+                 model_fallback_used = model_fallback_used OR $5
+               WHERE organization_id = $1 AND id = $2`,
+              [lease.organizationId, lease.runId, event.profileId, event.displayName, event.fallback],
+            );
+            await appendEvent(client, lease.organizationId, lease.runId, 'model.selected', {
+              profileId: event.profileId,
+              displayName: event.displayName,
+              fallback: event.fallback,
+            }, lease.attemptId);
+            break;
+          case 'model_fallback_selected':
+            await client.query(
+              `UPDATE runs SET resolved_model_profile_id = $3,
+                 resolved_model_display_name = $4, model_fallback_used = true
+               WHERE organization_id = $1 AND id = $2`,
+              [lease.organizationId, lease.runId, event.toProfileId, event.displayName],
+            );
+            await appendEvent(client, lease.organizationId, lease.runId, 'model.fallback_selected', {
+              fromProfileId: event.fromProfileId,
+              toProfileId: event.toProfileId,
+              displayName: event.displayName,
+            }, lease.attemptId);
+            break;
+          case 'model_output_discarded':
+            await appendEvent(client, lease.organizationId, lease.runId, 'model.output_discarded', {
+              profileId: event.profileId,
+              reason: event.reason,
+            }, lease.attemptId);
+            break;
+          case 'model_completed':
+            await client.query(
+              `UPDATE runs SET resolved_model_profile_id = $3,
+                 model_fallback_used = $4, model_usage = $5
+               WHERE organization_id = $1 AND id = $2`,
+              [lease.organizationId, lease.runId, event.profileId,
+                event.fallbackUsed, JSON.stringify(event.usage)],
+            );
+            await appendEvent(client, lease.organizationId, lease.runId, 'model.completed', {
+              profileId: event.profileId,
+              usage: event.usage,
+              fallbackUsed: event.fallbackUsed,
+            }, lease.attemptId);
+            break;
+          case 'model_failed':
+            await appendEvent(client, lease.organizationId, lease.runId, 'model.failed', {
+              profileId: event.profileId,
+              failure: event.failure,
+              hadOutput: event.hadOutput,
+            }, lease.attemptId);
+            break;
+          case 'output_reset':
+            if (event.generation !== currentGeneration + 1) {
+              throw new Error('Output reset must advance exactly one generation');
+            }
+            currentGeneration = event.generation;
+            await client.query(
+              `UPDATE invocations SET output_generation = $3, has_streamed_output = false
+               WHERE organization_id = $1 AND id = $2`,
+              [lease.organizationId, lease.invocationId, event.generation],
+            );
+            await appendEvent(client, lease.organizationId, lease.runId, 'invocation.output_reset', {
+              invocationId: lease.invocationId,
+              generation: event.generation,
+              reason: event.reason,
+            }, lease.attemptId);
+            break;
+          case 'output_started':
+            if (event.generation !== currentGeneration) throw new Error('Output generation is stale');
+            await client.query(
+              `UPDATE invocations SET has_streamed_output = true
+               WHERE organization_id = $1 AND id = $2`,
+              [lease.organizationId, lease.invocationId],
+            );
+            await appendEvent(client, lease.organizationId, lease.runId, 'invocation.output_started', {
+              invocationId: lease.invocationId,
+              generation: event.generation,
+            }, lease.attemptId);
+            break;
+          case 'output_delta':
+            if (event.generation !== currentGeneration) throw new Error('Output generation is stale');
+            await appendEvent(client, lease.organizationId, lease.runId, 'invocation.output_delta', {
+              invocationId: lease.invocationId,
+              generation: event.generation,
+              text: event.text,
+            }, lease.attemptId);
+            break;
+          case 'output_completed':
+            if (event.generation !== currentGeneration) throw new Error('Output generation is stale');
+            await appendEvent(client, lease.organizationId, lease.runId, 'invocation.output_completed', {
+              invocationId: lease.invocationId,
+              generation: event.generation,
+            }, lease.attemptId);
+            break;
+        }
+      }
+      await client.query('COMMIT');
+    } catch (error) {
+      await client.query('ROLLBACK');
+      throw error;
+    } finally {
+      client.release();
+    }
   }
 
   async saveOutputReady(lease: RunLease, text: string): Promise<'ready' | 'cancelled'> {

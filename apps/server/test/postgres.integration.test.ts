@@ -1,5 +1,5 @@
 import { afterAll, describe, expect, it } from 'vitest';
-import { PostgresConnection } from './postgres.js';
+import { PostgresConnection } from '../src/postgres.js';
 
 const databaseUrl = process.env.DATABASE_URL;
 if (!databaseUrl) {

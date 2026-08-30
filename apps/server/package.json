@@ -23,12 +23,15 @@
     "@cmaster/conversations": "0.0.0",
     "@cmaster/execution": "0.0.0",
     "@cmaster/identity": "0.0.0",
+    "@cmaster/models": "0.0.0",
     "@fastify/cors": "10.1.0",
+    "ai": "7.0.84",
     "fastify": "5.7.2",
     "pg": "8.23.0",
     "zod": "4.4.3"
   },
   "devDependencies": {
+    "@opentelemetry/sdk-trace-base": "2.10.0",
     "@types/pg": "8.23.1"
   }
 }

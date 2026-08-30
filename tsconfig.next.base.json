@@ -16,5 +16,10 @@
     "declarationMap": true,
     "sourceMap": true,
     "composite": true
-  }
+  },
+  "exclude": [
+    "**/*.test.ts",
+    "**/*.test.tsx",
+    "**/*.integration.test.ts"
+  ]
 }

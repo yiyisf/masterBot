@@ -6,6 +6,7 @@
     { "path": "./packages/identity" },
     { "path": "./packages/agents" },
     { "path": "./packages/conversations" },
+    { "path": "./packages/models" },
     { "path": "./packages/execution" },
     { "path": "./apps/server" }
   ]

@@ -2,6 +2,7 @@ import type { AgentId, AgentRevisionId, ResolvedAgentRevision } from '@cmaster/a
 import type { ConversationId, MessageId } from '@cmaster/conversations';
 import type { OrganizationId, PrincipalId, RequestIdentity } from '@cmaster/identity';
 import type { Brand } from '@cmaster/kernel';
+import type { ModelFailure, ModelProfileId, ModelUsage } from '@cmaster/models';
 
 export type RunId = Brand<string, 'RunId'>;
 export type InvocationId = Brand<string, 'InvocationId'>;
@@ -18,6 +19,15 @@ export type RunEventType =
   | 'run.started'
   | 'invocation.started'
   | 'run.recovery_started'
+  | 'model.selected'
+  | 'model.fallback_selected'
+  | 'model.output_discarded'
+  | 'model.completed'
+  | 'model.failed'
+  | 'invocation.output_started'
+  | 'invocation.output_delta'
+  | 'invocation.output_reset'
+  | 'invocation.output_completed'
   | 'invocation.output_ready'
   | 'assistant_message.appended'
   | 'invocation.succeeded'
@@ -27,7 +37,7 @@ export type RunEventType =
   | 'run.failed';
 
 export interface RunFailure {
-  code: 'engine_failed' | 'dispatch_attempts_exhausted' | 'output_delivery_failed';
+  code: 'engine_failed' | 'model_failed' | 'dispatch_attempts_exhausted' | 'output_delivery_failed';
   message: string;
   retryable: boolean;
 }
@@ -40,7 +50,7 @@ export interface RunSnapshot {
   trigger: { type: 'message'; messageId: MessageId };
   agentId: AgentId;
   agentRevisionId: AgentRevisionId;
-  engine: { kind: 'echo'; version: '1' };
+  engine: { kind: 'echo' | 'ai-sdk'; version: '1' };
   rootInvocation: {
     id: InvocationId;
     status: InvocationStatus;
@@ -49,11 +59,28 @@ export interface RunSnapshot {
   cancellable: boolean;
   lastSequence: number;
   assistantMessageId?: MessageId;
+  model?: {
+    profileId: ModelProfileId;
+    displayName: string;
+    fallbackUsed: boolean;
+  };
+  usage?: ModelUsage;
   failure?: RunFailure;
   createdAt: Date;
   startedAt?: Date;
   completedAt?: Date;
 }
+
+export type ExecutionProgressEvent =
+  | { type: 'model_selected'; profileId: ModelProfileId; displayName: string; fallback: boolean }
+  | { type: 'model_fallback_selected'; fromProfileId: ModelProfileId; toProfileId: ModelProfileId; displayName: string }
+  | { type: 'model_output_discarded'; profileId: ModelProfileId; reason: 'fallback' | 'failure' }
+  | { type: 'model_completed'; profileId: ModelProfileId; usage: ModelUsage; fallbackUsed: boolean }
+  | { type: 'model_failed'; profileId: ModelProfileId; failure: ModelFailure; hadOutput: boolean }
+  | { type: 'output_started'; generation: number }
+  | { type: 'output_delta'; generation: number; text: string }
+  | { type: 'output_reset'; generation: number; reason: 'fallback' | 'failure' | 'recovery' }
+  | { type: 'output_completed'; generation: number };
 
 export interface RunEventEnvelope {
   schemaVersion: 1;

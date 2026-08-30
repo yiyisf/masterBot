@@ -116,6 +116,15 @@ export default function RunPage() {
       {snapshot?.failure ? (
         <p className="error" role="alert">{snapshot.failure.message}</p>
       ) : null}
+      {snapshot?.model ? (
+        <section>
+          <h2>Model</h2>
+          <p>{snapshot.model.displayName}{snapshot.model.fallbackUsed ? '（已降级）' : ''}</p>
+          {snapshot.usage ? (
+            <p>Tokens: {snapshot.usage.inputTokens} in / {snapshot.usage.outputTokens} out / {snapshot.usage.totalTokens} total</p>
+          ) : null}
+        </section>
+      ) : null}
       <section>
         <h2>Messages</h2>
         {messages.map((message) => (

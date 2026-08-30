@@ -2,10 +2,13 @@
   "extends": "./tsconfig.next.base.json",
   "compilerOptions": {
     "composite": false,
-    "noEmit": true
+    "noEmit": true,
+    "customConditions": ["development"]
   },
   "include": [
     "apps/server/**/*.ts",
-    "packages/**/*.ts"
-  ]
+    "packages/**/*.ts",
+    "tooling/**/*.ts"
+  ],
+  "exclude": []
 }

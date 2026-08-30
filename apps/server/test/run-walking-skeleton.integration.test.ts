@@ -24,9 +24,9 @@ import {
 } from '@cmaster/identity';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { Pool } from 'pg';
-import { buildApi } from './app.js';
-import { loadServerConfig } from './config.js';
-import { PollingRunEventNotifier } from './run-event-notifier.js';
+import { buildApi } from '../src/app.js';
+import { loadServerConfig } from '../src/config.js';
+import { PollingRunEventNotifier } from '../src/run-event-notifier.js';
 
 const databaseUrl = process.env.DATABASE_URL;
 if (!databaseUrl) throw new Error('DATABASE_URL is required for PostgreSQL integration tests');
@@ -41,7 +41,8 @@ const identityConfig = {
 };
 const agentConfig = {
   agentId: agentId(randomUUID()),
-  agentRevisionId: agentRevisionId(randomUUID()),
+  echoRevisionId: agentRevisionId(randomUUID()),
+  activeEngineKind: 'echo' as const,
   name: `Echo ${suffix}`,
 };
 const identity = new PostgresDevelopmentIdentity(pool, identityConfig);
@@ -119,7 +120,7 @@ async function acceptRunThroughHttp(text: string) {
 }
 
 function worker(workerId: string, leaseTtlMs = 1_000): RunWorker {
-  return new RunWorker(execution, conversations, new EchoAgentEngine(), {
+  return new RunWorker(execution, conversations, [new EchoAgentEngine()], {
     workerId, leaseTtlMs, maxAttempts: 5,
   });
 }
@@ -292,6 +293,18 @@ describe('Run Walking Skeleton', () => {
     const ids = [...response.body.matchAll(/^id: (\d+)$/gm)].map((match) => Number(match[1]));
     expect(ids.every((sequence) => sequence > accepted.run.lastSequence)).toBe(true);
     expect(ids).toEqual([...ids].sort((left, right) => left - right));
+
+    const uiResponse = await app.inject({
+      method: 'GET', url: `/api/v1/runs/${accepted.run.id}/ui-stream?afterSequence=0`,
+    });
+    expect(uiResponse.statusCode).toBe(200);
+    expect(uiResponse.headers['x-vercel-ai-ui-message-stream']).toBe('v1');
+    const uiIds = [...uiResponse.body.matchAll(/^id: (\d+)$/gm)].map((match) => Number(match[1]));
+    expect(uiIds).toEqual([...uiIds].sort((left, right) => left - right));
+    const uiChunks = [...uiResponse.body.matchAll(/^data: (\{.*\})$/gm)]
+      .map((match) => JSON.parse(match[1]!) as { type: string });
+    expect(uiChunks.some((chunk) => chunk.type === 'text-delta')).toBe(true);
+    expect(uiResponse.body).toContain('data: [DONE]');
     await app.close();
 
     const otherIdentity: RequestIdentity = {

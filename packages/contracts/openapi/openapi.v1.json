@@ -294,7 +294,8 @@
               "kind": {
                 "type": "string",
                 "enum": [
-                  "echo"
+                  "echo",
+                  "ai-sdk"
                 ]
               },
               "version": {
@@ -354,6 +355,49 @@
             "type": "string",
             "format": "uuid"
           },
+          "model": {
+            "type": "object",
+            "properties": {
+              "profileId": {
+                "type": "string",
+                "format": "uuid"
+              },
+              "displayName": {
+                "type": "string",
+                "minLength": 1
+              },
+              "fallbackUsed": {
+                "type": "boolean"
+              }
+            },
+            "required": [
+              "profileId",
+              "displayName",
+              "fallbackUsed"
+            ]
+          },
+          "usage": {
+            "type": "object",
+            "properties": {
+              "inputTokens": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "outputTokens": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "totalTokens": {
+                "type": "integer",
+                "minimum": 0
+              }
+            },
+            "required": [
+              "inputTokens",
+              "outputTokens",
+              "totalTokens"
+            ]
+          },
           "failure": {
             "type": "object",
             "properties": {
@@ -361,6 +405,7 @@
                 "type": "string",
                 "enum": [
                   "engine_failed",
+                  "model_failed",
                   "dispatch_attempts_exhausted",
                   "output_delivery_failed"
                 ]
@@ -537,7 +582,8 @@
                   "kind": {
                     "type": "string",
                     "enum": [
-                      "echo"
+                      "echo",
+                      "ai-sdk"
                     ]
                   },
                   "version": {
@@ -597,6 +643,49 @@
                 "type": "string",
                 "format": "uuid"
               },
+              "model": {
+                "type": "object",
+                "properties": {
+                  "profileId": {
+                    "type": "string",
+                    "format": "uuid"
+                  },
+                  "displayName": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "fallbackUsed": {
+                    "type": "boolean"
+                  }
+                },
+                "required": [
+                  "profileId",
+                  "displayName",
+                  "fallbackUsed"
+                ]
+              },
+              "usage": {
+                "type": "object",
+                "properties": {
+                  "inputTokens": {
+                    "type": "integer",
+                    "minimum": 0
+                  },
+                  "outputTokens": {
+                    "type": "integer",
+                    "minimum": 0
+                  },
+                  "totalTokens": {
+                    "type": "integer",
+                    "minimum": 0
+                  }
+                },
+                "required": [
+                  "inputTokens",
+                  "outputTokens",
+                  "totalTokens"
+                ]
+              },
               "failure": {
                 "type": "object",
                 "properties": {
@@ -604,6 +693,7 @@
                     "type": "string",
                     "enum": [
                       "engine_failed",
+                      "model_failed",
                       "dispatch_attempts_exhausted",
                       "output_delivery_failed"
                     ]
@@ -1230,6 +1320,75 @@
         "responses": {
           "200": {
             "description": "SSE stream; each data field is a RunEvent",
+            "content": {
+              "text/event-stream": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/runs/{runId}/ui-stream": {
+      "get": {
+        "summary": "Present Run Events as an AI SDK UI Message Stream",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "required": true,
+            "name": "runId",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "minimum": 0
+            },
+            "required": false,
+            "name": "afterSequence",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "pattern": "^\\\\d+$"
+            },
+            "required": false,
+            "name": "last-event-id",
+            "in": "header"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "AI SDK UI Message Stream derived from canonical Run Events",
             "content": {
               "text/event-stream": {
                 "schema": {

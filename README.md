@@ -1,8 +1,8 @@
 # CMaster Bot — 企业员工 AI 助手操作系统
 
-> **实现状态说明**：本文描述当前可运行的技术验证原型。下一代规范性架构与增量重构计划以 [`docs/architecture/README.md`](./docs/architecture/README.md)、[`CONTEXT.md`](./CONTEXT.md) 和 [`docs/adr/`](./docs/adr/) 为准；不要从本文推导未来 Module、数据模型或部署设计。
+> **实现状态说明**：本文描述当前可运行的技术验证原型。下一代规范性架构与增量重构计划以 [`docs/architecture/README.md`](./docs/architecture/README.md)、[`CONTEXT.md`](./CONTEXT.md)、[`CODING_STANDARDS.md`](./CODING_STANDARDS.md) 和 [`docs/adr/`](./docs/adr/) 为准；不要从本文推导未来 Module、数据模型或部署设计。
 >
-> 下一代 Workspace 的独立启动与验证方式见 [`docs/engineering/workspace-foundation.md`](./docs/engineering/workspace-foundation.md) 和 [`docs/engineering/run-walking-skeleton.md`](./docs/engineering/run-walking-skeleton.md)。Legacy Freeze 规则见 [`docs/engineering/legacy-freeze.md`](./docs/engineering/legacy-freeze.md)。
+> 下一代 Workspace 的独立启动与验证方式见 [`docs/engineering/workspace-foundation.md`](./docs/engineering/workspace-foundation.md)、[`docs/engineering/run-walking-skeleton.md`](./docs/engineering/run-walking-skeleton.md) 和 [`docs/engineering/ai-sdk-runtime.md`](./docs/engineering/ai-sdk-runtime.md)。Legacy Freeze 规则见 [`docs/engineering/legacy-freeze.md`](./docs/engineering/legacy-freeze.md)。
 
 **融合知识检索、数据查询、流程自动化，会自我进化** — 面向 HR、财务、业务、运营等企业员工，无需 IT 人员维护。
 
