@@ -37,6 +37,7 @@ Vitest 的转译不会报告所有类型错误。独立运行 `tsc -p tsconfig.n
 
 - 修正无效属性访问；
 - 新增 `npm run next:typecheck:tests`；
+- 使用与 Vitest 一致的 `development` Package export condition，保证无 `dist` 的干净环境也能解析 Workspace 源码；
 - 将其加入 `npm run next:check`。
 
 ### S4 — 大文件与深 Module（无违规，Judgement）
