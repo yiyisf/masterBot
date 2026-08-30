@@ -4,6 +4,7 @@
   "references": [
     { "path": "../kernel" },
     { "path": "../identity" },
+    { "path": "../agents" },
     { "path": "../governance" }
   ],
   "include": ["src/**/*.ts"],

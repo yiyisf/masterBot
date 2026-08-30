@@ -1,4 +1,5 @@
-import type { OrganizationId } from '@cmaster/identity';
+import type { AgentRevisionId } from '@cmaster/agents';
+import type { OrganizationId, RequestIdentity } from '@cmaster/identity';
 import type { Brand } from '@cmaster/kernel';
 
 export type ToolRevisionId = Brand<string, 'ToolRevisionId'>;
@@ -34,6 +35,73 @@ export interface ToolGrantProvisioning {
 export interface ToolCatalogProvisioning {
   revisions: readonly ToolRevisionProvisioning[];
   grants: readonly ToolGrantProvisioning[];
+}
+
+export interface SafeToolSummary {
+  title: string;
+  details: Readonly<Record<string, string>>;
+}
+
+export interface ToolProviderRequest {
+  toolCallId: ToolCallId;
+  revision: ToolDescriptor;
+  runId: string;
+  invocationId: string;
+  input: unknown;
+  idempotencyKey: string;
+  signal: AbortSignal;
+}
+
+export type ToolProviderResult = {
+  kind: 'success';
+  value: unknown;
+  safeSummary: SafeToolSummary;
+  externalOperationId?: string;
+};
+
+export interface ToolProvider {
+  readonly key: string;
+  execute(request: ToolProviderRequest): Promise<ToolProviderResult>;
+}
+
+export interface InvokeToolCommand {
+  identity: RequestIdentity;
+  agentRevisionId: AgentRevisionId;
+  grantId: ToolGrantId;
+  principalEntitlements: readonly string[];
+  runId: string;
+  invocationId: string;
+  modelRequestId: string;
+  capabilityId: string;
+  input: unknown;
+  safeRequestSummary: SafeToolSummary;
+  signal: AbortSignal;
+}
+
+export type ToolOutcome = {
+  kind: 'success';
+  toolCallId: ToolCallId;
+  value: unknown;
+  safeSummary: SafeToolSummary;
+};
+
+export interface ToolCall {
+  id: ToolCallId;
+  organizationId: OrganizationId;
+  runId: string;
+  invocationId: string;
+  capabilityId: string;
+  revisionId: ToolRevisionId;
+  status: 'running' | 'succeeded';
+  idempotencyKey: string;
+  requestHash: string;
+  requestSummary: SafeToolSummary;
+  outcome?: ToolOutcome;
+}
+
+export interface ToolRuntime {
+  invoke(command: InvokeToolCommand): Promise<ToolOutcome>;
+  listCalls(organizationId: OrganizationId, runId: string): Promise<ToolCall[]>;
 }
 
 export interface ListGrantedTools {

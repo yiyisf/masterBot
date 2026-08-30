@@ -39,7 +39,9 @@ test('PostgreSQL adapters query only tables owned by their Module', async () => 
     execution: new Set(['runs', 'invocations', 'run_events', 'execution_outbox', 'run_dispatch', 'run_command_receipts']),
     models: new Set(['model_profiles', 'model_calls']),
     governance: new Set(['approvals']),
-    tools: new Set(['tool_capabilities', 'tool_revisions', 'tool_grants']),
+    tools: new Set([
+      'tool_capabilities', 'tool_revisions', 'tool_grants', 'tool_calls', 'tool_dispatch_attempts',
+    ]),
   };
   const files = {
     identity: 'packages/identity/src/index.ts',

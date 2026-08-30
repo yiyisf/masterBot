@@ -35,8 +35,12 @@ export type PolicyDecision =
     obligations: readonly [] | readonly [{ kind: 'employee_confirmation' }];
   };
 
+export interface PolicyModule {
+  evaluate(request: PolicyRequest): Promise<PolicyDecision>;
+}
+
 /** Evaluates the fixed, deny-by-default Policy for the first governed Tool slice. */
-export class Slice3BaselinePolicy {
+export class Slice3BaselinePolicy implements PolicyModule {
   async evaluate(request: PolicyRequest): Promise<PolicyDecision> {
     if (!request.principalEntitlements.includes(GOVERNED_TOOL_ENTITLEMENT)) {
       return {

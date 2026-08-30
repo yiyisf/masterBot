@@ -14,6 +14,7 @@
   "files": ["dist", "migrations"],
   "scripts": { "build": "tsc -b", "test": "vitest run" },
   "dependencies": {
+    "@cmaster/agents": "0.0.0",
     "@cmaster/governance": "0.0.0",
     "@cmaster/identity": "0.0.0",
     "@cmaster/kernel": "0.0.0",
