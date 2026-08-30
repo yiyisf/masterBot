@@ -86,7 +86,7 @@ interface RunQueries {
 - Harness 只通过 Agent Engine、Tool Runtime、Context Builder、Policy、Artifact 等公开 Interface 协作。
 - Checkpoint 只在声明的安全点产生；不兼容 Engine version 必须显式失败或迁移。
 
-Slice 1 的 Echo Walking Skeleton 使用 `accepted | queued | running | succeeded | failed | cancelled`。`output_ready` 是取消边界：若取消先提交则丢弃后续 Engine 输出；若输出先提交则取消太晚，继续幂等追加 Assistant Message。该规则不提前引入 `cancelling/completing`。
+当前 Walking Skeleton 使用 `accepted | queued | running | succeeded | failed | cancelled`。`output_ready` 是取消边界：若取消先提交则丢弃后续 Engine 输出；若输出先提交则取消太晚，继续幂等追加 Assistant Message。该规则同时适用于 Echo 和 AI SDK Engine，不提前引入 `cancelling/completing`。Slice 2 在此 Interface 内增加按 generation 排序的聚合 output events；Lease 恢复或部分输出 Fallback 必须先写 reset，最终 Assistant Message 仍是权威输出。
 
 ### Agent Engine Port
 
@@ -135,6 +135,9 @@ interface ModelModule {
 - AI SDK Provider 类型在 Adapter 内终止。
 - Fallback 不能绕过数据分类、安全拒绝或成本上限。
 - Managed Engine 自行调用模型时也必须上报统一 ModelCall/usage/trace。
+- Slice 2 的 `ModelGateway` 在一次 Invocation 内最多尝试一个 Primary 和一个 Fallback；每次尝试都先持久化 ModelCall，AI SDK `maxRetries` 固定为 `0`。
+- Models 拥有 ModelCall，Execution 只保存实际 Profile/usage 快照；两者不跨 Module JOIN，也不建立 `model_calls → runs/invocations` 外键。
+- Profile 配置一经该 ID 使用即不可原地修改；Credential 明文不进入 Profile、Contract、Run Event 或 Trace。
 
 ## 7. Tools
 

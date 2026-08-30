@@ -475,6 +475,66 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/runs/{runId}/ui-stream": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Present Run Events as an AI SDK UI Message Stream */
+        get: {
+            parameters: {
+                query?: {
+                    afterSequence?: number | null;
+                };
+                header?: {
+                    "last-event-id"?: string;
+                };
+                path: {
+                    runId: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description AI SDK UI Message Stream derived from canonical Run Events */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "text/event-stream": string;
+                    };
+                };
+                /** @description Invalid request */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/problem+json": components["schemas"]["ProblemDetails"];
+                    };
+                };
+                /** @description Not found */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/problem+json": components["schemas"]["ProblemDetails"];
+                    };
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/runs/{runId}/commands/cancel": {
         parameters: {
             query?: never;
@@ -643,7 +703,7 @@ export interface components {
             agentRevisionId: string;
             engine: {
                 /** @enum {string} */
-                kind: "echo";
+                kind: "echo" | "ai-sdk";
                 /** @enum {string} */
                 version: "1";
             };
@@ -659,9 +719,20 @@ export interface components {
             lastSequence: number;
             /** Format: uuid */
             assistantMessageId?: string;
+            model?: {
+                /** Format: uuid */
+                profileId: string;
+                displayName: string;
+                fallbackUsed: boolean;
+            };
+            usage?: {
+                inputTokens: number;
+                outputTokens: number;
+                totalTokens: number;
+            };
             failure?: {
                 /** @enum {string} */
-                code: "engine_failed" | "dispatch_attempts_exhausted" | "output_delivery_failed";
+                code: "engine_failed" | "model_failed" | "dispatch_attempts_exhausted" | "output_delivery_failed";
                 message: string;
                 retryable: boolean;
             };
@@ -720,7 +791,7 @@ export interface components {
                 agentRevisionId: string;
                 engine: {
                     /** @enum {string} */
-                    kind: "echo";
+                    kind: "echo" | "ai-sdk";
                     /** @enum {string} */
                     version: "1";
                 };
@@ -736,9 +807,20 @@ export interface components {
                 lastSequence: number;
                 /** Format: uuid */
                 assistantMessageId?: string;
+                model?: {
+                    /** Format: uuid */
+                    profileId: string;
+                    displayName: string;
+                    fallbackUsed: boolean;
+                };
+                usage?: {
+                    inputTokens: number;
+                    outputTokens: number;
+                    totalTokens: number;
+                };
                 failure?: {
                     /** @enum {string} */
-                    code: "engine_failed" | "dispatch_attempts_exhausted" | "output_delivery_failed";
+                    code: "engine_failed" | "model_failed" | "dispatch_attempts_exhausted" | "output_delivery_failed";
                     message: string;
                     retryable: boolean;
                 };

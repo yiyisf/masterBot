@@ -5,7 +5,7 @@ export const runStatusSchema = z.enum([
   'accepted', 'queued', 'running', 'succeeded', 'failed', 'cancelled',
 ]);
 export const runFailureSchema = z.object({
-  code: z.enum(['engine_failed', 'dispatch_attempts_exhausted', 'output_delivery_failed']),
+  code: z.enum(['engine_failed', 'model_failed', 'dispatch_attempts_exhausted', 'output_delivery_failed']),
   message: z.string(),
   retryable: z.boolean(),
 });
@@ -24,7 +24,7 @@ export const runSnapshotSchema = z.object({
   trigger: z.object({ type: z.literal('message'), messageId: uuidSchema }),
   agentId: uuidSchema,
   agentRevisionId: uuidSchema,
-  engine: z.object({ kind: z.literal('echo'), version: z.literal('1') }),
+  engine: z.object({ kind: z.enum(['echo', 'ai-sdk']), version: z.literal('1') }),
   rootInvocation: z.object({
     id: uuidSchema,
     status: z.enum(['pending', 'running', 'succeeded', 'failed', 'cancelled']),
@@ -33,6 +33,16 @@ export const runSnapshotSchema = z.object({
   cancellable: z.boolean(),
   lastSequence: z.number().int().nonnegative(),
   assistantMessageId: uuidSchema.optional(),
+  model: z.object({
+    profileId: uuidSchema,
+    displayName: z.string().min(1),
+    fallbackUsed: z.boolean(),
+  }).optional(),
+  usage: z.object({
+    inputTokens: z.number().int().nonnegative(),
+    outputTokens: z.number().int().nonnegative(),
+    totalTokens: z.number().int().nonnegative(),
+  }).optional(),
   failure: runFailureSchema.optional(),
   createdAt: isoDateTimeSchema,
   startedAt: isoDateTimeSchema.optional(),

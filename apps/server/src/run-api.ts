@@ -29,6 +29,7 @@ import {
   RunNotFoundError,
   type ExecutionModule,
   type RunEventEnvelope,
+  type RunId,
   type RunSnapshot,
 } from '@cmaster/execution';
 import type { AgentModule } from '@cmaster/agents';
@@ -43,6 +44,25 @@ export interface RunApiDependencies {
   conversations: ConversationModule;
   execution: ExecutionModule;
   notifier: RunEventNotifier;
+}
+
+export async function* followRunEventBatches(
+  dependencies: Pick<RunApiDependencies, 'execution' | 'notifier'>,
+  identity: ReturnType<IdentityModule['resolveRequest']>,
+  id: RunId,
+  afterSequence: number,
+  signal: AbortSignal,
+): AsyncIterable<readonly RunEventEnvelope[]> {
+  let cursor = afterSequence;
+  while (!signal.aborted) {
+    const events = await dependencies.execution.readEvents(identity, id, cursor);
+    yield events;
+    for (const event of events) {
+      cursor = event.sequence;
+      if (['run.succeeded', 'run.failed', 'run.cancelled'].includes(event.type)) return;
+    }
+    await dependencies.notifier.wait(id, 2_000, signal);
+  }
 }
 
 function idempotencyKey(request: FastifyRequest): string {
@@ -257,8 +277,9 @@ export function registerRunApi(app: FastifyInstance, dependencies: RunApiDepende
         return;
       }
       let heartbeatAt = Date.now();
-      while (!controller.signal.aborted) {
-        const events = await dependencies.execution.readEvents(identity, runId(params.runId), cursor);
+      for await (const events of followRunEventBatches(
+        dependencies, identity, runId(params.runId), cursor, controller.signal,
+      )) {
         for (const event of events) {
           reply.raw.write(`id: ${event.sequence}\nevent: run-event\ndata: ${JSON.stringify(eventContract(event))}\n\n`);
           cursor = event.sequence;
@@ -271,7 +292,6 @@ export function registerRunApi(app: FastifyInstance, dependencies: RunApiDepende
           reply.raw.write(': heartbeat\n\n');
           heartbeatAt = Date.now();
         }
-        await dependencies.notifier.wait(params.runId, 2_000, controller.signal);
       }
       reply.raw.end();
     } catch (error) {

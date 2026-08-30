@@ -70,7 +70,7 @@ Run
 accepted | queued | running | succeeded | failed | cancelled
 ```
 
-`invocation.output_ready` 是当前 Echo Run 的取消边界：取消事务先提交时后续输出被丢弃；输出先持久化时取消返回 `run_cancellation_too_late`，并继续幂等交付最终 Assistant Message。不提前引入 `cancelling` 或 `completing` 状态。
+`invocation.output_ready` 是当前 Run 的取消边界：取消事务先提交时后续输出被丢弃；输出先持久化时取消返回 `run_cancellation_too_late`，并继续幂等交付最终 Assistant Message。不提前引入 `cancelling` 或 `completing` 状态。
 
 ### Invocation
 
@@ -130,9 +130,11 @@ Agent.activeRevisionId → published AgentRevision
 
 Published Revision 不可修改，保存 instructions、capability requirement、Tool Grant、Context/Execution/Outcome Policy reference。Credential 和运行状态不进入 Revision。
 
-### ModelProfile
+### ModelProfile / ModelCall
 
-Organization 批准的模型选择，描述 Provider reference、能力、上下文限制、成本级别和数据策略。ModelCall 保存实际选择和 usage，不只保存“默认模型”。
+Organization 批准的 ModelProfile 描述 Provider reference、能力、成本级别和数据策略。Slice 2 每个 Organization 恰有一个 active Primary 和至多一个 active Fallback；Profile ID 代表不可变配置，Credential 只保存 opaque `credentialRef`。
+
+ModelCall 保存每次实际尝试的 Profile、route role、attempt number、是否产生输出、安全失败分类、usage 和 trace/span ID，不只保存“默认模型”。Models 拥有这些记录；Execution 只在 Run 保存最终解析的 Profile/display name、Fallback 标记和 usage 快照。为保持 Module 所有权，ModelCall 的 Run/Invocation ID 是相关标识而非跨 Module 外键。
 
 ### PolicyRevision
 

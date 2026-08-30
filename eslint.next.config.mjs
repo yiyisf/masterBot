@@ -14,7 +14,7 @@ export default [
     ],
   },
   {
-    files: ['apps/server/**/*.ts', 'packages/**/*.ts'],
+    files: ['apps/server/**/*.ts', 'packages/**/*.ts', 'tooling/**/*.ts'],
     languageOptions: {
       parser: tsParser,
       parserOptions: {

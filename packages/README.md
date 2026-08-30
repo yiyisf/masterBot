@@ -9,8 +9,8 @@ Only create a business Module when its Slice introduces a real public interface,
 | `@cmaster/identity` | 1 | Development Organization, Principal, trusted Request Identity |
 | `@cmaster/agents` | 1 | Development Echo Agent and immutable Revision foundation |
 | `@cmaster/conversations` | 1 | Conversation and immutable Message behavior |
-| `@cmaster/execution` | 1 | Run, Invocation, Run Event, Outbox, Lease, Echo Engine |
-| `@cmaster/models` | 2 | Model catalog, routing, gateway, usage |
+| `@cmaster/execution` | 1 | Run, Invocation, Run Event, Outbox, Lease, Echo/AI SDK Engines, durable output generations |
+| `@cmaster/models` | 2 | Immutable Model Profiles, ModelCall audit, OpenAI-compatible Gateway, usage, fallback, telemetry |
 | `@cmaster/tools` | 3 | Skill, Tool catalog/runtime, Provider host |
 | `@cmaster/context` | 4 | Context Builder, Manifest, Memory/Knowledge access |
 | `@cmaster/artifacts` | 4 | Artifact metadata, versions, content storage |

@@ -98,6 +98,18 @@ registry.registerPath({
   },
 });
 registry.registerPath({
+  method: 'get', path: '/api/v1/runs/{runId}/ui-stream', summary: 'Present Run Events as an AI SDK UI Message Stream',
+  request: {
+    params: idPath('runId'),
+    query: z.object({ afterSequence: z.coerce.number().int().nonnegative().optional() }),
+    headers: z.object({ 'last-event-id': z.string().regex(/^\\d+$/).optional() }),
+  },
+  responses: {
+    200: { description: 'AI SDK UI Message Stream derived from canonical Run Events', content: { 'text/event-stream': { schema: z.string() } } },
+    400: problemResponse('Invalid request'), 404: problemResponse('Not found'),
+  },
+});
+registry.registerPath({
   method: 'post', path: '/api/v1/runs/{runId}/commands/cancel', summary: 'Cancel a Run',
   request: { params: idPath('runId'), headers: idempotencyHeaders },
   responses: {

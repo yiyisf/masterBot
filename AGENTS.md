@@ -182,12 +182,15 @@ npm run next:web
 # 显式 PostgreSQL Integration Test（需要 DATABASE_URL）
 npm run next:test:integration
 
+# 显式真实模型 Smoke Eval（无凭据时 skip）
+npm run next:eval:model-smoke
+
 # Contract 生成
 npm run contracts:generate
 npm run contracts:check
 ```
 
-完整配置和启动顺序见 [`docs/engineering/workspace-foundation.md`](./docs/engineering/workspace-foundation.md) 与 [`docs/engineering/run-walking-skeleton.md`](./docs/engineering/run-walking-skeleton.md)。
+完整配置和启动顺序见 [`docs/engineering/workspace-foundation.md`](./docs/engineering/workspace-foundation.md)、[`docs/engineering/run-walking-skeleton.md`](./docs/engineering/run-walking-skeleton.md) 与 [`docs/engineering/ai-sdk-runtime.md`](./docs/engineering/ai-sdk-runtime.md)。
 
 ### 冻结的 Legacy 验证命令
 

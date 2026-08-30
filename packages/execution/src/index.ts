@@ -1,4 +1,10 @@
-export { EchoAgentEngine, type AgentEngine, type EngineEvent, type EngineInvocation } from './engine.js';
+export {
+  AiSdkAgentEngine,
+  EchoAgentEngine,
+  type AgentEngine,
+  type EngineEvent,
+  type EngineInvocation,
+} from './engine.js';
 export { PostgresExecutionModule, type RunLease } from './postgres.js';
 export { RunWorker, type RunWorkerConfig } from './worker.js';
 export {
@@ -11,6 +17,7 @@ export {
   type CancelRunResult,
   type DispatchAttemptId,
   type ExecutionModule,
+  type ExecutionProgressEvent,
   type InvocationId,
   type RunCommandId,
   type RunEventEnvelope,

@@ -38,6 +38,12 @@ module.exports = {
       to: { path: '^(apps|packages/(conversations|execution)/)' },
     },
     {
+      name: 'models-must-not-depend-on-execution-or-conversations',
+      severity: 'error',
+      from: { path: '^packages/models/' },
+      to: { path: '^(apps|packages/(agents|conversations|execution)/)' },
+    },
+    {
       name: 'conversations-must-not-depend-on-agents-or-execution',
       severity: 'error',
       from: { path: '^packages/conversations/' },
