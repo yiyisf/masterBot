@@ -1,4 +1,5 @@
 import type { AgentRevisionId } from '@cmaster/agents';
+import type { Approval } from '@cmaster/governance';
 import type { OrganizationId, RequestIdentity } from '@cmaster/identity';
 import type { Brand } from '@cmaster/kernel';
 
@@ -78,12 +79,19 @@ export interface InvokeToolCommand {
   signal: AbortSignal;
 }
 
-export type ToolOutcome = {
-  kind: 'success';
-  toolCallId: ToolCallId;
-  value: unknown;
-  safeSummary: SafeToolSummary;
-};
+export type ToolOutcome =
+  | {
+    kind: 'success';
+    toolCallId: ToolCallId;
+    value: unknown;
+    safeSummary: SafeToolSummary;
+  }
+  | {
+    kind: 'confirmation_required';
+    toolCallId: ToolCallId;
+    approval: Approval;
+    safeSummary: SafeToolSummary;
+  };
 
 export interface ToolCall {
   id: ToolCallId;
@@ -92,7 +100,7 @@ export interface ToolCall {
   invocationId: string;
   capabilityId: string;
   revisionId: ToolRevisionId;
-  status: 'running' | 'succeeded';
+  status: 'running' | 'succeeded' | 'awaiting_confirmation';
   idempotencyKey: string;
   requestHash: string;
   requestSummary: SafeToolSummary;

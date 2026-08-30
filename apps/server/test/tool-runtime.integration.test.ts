@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { agentRevisionId } from '@cmaster/agents';
-import { Slice3BaselinePolicy } from '@cmaster/governance';
+import { PostgresApprovalModule, Slice3BaselinePolicy } from '@cmaster/governance';
 import {
   PostgresToolCatalog,
   PostgresToolRuntime,
@@ -122,7 +122,12 @@ describe('PostgresToolCatalog', () => {
         };
       },
     };
-    runtime = new PostgresToolRuntime(pool, new Slice3BaselinePolicy(), [provider]);
+    runtime = new PostgresToolRuntime(
+      pool,
+      new Slice3BaselinePolicy(),
+      new PostgresApprovalModule(pool),
+      [provider],
+    );
     const runId = randomUUID();
     const outcome = await runtime.invoke({
       identity,
@@ -143,5 +148,69 @@ describe('PostgresToolCatalog', () => {
       value: { iso: '2026-08-30T00:00:00.000Z' },
     });
     expect((await runtime.listCalls(identity.organizationId, runId))[0]?.status).toBe('succeeded');
+  });
+
+  it('persists Employee Confirmation before an open-world Provider can execute', async () => {
+    const identityModule = new PostgresDevelopmentIdentity(pool, {
+      organizationId: organizationId(randomUUID()),
+      organizationName: `Tool Confirmation ${randomUUID()}`,
+      principalId: principalId(randomUUID()),
+      principalDisplayName: 'Confirming Tool Employee',
+    });
+    await identityModule.provision();
+    const identity = identityModule.resolveRequest();
+    const catalog = new PostgresToolCatalog(pool);
+    const grantId = toolGrantId(randomUUID());
+    await catalog.provision(identity.organizationId, {
+      revisions: [{
+        id: toolRevisionId(randomUUID()),
+        capabilityId: 'cmaster.http.fetch:v1',
+        name: 'Fetch HTTPS content',
+        description: 'Fetches text from an approved HTTPS host.',
+        inputSchema: { type: 'object', properties: { url: { type: 'string' } }, required: ['url'], additionalProperties: false },
+        effect: 'read_only',
+        recovery: 'retry_same_call',
+        risks: ['open_world'],
+        providerKey: 'test:http-fetch',
+      }],
+      grants: [{ id: grantId, capabilityIds: ['cmaster.http.fetch:v1'] }],
+    });
+    const provider: ToolProvider = {
+      key: 'test:http-fetch',
+      async execute() {
+        throw new Error('Provider must not execute before Employee Confirmation');
+      },
+    };
+    const runtime = new PostgresToolRuntime(
+      pool,
+      new Slice3BaselinePolicy(),
+      new PostgresApprovalModule(pool),
+      [provider],
+    );
+    const runId = randomUUID();
+
+    const outcome = await runtime.invoke({
+      identity,
+      agentRevisionId: agentRevisionId(randomUUID()),
+      grantId,
+      principalEntitlements: ['enterprise_assistant.use_governed_tools'],
+      runId,
+      invocationId: randomUUID(),
+      modelRequestId: 'model-tool-request-confirmation',
+      capabilityId: 'cmaster.http.fetch:v1',
+      input: { url: 'https://docs.example.test/guide?token=private' },
+      safeRequestSummary: {
+        title: 'Fetch approved HTTPS content',
+        details: { host: 'docs.example.test', path: '/guide', queryKeys: 'token' },
+      },
+      signal: new AbortController().signal,
+    });
+
+    expect(outcome).toMatchObject({ kind: 'confirmation_required', approval: { status: 'pending' } });
+    const call = (await runtime.listCalls(identity.organizationId, runId))[0];
+    expect(call).toMatchObject({ status: 'awaiting_confirmation' });
+    expect(call?.requestSummary.details).toEqual({
+      host: 'docs.example.test', path: '/guide', queryKeys: 'token',
+    });
   });
 });

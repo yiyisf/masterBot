@@ -1,6 +1,10 @@
 import { createHash, randomUUID } from 'node:crypto';
 import type { OrganizationId } from '@cmaster/identity';
-import type { PolicyModule } from '@cmaster/governance';
+import {
+  approvalCommandId,
+  type ApprovalModule,
+  type PolicyModule,
+} from '@cmaster/governance';
 import type { Pool, PoolClient } from 'pg';
 import {
   type InvokeToolCommand,
@@ -36,7 +40,7 @@ interface ToolCallRow {
   invocation_id: string;
   capability_id: string;
   tool_revision_id: string;
-  status: 'running' | 'succeeded';
+  status: 'running' | 'succeeded' | 'awaiting_confirmation';
   idempotency_key: string;
   request_hash: string;
   request_summary: SafeToolSummary;
@@ -112,6 +116,7 @@ export class PostgresToolRuntime implements ToolRuntime {
   constructor(
     private readonly pool: Pool,
     private readonly policy: PolicyModule,
+    private readonly approvals: ApprovalModule,
     providers: readonly ToolProvider[],
   ) {
     this.providers = new Map(providers.map((provider) => [provider.key, provider]));
@@ -128,9 +133,11 @@ export class PostgresToolRuntime implements ToolRuntime {
       toolRevisionActive: revision !== undefined,
       capabilityId: command.capabilityId,
     });
-    if (decision.effect === 'deny' || decision.obligations.length > 0 || !revision) {
+    if (decision.effect === 'deny' || !revision) {
       throw new ToolAuthorizationDeniedError(decision.reason);
     }
+    const requiresConfirmation = decision.obligations
+      .some((obligation) => obligation.kind === 'employee_confirmation');
     const provider = this.providers.get(revision.provider_key);
     if (!provider) throw new ToolProviderUnavailableError();
 
@@ -141,6 +148,7 @@ export class PostgresToolRuntime implements ToolRuntime {
     });
     const toolCallId = randomUUID() as ToolCallId;
     const idempotencyKey = randomUUID();
+    const initialStatus = requiresConfirmation ? 'awaiting_confirmation' : 'running';
     const client = await this.pool.connect();
     try {
       await client.query('BEGIN');
@@ -167,24 +175,51 @@ export class PostgresToolRuntime implements ToolRuntime {
            id, organization_id, run_id, invocation_id, model_request_id,
            capability_id, tool_revision_id, status, idempotency_key,
            effect, recovery, risks, request_hash, request_payload, request_summary
-         ) VALUES ($1, $2, $3, $4, $5, $6, $7, 'running', $8, $9, $10, $11, $12, $13, $14)`,
+         ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)`,
         [toolCallId, command.identity.organizationId, command.runId, command.invocationId,
-          command.modelRequestId, command.capabilityId, revision.id, idempotencyKey,
-          revision.effect, revision.recovery, JSON.stringify(revision.risks), requestHash,
-          JSON.stringify(command.input), JSON.stringify(command.safeRequestSummary)],
+          command.modelRequestId, command.capabilityId, revision.id, initialStatus,
+          idempotencyKey, revision.effect, revision.recovery, JSON.stringify(revision.risks),
+          requestHash, JSON.stringify(command.input), JSON.stringify(command.safeRequestSummary)],
       );
-      await client.query(
-        `INSERT INTO tool_dispatch_attempts (
-           id, organization_id, tool_call_id, attempt_number, status
-         ) VALUES ($1, $2, $3, 1, 'running')`,
-        [randomUUID(), command.identity.organizationId, toolCallId],
-      );
+      if (!requiresConfirmation) {
+        await client.query(
+          `INSERT INTO tool_dispatch_attempts (
+             id, organization_id, tool_call_id, attempt_number, status
+           ) VALUES ($1, $2, $3, 1, 'running')`,
+          [randomUUID(), command.identity.organizationId, toolCallId],
+        );
+      }
       await client.query('COMMIT');
     } catch (error) {
       await client.query('ROLLBACK');
       throw error;
     } finally {
       client.release();
+    }
+
+    if (requiresConfirmation) {
+      const approval = await this.approvals.request(command.identity, {
+        commandId: approvalCommandId(toolCallId),
+        subject: {
+          kind: 'tool_call',
+          subjectRef: toolCallId,
+          toolRevisionRef: revision.id,
+          requestHash,
+          safeSummary: command.safeRequestSummary,
+        },
+        policyVersion: decision.policyVersion,
+      });
+      await this.pool.query(
+        `UPDATE tool_calls SET approval_id = $3
+         WHERE organization_id = $1 AND id = $2 AND status = 'awaiting_confirmation'`,
+        [command.identity.organizationId, toolCallId, approval.value.id],
+      );
+      return {
+        kind: 'confirmation_required',
+        toolCallId,
+        approval: approval.value,
+        safeSummary: command.safeRequestSummary,
+      };
     }
 
     const result = await provider.execute({
