@@ -18,6 +18,7 @@ export interface ToolDescriptor {
   name: string;
   description: string;
   inputSchema: JsonSchema;
+  outputSchema: JsonSchema;
   effect: ToolEffect;
   recovery: ToolRecovery;
   risks: readonly ToolRisk[];
@@ -60,6 +61,10 @@ export type ToolProviderResult = {
   externalOperationId?: string;
 };
 
+/**
+ * Adapter owned by Tools. Implementations must not return raw Provider errors or
+ * summaries containing credentials; Runtime validates all returned payloads before persistence.
+ */
 export interface ToolProvider {
   readonly key: string;
   summarize(input: unknown): SafeToolSummary;
@@ -133,10 +138,16 @@ export interface ToolCall {
   outcome?: ToolOutcome;
 }
 
+/**
+ * Owns authorization, immutable ToolCall/Dispatch Attempt Ledger records and Provider dispatch.
+ * invoke is idempotent by Invocation/model request and replays durable outcomes without dispatch.
+ * resume resolves one initiating-Employee Approval, reauthorizes, and fences exactly one dispatch.
+ * Provider failures are returned only as stable ToolOutcome variants; persistence conflicts throw.
+ */
 export interface ToolRuntime {
   invoke(command: InvokeToolCommand): Promise<ToolOutcome>;
   resume(command: ResumeToolCallCommand): Promise<ToolOutcome>;
-  listCalls(organizationId: OrganizationId, runId: string): Promise<ToolCall[]>;
+  listCalls(identity: RequestIdentity, runId: string): Promise<ToolCall[]>;
 }
 
 export interface ListGrantedTools {

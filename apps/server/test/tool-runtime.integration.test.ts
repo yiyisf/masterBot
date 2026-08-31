@@ -4,6 +4,7 @@ import {
   approvalCommandId,
   PostgresApprovalModule,
   Slice3BaselinePolicy,
+  type ApprovalModule,
   type PolicyModule,
 } from '@cmaster/governance';
 import {
@@ -52,6 +53,10 @@ describe('PostgresToolCatalog', () => {
           name: 'Current time',
           description: 'Returns the current time.',
           inputSchema: { type: 'object', properties: {}, additionalProperties: false },
+          outputSchema: {
+            type: 'object', properties: { iso: { type: 'string' } },
+            required: ['iso'], additionalProperties: false,
+          },
           effect: 'read_only',
           recovery: 'retry_same_call',
           risks: [],
@@ -63,6 +68,7 @@ describe('PostgresToolCatalog', () => {
           name: 'Text statistics',
           description: 'Counts text characters, words, and lines.',
           inputSchema: { type: 'object', properties: { text: { type: 'string' } }, required: ['text'], additionalProperties: false },
+          outputSchema: { type: 'object' },
           effect: 'read_only',
           recovery: 'retry_same_call',
           risks: [],
@@ -81,6 +87,10 @@ describe('PostgresToolCatalog', () => {
         name: 'Current time',
         description: 'Returns the current time.',
         inputSchema: { type: 'object', properties: {}, additionalProperties: false },
+        outputSchema: {
+          type: 'object', properties: { iso: { type: 'string' } },
+          required: ['iso'], additionalProperties: false,
+        },
         effect: 'read_only',
         recovery: 'retry_same_call',
         risks: [],
@@ -102,13 +112,18 @@ describe('PostgresToolCatalog', () => {
     const identity = identityModule.resolveRequest();
     const catalog = new PostgresToolCatalog(pool);
     const grantId = toolGrantId(randomUUID());
+    const revisionId = toolRevisionId(randomUUID());
     await catalog.provision(identity.organizationId, {
       revisions: [{
-        id: toolRevisionId(randomUUID()),
+        id: revisionId,
         capabilityId: 'cmaster.utility.current_time:v1',
         name: 'Current time',
         description: 'Returns the current time.',
         inputSchema: { type: 'object', properties: {}, additionalProperties: false },
+        outputSchema: {
+          type: 'object', properties: { iso: { type: 'string' } },
+          required: ['iso'], additionalProperties: false,
+        },
         effect: 'read_only',
         recovery: 'retry_same_call',
         risks: [],
@@ -118,14 +133,16 @@ describe('PostgresToolCatalog', () => {
     });
 
     let runtime: PostgresToolRuntime;
-    let providerMode: 'success' | 'failure' | 'oversized' = 'success';
+    let providerCalls = 0;
+    let providerMode: 'success' | 'failure' | 'invalid' | 'oversized' = 'success';
     const provider: ToolProvider = {
       key: 'test:current-time',
       summarize() {
         return { title: 'Read current time', details: {} };
       },
       async execute(request) {
-        const calls = await runtime.listCalls(identity.organizationId, request.runId);
+        providerCalls += 1;
+        const calls = await runtime.listCalls(identity, request.runId);
         expect(calls.find((call) => call.id === request.toolCallId))
           .toMatchObject({ status: 'running', idempotencyKey: request.idempotencyKey });
         if (providerMode === 'failure') throw new Error('raw provider secret');
@@ -133,7 +150,9 @@ describe('PostgresToolCatalog', () => {
           kind: 'success',
           value: providerMode === 'oversized'
             ? { text: 'x'.repeat(64 * 1024) }
-            : { iso: '2026-08-30T00:00:00.000Z' },
+            : providerMode === 'invalid'
+              ? { iso: 42 }
+              : { iso: '2026-08-30T00:00:00.000Z' },
           safeSummary: { title: 'Current time returned', details: {} },
         };
       },
@@ -167,7 +186,7 @@ describe('PostgresToolCatalog', () => {
       modelRequestId: 'model-tool-request-invalid',
       input: { unexpected: true },
     })).rejects.toBeInstanceOf(ToolInputValidationError);
-    expect(await runtime.listCalls(identity.organizationId, runId)).toHaveLength(1);
+    expect(await runtime.listCalls(identity, runId)).toHaveLength(1);
 
     providerMode = 'oversized';
     const oversized = await runtime.invoke({
@@ -175,6 +194,13 @@ describe('PostgresToolCatalog', () => {
       modelRequestId: 'model-tool-request-oversized',
     });
     expect(oversized).toMatchObject({ kind: 'failed', failure: { code: 'provider_failed' } });
+
+    providerMode = 'invalid';
+    const invalid = await runtime.invoke({
+      ...baseCommand,
+      modelRequestId: 'model-tool-request-invalid-output',
+    });
+    expect(invalid).toMatchObject({ kind: 'failed', failure: { code: 'provider_failed' } });
 
     providerMode = 'failure';
     const failure = await runtime.invoke({ ...baseCommand, modelRequestId: 'model-tool-request-2' });
@@ -187,8 +213,13 @@ describe('PostgresToolCatalog', () => {
         retryable: true,
       },
     });
-    expect((await runtime.listCalls(identity.organizationId, runId)).map((call) => call.status))
-      .toEqual(['succeeded', 'failed', 'failed']);
+    expect((await runtime.listCalls(identity, runId)).map((call) => call.status))
+      .toEqual(['succeeded', 'failed', 'failed', 'failed']);
+
+    await catalog.deactivate(identity.organizationId, revisionId);
+    expect(await runtime.invoke({ ...baseCommand, modelRequestId: 'model-tool-request-1' }))
+      .toEqual(outcome);
+    expect(providerCalls).toBe(4);
   });
 
   it('persists Employee Confirmation before an open-world Provider can execute', async () => {
@@ -210,6 +241,10 @@ describe('PostgresToolCatalog', () => {
         name: 'Fetch HTTPS content',
         description: 'Fetches text from an approved HTTPS host.',
         inputSchema: { type: 'object', properties: { url: { type: 'string' } }, required: ['url'], additionalProperties: false },
+        outputSchema: {
+          type: 'object', properties: { text: { type: 'string' } },
+          required: ['text'], additionalProperties: false,
+        },
         effect: 'read_only',
         recovery: 'retry_same_call',
         risks: ['open_world'],
@@ -220,6 +255,7 @@ describe('PostgresToolCatalog', () => {
         name: 'Test non-idempotent write',
         description: 'Integration-only uncertain side effect.',
         inputSchema: { type: 'object', properties: {}, additionalProperties: false },
+        outputSchema: { type: 'object' },
         effect: 'non_idempotent_write',
         recovery: 'manual_review',
         risks: ['destructive'],
@@ -231,6 +267,7 @@ describe('PostgresToolCatalog', () => {
       }],
     });
     let providerCalls = 0;
+    let confirmedProviderMode: 'success' | 'oversized' = 'success';
     const provider: ToolProvider = {
       key: 'test:http-fetch',
       summarize() {
@@ -243,7 +280,9 @@ describe('PostgresToolCatalog', () => {
         providerCalls += 1;
         return {
           kind: 'success',
-          value: { text: 'approved content' },
+          value: confirmedProviderMode === 'oversized'
+            ? { text: 'x'.repeat(64 * 1024) }
+            : { text: 'approved content' },
           safeSummary: { title: 'HTTPS content returned', details: {} },
         };
       },
@@ -270,10 +309,27 @@ describe('PostgresToolCatalog', () => {
           : baseline.evaluate(request);
       },
     };
+    const postgresApprovals = new PostgresApprovalModule(pool);
+    let failFirstApprovalRequest = true;
+    const approvals: ApprovalModule = {
+      request(identity, request) {
+        if (failFirstApprovalRequest) {
+          failFirstApprovalRequest = false;
+          throw new Error('simulated crash before Approval creation');
+        }
+        return postgresApprovals.request(identity, request);
+      },
+      get(identity, approvalId) {
+        return postgresApprovals.get(identity, approvalId);
+      },
+      resolve(identity, approvalId, resolution) {
+        return postgresApprovals.resolve(identity, approvalId, resolution);
+      },
+    };
     const runtime = new PostgresToolRuntime(
       pool,
       policy,
-      new PostgresApprovalModule(pool),
+      approvals,
       [provider, uncertainProvider],
     );
     const runId = randomUUID();
@@ -290,13 +346,15 @@ describe('PostgresToolCatalog', () => {
       input: { url: 'https://docs.example.test/guide?token=private' },
       signal: new AbortController().signal,
     } as const;
+    await expect(runtime.invoke(command))
+      .rejects.toThrow('simulated crash before Approval creation');
     const outcome = await runtime.invoke(command);
     const replayed = await runtime.invoke(command);
 
     expect(outcome).toMatchObject({ kind: 'confirmation_required', approval: { status: 'pending' } });
     expect(replayed).toEqual(outcome);
     expect(providerCalls).toBe(0);
-    const waitingCall = (await runtime.listCalls(identity.organizationId, runId))[0];
+    const waitingCall = (await runtime.listCalls(identity, runId))[0];
     expect(waitingCall).toMatchObject({ status: 'awaiting_confirmation' });
     expect(waitingCall?.requestSummary.details).toEqual({
       host: 'docs.example.test', path: '/guide', queryKeys: 'token',
@@ -315,7 +373,27 @@ describe('PostgresToolCatalog', () => {
 
     expect(resumed).toMatchObject({ kind: 'success', value: { text: 'approved content' } });
     expect(providerCalls).toBe(1);
-    expect((await runtime.listCalls(identity.organizationId, runId))[0]?.status).toBe('succeeded');
+    expect((await runtime.listCalls(identity, runId))[0]?.status).toBe('succeeded');
+
+    confirmedProviderMode = 'oversized';
+    const waitingForOversizedOutput = await runtime.invoke({
+      ...command,
+      modelRequestId: 'model-tool-request-resumed-oversized',
+    });
+    const oversized = await runtime.resume({
+      identity,
+      toolCallId: waitingForOversizedOutput.toolCallId,
+      commandId: approvalCommandId(randomUUID()),
+      response: 'confirm',
+      agentRevisionId: command.agentRevisionId,
+      grantId,
+      principalEntitlements: command.principalEntitlements,
+      signal: new AbortController().signal,
+    });
+    expect(oversized).toMatchObject({ kind: 'failed', failure: { code: 'provider_failed' } });
+    expect((await runtime.listCalls(identity, runId))
+      .find((call) => call.id === waitingForOversizedOutput.toolCallId)?.status).toBe('failed');
+    confirmedProviderMode = 'success';
 
     const waitingForRejection = await runtime.invoke({
       ...command,
@@ -336,7 +414,7 @@ describe('PostgresToolCatalog', () => {
       toolCallId: waitingForRejection.toolCallId,
       reason: 'employee_rejected',
     });
-    expect(providerCalls).toBe(1);
+    expect(providerCalls).toBe(2);
 
     const waitingForUncertainWrite = await runtime.invoke({
       ...command,
@@ -380,6 +458,6 @@ describe('PostgresToolCatalog', () => {
       toolCallId: waitingForRevokedRevision.toolCallId,
       reason: 'authorization_revoked',
     });
-    expect(providerCalls).toBe(1);
+    expect(providerCalls).toBe(2);
   });
 });

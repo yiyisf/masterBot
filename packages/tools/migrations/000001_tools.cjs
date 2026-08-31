@@ -14,6 +14,7 @@ exports.up = (pgm) => {
       name text NOT NULL,
       description text NOT NULL,
       input_schema jsonb NOT NULL,
+      output_schema jsonb NOT NULL,
       effect text NOT NULL
         CHECK (effect IN ('read_only', 'idempotent_write', 'non_idempotent_write')),
       recovery text NOT NULL
@@ -44,6 +45,7 @@ exports.up = (pgm) => {
     CREATE TABLE tool_calls (
       id uuid PRIMARY KEY,
       organization_id uuid NOT NULL,
+      initiating_principal_id uuid NOT NULL,
       run_id uuid NOT NULL,
       invocation_id uuid NOT NULL,
       model_request_id text NOT NULL,

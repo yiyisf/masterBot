@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from 'node:crypto';
-import type { OrganizationId } from '@cmaster/identity';
+import type { OrganizationId, RequestIdentity } from '@cmaster/identity';
 import {
   approvalCommandId,
   type ApprovalId,
@@ -31,15 +31,29 @@ interface RuntimeRevisionRow {
   name: string;
   description: string;
   input_schema: Readonly<Record<string, unknown>>;
+  output_schema: Readonly<Record<string, unknown>>;
   effect: ToolEffect;
   recovery: ToolRecovery;
   risks: ToolRisk[];
   provider_key: string;
 }
 
+interface ProviderDispatchInput {
+  organizationId: OrganizationId;
+  toolCallId: ToolCallId;
+  revision: RuntimeRevisionRow;
+  provider: ToolProvider;
+  runId: string;
+  invocationId: string;
+  requestPayload: unknown;
+  idempotencyKey: string;
+  signal: AbortSignal;
+}
+
 interface ToolCallRow {
   id: string;
   organization_id: string;
+  initiating_principal_id: string;
   run_id: string;
   invocation_id: string;
   capability_id: string;
@@ -63,6 +77,7 @@ const MAX_SAFE_SUMMARY_BYTES = 8 * 1024;
 const ajv = new Ajv({ allErrors: true, strict: false });
 
 export class ToolInputValidationError extends Error {}
+export class ToolOutputValidationError extends Error {}
 export class ToolPayloadTooLargeError extends Error {}
 export class ToolSafeSummaryError extends Error {}
 
@@ -81,6 +96,12 @@ function serializeBounded(value: unknown, maximumBytes: number): string {
 function validateInput(schema: Readonly<Record<string, unknown>>, input: unknown): string {
   const serialized = serializeBounded(input, MAX_TOOL_PAYLOAD_BYTES);
   if (!ajv.compile(schema)(input)) throw new ToolInputValidationError('Tool input does not match its schema');
+  return serialized;
+}
+
+function validateOutput(schema: Readonly<Record<string, unknown>>, output: unknown): string {
+  const serialized = serializeBounded(output, MAX_TOOL_PAYLOAD_BYTES);
+  if (!ajv.compile(schema)(output)) throw new ToolOutputValidationError();
   return serialized;
 }
 
@@ -103,6 +124,7 @@ function descriptor(row: RuntimeRevisionRow): ToolDescriptor {
     name: row.name,
     description: row.description,
     inputSchema: row.input_schema,
+    outputSchema: row.output_schema,
     effect: row.effect,
     recovery: row.recovery,
     risks: row.risks,
@@ -187,6 +209,9 @@ export class PostgresToolRuntime implements ToolRuntime {
   }
 
   async invoke(command: InvokeToolCommand): Promise<ToolOutcome> {
+    const completedReplay = await this.replayCompleted(command);
+    if (completedReplay) return completedReplay;
+
     const revision = await selectGrantedRevision(this.pool, command);
     const decision = await this.policy.evaluate({
       organizationId: command.identity.organizationId,
@@ -224,24 +249,36 @@ export class PostgresToolRuntime implements ToolRuntime {
       ]);
       const existing = await client.query<ToolCallRow>(
         `SELECT * FROM tool_calls
-         WHERE organization_id = $1 AND invocation_id = $2 AND model_request_id = $3`,
-        [command.identity.organizationId, command.invocationId, command.modelRequestId],
+         WHERE organization_id = $1 AND invocation_id = $2 AND model_request_id = $3
+           AND initiating_principal_id = $4`,
+        [command.identity.organizationId, command.invocationId, command.modelRequestId,
+          command.identity.principalId],
       );
       const previous = existing.rows[0];
       if (previous) {
         if (previous.request_hash !== requestHash) throw new ToolInvocationConflictError();
-        if (previous.status === 'awaiting_confirmation' && previous.approval_id) {
+        if (previous.status === 'awaiting_confirmation') {
           await client.query('COMMIT');
-          const approval = await this.approvals.get(
-            command.identity,
-            previous.approval_id as ApprovalId,
-          );
-          return {
-            kind: 'confirmation_required',
+          if (previous.approval_id) {
+            const approval = await this.approvals.get(
+              command.identity,
+              previous.approval_id as ApprovalId,
+            );
+            return {
+              kind: 'confirmation_required',
+              toolCallId: previous.id as ToolCallId,
+              approval,
+              safeSummary: previous.request_summary,
+            };
+          }
+          return this.requestConfirmation({
+            command,
             toolCallId: previous.id as ToolCallId,
-            approval,
+            revisionId: previous.tool_revision_id as ToolRevisionId,
+            requestHash: previous.request_hash,
             safeSummary: previous.request_summary,
-          };
+            policyVersion: decision.policyVersion,
+          });
         }
         const previousOutcome = mapCall(previous).outcome;
         if (!previousOutcome) throw new ToolInvocationConflictError();
@@ -250,13 +287,17 @@ export class PostgresToolRuntime implements ToolRuntime {
       }
       await client.query(
         `INSERT INTO tool_calls (
-           id, organization_id, run_id, invocation_id, model_request_id,
-           capability_id, tool_revision_id, status, idempotency_key,
+           id, organization_id, initiating_principal_id, run_id, invocation_id,
+           model_request_id, capability_id, tool_revision_id, status, idempotency_key,
            effect, recovery, risks, request_hash, request_payload, request_summary
-         ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)`,
-        [toolCallId, command.identity.organizationId, command.runId, command.invocationId,
-          command.modelRequestId, command.capabilityId, revision.id, initialStatus,
-          idempotencyKey, revision.effect, revision.recovery, JSON.stringify(revision.risks),
+         ) VALUES (
+           $1, $2, $3, $4, $5, $6, $7, $8,
+           $9, $10, $11, $12, $13, $14, $15, $16
+         )`,
+        [toolCallId, command.identity.organizationId, command.identity.principalId,
+          command.runId, command.invocationId, command.modelRequestId,
+          command.capabilityId, revision.id, initialStatus, idempotencyKey,
+          revision.effect, revision.recovery, JSON.stringify(revision.risks),
           requestHash, requestPayload, requestSummary],
       );
       if (!requiresConfirmation) {
@@ -276,51 +317,76 @@ export class PostgresToolRuntime implements ToolRuntime {
     }
 
     if (requiresConfirmation) {
-      const approval = await this.approvals.request(command.identity, {
-        commandId: approvalCommandId(toolCallId),
-        subject: {
-          kind: 'tool_call',
-          subjectRef: toolCallId,
-          toolRevisionRef: revision.id,
-          requestHash,
-          safeSummary: safeRequestSummary,
-        },
+      return this.requestConfirmation({
+        command,
+        toolCallId,
+        revisionId: revision.id as ToolRevisionId,
+        requestHash,
+        safeSummary: safeRequestSummary,
         policyVersion: decision.policyVersion,
       });
-      const linked = await this.pool.query(
-        `UPDATE tool_calls SET approval_id = $3
-         WHERE organization_id = $1 AND id = $2
-           AND status = 'awaiting_confirmation' AND approval_id IS NULL`,
-        [command.identity.organizationId, toolCallId, approval.value.id],
-      );
-      if (linked.rowCount !== 1) {
-        throw new ToolPersistenceError('Tool Approval link was superseded');
-      }
-      return {
-        kind: 'confirmation_required',
-        toolCallId,
-        approval: approval.value,
-        safeSummary: safeRequestSummary,
-      };
     }
 
+    return this.dispatch({
+      organizationId: command.identity.organizationId,
+      toolCallId,
+      revision,
+      provider,
+      runId: command.runId,
+      invocationId: command.invocationId,
+      requestPayload: command.input,
+      idempotencyKey,
+      signal: command.signal,
+    });
+  }
+
+  private async replayCompleted(command: InvokeToolCommand): Promise<ToolOutcome | undefined> {
+    const existing = await this.pool.query<ToolCallRow>(
+      `SELECT * FROM tool_calls
+       WHERE organization_id = $1 AND invocation_id = $2 AND model_request_id = $3
+         AND initiating_principal_id = $4`,
+      [command.identity.organizationId, command.invocationId, command.modelRequestId,
+        command.identity.principalId],
+    );
+    const call = existing.rows[0];
+    const outcome = call ? mapCall(call).outcome : undefined;
+    if (!call || !outcome) return undefined;
+
+    const revisionResult = await this.pool.query<RuntimeRevisionRow>(
+      `SELECT * FROM tool_revisions
+       WHERE organization_id = $1 AND id = $2`,
+      [command.identity.organizationId, call.tool_revision_id],
+    );
+    const revision = revisionResult.rows[0];
+    if (!revision) throw new ToolInvocationConflictError();
+    validateInput(revision.input_schema, command.input);
+    const requestHash = digest({
+      capabilityId: command.capabilityId,
+      revisionId: revision.id,
+      input: command.input,
+    });
+    if (requestHash !== call.request_hash) throw new ToolInvocationConflictError();
+    return outcome;
+  }
+
+  private async dispatch(input: ProviderDispatchInput): Promise<ToolOutcome> {
     let result: ToolProviderResult;
     let outcomePayload: string;
     let outcomeSummary: string;
     try {
-      result = await provider.execute({
-        toolCallId,
-        revision: descriptor(revision),
-        runId: command.runId,
-        invocationId: command.invocationId,
-        input: command.input,
-        idempotencyKey,
-        signal: command.signal,
+      result = await input.provider.execute({
+        toolCallId: input.toolCallId,
+        revision: descriptor(input.revision),
+        runId: input.runId,
+        invocationId: input.invocationId,
+        input: input.requestPayload,
+        idempotencyKey: input.idempotencyKey,
+        signal: input.signal,
       });
-      outcomePayload = serializeBounded(result.value, MAX_TOOL_PAYLOAD_BYTES);
+      outcomePayload = validateOutput(input.revision.output_schema, result.value);
       outcomeSummary = validateSummary(result.safeSummary);
     } catch {
-      const uncertain = revision.effect === 'non_idempotent_write';
+      const uncertain = input.revision.effect === 'non_idempotent_write';
       const failure = uncertain
         ? { code: 'external_effect_unknown', message: 'The external effect is unknown.', retryable: false }
         : { code: 'provider_failed', message: 'The Tool Provider failed.', retryable: true };
@@ -329,18 +395,22 @@ export class PostgresToolRuntime implements ToolRuntime {
            UPDATE tool_dispatch_attempts
            SET status = $3, failure = $4, completed_at = clock_timestamp()
            WHERE organization_id = $1 AND tool_call_id = $2 AND status = 'running'
+           RETURNING tool_call_id
          )
          UPDATE tool_calls
          SET status = $5, failure = $4, completed_at = clock_timestamp()
-         WHERE organization_id = $1 AND id = $2 AND status = 'running'`,
-        [command.identity.organizationId, toolCallId, uncertain ? 'uncertain' : 'failed',
+         WHERE organization_id = $1 AND id = $2 AND status = 'running'
+           AND EXISTS (
+             SELECT 1 FROM completed_attempt WHERE tool_call_id = tool_calls.id
+           )`,
+        [input.organizationId, input.toolCallId, uncertain ? 'uncertain' : 'failed',
           JSON.stringify(failure), uncertain ? 'requires_review' : 'failed'],
       );
       if (failed.rowCount !== 1) throw new ToolPersistenceError('Tool failure could not be fenced');
       return uncertain
         ? {
           kind: 'requires_review',
-          toolCallId,
+          toolCallId: input.toolCallId,
           failure: {
             code: 'external_effect_unknown',
             message: 'The external effect is unknown.',
@@ -349,7 +419,7 @@ export class PostgresToolRuntime implements ToolRuntime {
         }
         : {
           kind: 'failed',
-          toolCallId,
+          toolCallId: input.toolCallId,
           failure: {
             code: 'provider_failed',
             message: 'The Tool Provider failed.',
@@ -357,12 +427,7 @@ export class PostgresToolRuntime implements ToolRuntime {
           },
         };
     }
-    const outcome: ToolOutcome = {
-      kind: 'success',
-      toolCallId,
-      value: result.value,
-      safeSummary: result.safeSummary,
-    };
+
     let completed;
     try {
       completed = await this.pool.query(
@@ -370,26 +435,72 @@ export class PostgresToolRuntime implements ToolRuntime {
            UPDATE tool_dispatch_attempts
            SET status = 'succeeded', completed_at = clock_timestamp()
            WHERE organization_id = $1 AND tool_call_id = $2 AND status = 'running'
+           RETURNING tool_call_id
          )
          UPDATE tool_calls
          SET status = 'succeeded', outcome_payload = $3, outcome_summary = $4,
              external_operation_id = $5, completed_at = clock_timestamp()
-         WHERE organization_id = $1 AND id = $2 AND status = 'running'`,
-        [command.identity.organizationId, toolCallId, outcomePayload,
+         WHERE organization_id = $1 AND id = $2 AND status = 'running'
+           AND EXISTS (
+             SELECT 1 FROM completed_attempt WHERE tool_call_id = tool_calls.id
+           )`,
+        [input.organizationId, input.toolCallId, outcomePayload,
           outcomeSummary, result.externalOperationId ?? null],
       );
     } catch {
       throw new ToolPersistenceError('Tool success could not be persisted');
     }
     if (completed.rowCount !== 1) throw new ToolPersistenceError('Tool success was superseded');
-    return outcome;
+    return {
+      kind: 'success',
+      toolCallId: input.toolCallId,
+      value: result.value,
+      safeSummary: result.safeSummary,
+    };
+  }
+
+  private async requestConfirmation(input: {
+    command: InvokeToolCommand;
+    toolCallId: ToolCallId;
+    revisionId: ToolRevisionId;
+    requestHash: string;
+    safeSummary: SafeToolSummary;
+    policyVersion: string;
+  }): Promise<ToolOutcome> {
+    const approval = await this.approvals.request(input.command.identity, {
+      commandId: approvalCommandId(input.toolCallId),
+      subject: {
+        kind: 'tool_call',
+        subjectRef: input.toolCallId,
+        toolRevisionRef: input.revisionId,
+        requestHash: input.requestHash,
+        safeSummary: input.safeSummary,
+      },
+      policyVersion: input.policyVersion,
+    });
+    const linked = await this.pool.query(
+      `UPDATE tool_calls SET approval_id = $3
+       WHERE organization_id = $1 AND id = $2
+         AND status = 'awaiting_confirmation'
+         AND (approval_id IS NULL OR approval_id = $3)`,
+      [input.command.identity.organizationId, input.toolCallId, approval.value.id],
+    );
+    if (linked.rowCount !== 1) {
+      throw new ToolPersistenceError('Tool Approval link was superseded');
+    }
+    return {
+      kind: 'confirmation_required',
+      toolCallId: input.toolCallId,
+      approval: approval.value,
+      safeSummary: input.safeSummary,
+    };
   }
 
   async resume(command: ResumeToolCallCommand): Promise<ToolOutcome> {
     const selected = await this.pool.query<ToolCallRow>(
       `SELECT * FROM tool_calls
-       WHERE organization_id = $1 AND id = $2`,
-      [command.identity.organizationId, command.toolCallId],
+       WHERE organization_id = $1 AND id = $2 AND initiating_principal_id = $3`,
+      [command.identity.organizationId, command.toolCallId, command.identity.principalId],
     );
     const call = selected.rows[0];
     if (!call || !call.approval_id) throw new ToolInvocationConflictError();
@@ -461,90 +572,25 @@ export class PostgresToolRuntime implements ToolRuntime {
     );
     if (started.rowCount !== 1) throw new ToolPersistenceError('Tool resume was superseded');
 
-    let result: ToolProviderResult;
-    try {
-      result = await provider.execute({
-        toolCallId: command.toolCallId,
-        revision: descriptor(revision),
-        runId: call.run_id,
-        invocationId: call.invocation_id,
-        input: call.request_payload,
-        idempotencyKey: call.idempotency_key,
-        signal: command.signal,
-      });
-    } catch {
-      const uncertain = revision.effect === 'non_idempotent_write';
-      const failure = uncertain
-        ? { code: 'external_effect_unknown', message: 'The external effect is unknown.', retryable: false }
-        : { code: 'provider_failed', message: 'The Tool Provider failed.', retryable: true };
-      const failed = await this.pool.query(
-        `WITH attempt AS (
-           UPDATE tool_dispatch_attempts SET status = $3, failure = $4,
-             completed_at = clock_timestamp()
-           WHERE organization_id = $1 AND tool_call_id = $2 AND status = 'running'
-         )
-         UPDATE tool_calls SET status = $5, failure = $4,
-           completed_at = clock_timestamp()
-         WHERE organization_id = $1 AND id = $2 AND status = 'running'`,
-        [command.identity.organizationId, command.toolCallId,
-          uncertain ? 'uncertain' : 'failed', JSON.stringify(failure),
-          uncertain ? 'requires_review' : 'failed'],
-      );
-      if (failed.rowCount !== 1) throw new ToolPersistenceError('Tool failure could not be fenced');
-      return uncertain
-        ? {
-          kind: 'requires_review',
-          toolCallId: command.toolCallId,
-          failure: {
-            code: 'external_effect_unknown',
-            message: 'The external effect is unknown.',
-            retryable: false,
-          },
-        }
-        : {
-          kind: 'failed',
-          toolCallId: command.toolCallId,
-          failure: {
-            code: 'provider_failed',
-            message: 'The Tool Provider failed.',
-            retryable: true,
-          },
-        };
-    }
-    const outcomePayload = serializeBounded(result.value, MAX_TOOL_PAYLOAD_BYTES);
-    const outcomeSummary = validateSummary(result.safeSummary);
-    let completed;
-    try {
-      completed = await this.pool.query(
-        `WITH attempt AS (
-           UPDATE tool_dispatch_attempts SET status = 'succeeded',
-             completed_at = clock_timestamp()
-           WHERE organization_id = $1 AND tool_call_id = $2 AND status = 'running'
-         )
-         UPDATE tool_calls SET status = 'succeeded', outcome_payload = $3,
-           outcome_summary = $4, external_operation_id = $5,
-           completed_at = clock_timestamp()
-         WHERE organization_id = $1 AND id = $2 AND status = 'running'`,
-        [command.identity.organizationId, command.toolCallId, outcomePayload,
-          outcomeSummary, result.externalOperationId ?? null],
-      );
-    } catch {
-      throw new ToolPersistenceError('Tool success could not be persisted');
-    }
-    if (completed.rowCount !== 1) throw new ToolPersistenceError('Tool success was superseded');
-    return {
-      kind: 'success',
+    return this.dispatch({
+      organizationId: command.identity.organizationId,
       toolCallId: command.toolCallId,
-      value: result.value,
-      safeSummary: result.safeSummary,
-    };
+      revision,
+      provider,
+      runId: call.run_id,
+      invocationId: call.invocation_id,
+      requestPayload: call.request_payload,
+      idempotencyKey: call.idempotency_key,
+      signal: command.signal,
+    });
   }
 
-  async listCalls(organizationId: OrganizationId, runId: string): Promise<ToolCall[]> {
+  async listCalls(identity: RequestIdentity, runId: string): Promise<ToolCall[]> {
     const result = await this.pool.query<ToolCallRow>(
       `SELECT * FROM tool_calls
-       WHERE organization_id = $1 AND run_id = $2 ORDER BY created_at`,
-      [organizationId, runId],
+       WHERE organization_id = $1 AND initiating_principal_id = $2 AND run_id = $3
+       ORDER BY created_at`,
+      [identity.organizationId, identity.principalId, runId],
     );
     return result.rows.map(mapCall);
   }

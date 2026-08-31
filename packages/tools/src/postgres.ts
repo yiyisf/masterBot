@@ -21,6 +21,7 @@ interface ToolRevisionRow {
   name: string;
   description: string;
   input_schema: Readonly<Record<string, unknown>>;
+  output_schema: Readonly<Record<string, unknown>>;
   effect: ToolEffect;
   recovery: ToolRecovery;
   risks: ToolRisk[];
@@ -40,6 +41,7 @@ function mapDescriptor(row: ToolRevisionRow): ToolDescriptor {
     name: row.name,
     description: row.description,
     inputSchema: row.input_schema,
+    outputSchema: row.output_schema,
     effect: row.effect,
     recovery: row.recovery,
     risks: row.risks,
@@ -66,13 +68,13 @@ export class PostgresToolCatalog implements ToolCatalog {
         await client.query(
           `INSERT INTO tool_revisions (
              id, organization_id, capability_id, name, description,
-             input_schema, effect, recovery, risks, provider_key, config_hash
-           ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+             input_schema, output_schema, effect, recovery, risks, provider_key, config_hash
+           ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
            ON CONFLICT (id) DO NOTHING`,
           [revision.id, organizationId, revision.capabilityId,
             revision.name, revision.description, JSON.stringify(revision.inputSchema),
-            revision.effect, revision.recovery, JSON.stringify(revision.risks),
-            revision.providerKey, configHash],
+            JSON.stringify(revision.outputSchema), revision.effect, revision.recovery,
+            JSON.stringify(revision.risks), revision.providerKey, configHash],
         );
         const stored = await client.query<{ config_hash: string }>(
           `SELECT config_hash FROM tool_revisions
