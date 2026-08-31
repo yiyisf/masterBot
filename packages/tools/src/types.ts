@@ -62,6 +62,7 @@ export type ToolProviderResult = {
 
 export interface ToolProvider {
   readonly key: string;
+  summarize(input: unknown): SafeToolSummary;
   execute(request: ToolProviderRequest): Promise<ToolProviderResult>;
 }
 
@@ -75,7 +76,6 @@ export interface InvokeToolCommand {
   modelRequestId: string;
   capabilityId: string;
   input: unknown;
-  safeRequestSummary: SafeToolSummary;
   signal: AbortSignal;
 }
 
@@ -91,6 +91,16 @@ export type ToolOutcome =
     toolCallId: ToolCallId;
     approval: Approval;
     safeSummary: SafeToolSummary;
+  }
+  | {
+    kind: 'failed';
+    toolCallId: ToolCallId;
+    failure: { code: 'provider_failed'; message: string; retryable: boolean };
+  }
+  | {
+    kind: 'requires_review';
+    toolCallId: ToolCallId;
+    failure: { code: 'external_effect_unknown'; message: string; retryable: false };
   };
 
 export interface ToolCall {
@@ -100,7 +110,7 @@ export interface ToolCall {
   invocationId: string;
   capabilityId: string;
   revisionId: ToolRevisionId;
-  status: 'running' | 'succeeded' | 'awaiting_confirmation';
+  status: 'running' | 'succeeded' | 'failed' | 'requires_review' | 'awaiting_confirmation';
   idempotencyKey: string;
   requestHash: string;
   requestSummary: SafeToolSummary;

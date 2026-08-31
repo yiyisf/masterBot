@@ -109,12 +109,17 @@ describe('PostgresToolCatalog', () => {
     });
 
     let runtime: PostgresToolRuntime;
+    let failProvider = false;
     const provider: ToolProvider = {
       key: 'test:current-time',
+      summarize() {
+        return { title: 'Read current time', details: {} };
+      },
       async execute(request) {
         const calls = await runtime.listCalls(identity.organizationId, request.runId);
-        expect(calls).toHaveLength(1);
-        expect(calls[0]).toMatchObject({ status: 'running', idempotencyKey: request.idempotencyKey });
+        expect(calls.find((call) => call.id === request.toolCallId))
+          .toMatchObject({ status: 'running', idempotencyKey: request.idempotencyKey });
+        if (failProvider) throw new Error('raw provider secret');
         return {
           kind: 'success',
           value: { iso: '2026-08-30T00:00:00.000Z' },
@@ -129,25 +134,36 @@ describe('PostgresToolCatalog', () => {
       [provider],
     );
     const runId = randomUUID();
-    const outcome = await runtime.invoke({
+    const baseCommand = {
       identity,
       agentRevisionId: agentRevisionId(randomUUID()),
       grantId,
       principalEntitlements: ['enterprise_assistant.use_governed_tools'],
       runId,
       invocationId: randomUUID(),
-      modelRequestId: 'model-tool-request-1',
       capabilityId: 'cmaster.utility.current_time:v1',
       input: {},
-      safeRequestSummary: { title: 'Read current time', details: {} },
       signal: new AbortController().signal,
-    });
+    } as const;
+    const outcome = await runtime.invoke({ ...baseCommand, modelRequestId: 'model-tool-request-1' });
 
     expect(outcome).toMatchObject({
       kind: 'success',
       value: { iso: '2026-08-30T00:00:00.000Z' },
     });
-    expect((await runtime.listCalls(identity.organizationId, runId))[0]?.status).toBe('succeeded');
+    failProvider = true;
+    const failure = await runtime.invoke({ ...baseCommand, modelRequestId: 'model-tool-request-2' });
+    expect(failure).toEqual({
+      kind: 'failed',
+      toolCallId: expect.any(String),
+      failure: {
+        code: 'provider_failed',
+        message: 'The Tool Provider failed.',
+        retryable: true,
+      },
+    });
+    expect((await runtime.listCalls(identity.organizationId, runId)).map((call) => call.status))
+      .toEqual(['succeeded', 'failed']);
   });
 
   it('persists Employee Confirmation before an open-world Provider can execute', async () => {
@@ -177,6 +193,12 @@ describe('PostgresToolCatalog', () => {
     });
     const provider: ToolProvider = {
       key: 'test:http-fetch',
+      summarize() {
+        return {
+          title: 'Fetch approved HTTPS content',
+          details: { host: 'docs.example.test', path: '/guide', queryKeys: 'token' },
+        };
+      },
       async execute() {
         throw new Error('Provider must not execute before Employee Confirmation');
       },
@@ -189,7 +211,7 @@ describe('PostgresToolCatalog', () => {
     );
     const runId = randomUUID();
 
-    const outcome = await runtime.invoke({
+    const command = {
       identity,
       agentRevisionId: agentRevisionId(randomUUID()),
       grantId,
@@ -199,14 +221,13 @@ describe('PostgresToolCatalog', () => {
       modelRequestId: 'model-tool-request-confirmation',
       capabilityId: 'cmaster.http.fetch:v1',
       input: { url: 'https://docs.example.test/guide?token=private' },
-      safeRequestSummary: {
-        title: 'Fetch approved HTTPS content',
-        details: { host: 'docs.example.test', path: '/guide', queryKeys: 'token' },
-      },
       signal: new AbortController().signal,
-    });
+    } as const;
+    const outcome = await runtime.invoke(command);
+    const replayed = await runtime.invoke(command);
 
     expect(outcome).toMatchObject({ kind: 'confirmation_required', approval: { status: 'pending' } });
+    expect(replayed).toEqual(outcome);
     const call = (await runtime.listCalls(identity.organizationId, runId))[0];
     expect(call).toMatchObject({ status: 'awaiting_confirmation' });
     expect(call?.requestSummary.details).toEqual({

@@ -48,6 +48,7 @@ export interface CommandResult<Value> {
  */
 export interface ApprovalModule {
   request(identity: RequestIdentity, command: RequestApprovalCommand): Promise<CommandResult<Approval>>;
+  get(identity: RequestIdentity, approvalId: ApprovalId): Promise<Approval>;
   resolve(
     identity: RequestIdentity,
     approvalId: ApprovalId,

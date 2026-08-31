@@ -108,6 +108,17 @@ export class PostgresApprovalModule implements ApprovalModule {
     }
   }
 
+  async get(identity: RequestIdentity, approvalId: ApprovalId): Promise<Approval> {
+    const result = await this.pool.query<ApprovalRow>(
+      `SELECT * FROM approvals
+       WHERE organization_id = $1 AND id = $2 AND initiating_principal_id = $3`,
+      [identity.organizationId, approvalId, identity.principalId],
+    );
+    const approval = result.rows[0];
+    if (!approval) throw new ApprovalNotFoundError();
+    return mapApproval(approval);
+  }
+
   async resolve(
     identity: RequestIdentity,
     approvalId: ApprovalId,
