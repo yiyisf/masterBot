@@ -1,5 +1,5 @@
 import type { AgentRevisionId } from '@cmaster/agents';
-import type { Approval } from '@cmaster/governance';
+import type { Approval, ApprovalCommandId } from '@cmaster/governance';
 import type { OrganizationId, RequestIdentity } from '@cmaster/identity';
 import type { Brand } from '@cmaster/kernel';
 
@@ -79,6 +79,17 @@ export interface InvokeToolCommand {
   signal: AbortSignal;
 }
 
+export interface ResumeToolCallCommand {
+  identity: RequestIdentity;
+  toolCallId: ToolCallId;
+  commandId: ApprovalCommandId;
+  response: 'confirm' | 'reject';
+  agentRevisionId: AgentRevisionId;
+  grantId: ToolGrantId;
+  principalEntitlements: readonly string[];
+  signal: AbortSignal;
+}
+
 export type ToolOutcome =
   | {
     kind: 'success';
@@ -91,6 +102,11 @@ export type ToolOutcome =
     toolCallId: ToolCallId;
     approval: Approval;
     safeSummary: SafeToolSummary;
+  }
+  | {
+    kind: 'denied';
+    toolCallId: ToolCallId;
+    reason: 'employee_rejected' | 'authorization_revoked';
   }
   | {
     kind: 'failed';
@@ -110,7 +126,7 @@ export interface ToolCall {
   invocationId: string;
   capabilityId: string;
   revisionId: ToolRevisionId;
-  status: 'running' | 'succeeded' | 'failed' | 'requires_review' | 'awaiting_confirmation';
+  status: 'running' | 'succeeded' | 'failed' | 'denied' | 'requires_review' | 'awaiting_confirmation';
   idempotencyKey: string;
   requestHash: string;
   requestSummary: SafeToolSummary;
@@ -119,6 +135,7 @@ export interface ToolCall {
 
 export interface ToolRuntime {
   invoke(command: InvokeToolCommand): Promise<ToolOutcome>;
+  resume(command: ResumeToolCallCommand): Promise<ToolOutcome>;
   listCalls(organizationId: OrganizationId, runId: string): Promise<ToolCall[]>;
 }
 
@@ -133,10 +150,12 @@ export interface ListGrantedTools {
  */
 export interface ToolCatalog {
   provision(organizationId: OrganizationId, input: ToolCatalogProvisioning): Promise<void>;
+  deactivate(organizationId: OrganizationId, revisionId: ToolRevisionId): Promise<void>;
   list(query: ListGrantedTools): Promise<ToolDescriptor[]>;
 }
 
 export class ToolProvisioningConflictError extends Error {}
+export class ToolRevisionNotFoundError extends Error {}
 
 export function toolRevisionId(value: string): ToolRevisionId {
   return value as ToolRevisionId;

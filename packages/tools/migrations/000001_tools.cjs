@@ -20,7 +20,7 @@ exports.up = (pgm) => {
         CHECK (recovery IN ('retry_same_call', 'idempotency_key', 'reconcile', 'manual_review')),
       risks jsonb NOT NULL,
       provider_key text NOT NULL,
-      status text NOT NULL DEFAULT 'active' CHECK (status = 'active'),
+      status text NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'inactive')),
       config_hash char(64) NOT NULL,
       created_at timestamptz NOT NULL DEFAULT clock_timestamp(),
       UNIQUE (organization_id, id),

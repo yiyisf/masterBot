@@ -1,9 +1,15 @@
 import { randomUUID } from 'node:crypto';
 import { agentRevisionId } from '@cmaster/agents';
-import { PostgresApprovalModule, Slice3BaselinePolicy } from '@cmaster/governance';
+import {
+  approvalCommandId,
+  PostgresApprovalModule,
+  Slice3BaselinePolicy,
+  type PolicyModule,
+} from '@cmaster/governance';
 import {
   PostgresToolCatalog,
   PostgresToolRuntime,
+  ToolInputValidationError,
   toolGrantId,
   toolRevisionId,
   type ToolProvider,
@@ -80,6 +86,9 @@ describe('PostgresToolCatalog', () => {
         risks: [],
       },
     ]);
+
+    await catalog.deactivate(organization, currentTimeRevisionId);
+    expect(await catalog.list({ organizationId: organization, grantId })).toEqual([]);
   });
 
   it('persists a running ToolCall and stable idempotency key before Provider I/O', async () => {
@@ -109,7 +118,7 @@ describe('PostgresToolCatalog', () => {
     });
 
     let runtime: PostgresToolRuntime;
-    let failProvider = false;
+    let providerMode: 'success' | 'failure' | 'oversized' = 'success';
     const provider: ToolProvider = {
       key: 'test:current-time',
       summarize() {
@@ -119,10 +128,12 @@ describe('PostgresToolCatalog', () => {
         const calls = await runtime.listCalls(identity.organizationId, request.runId);
         expect(calls.find((call) => call.id === request.toolCallId))
           .toMatchObject({ status: 'running', idempotencyKey: request.idempotencyKey });
-        if (failProvider) throw new Error('raw provider secret');
+        if (providerMode === 'failure') throw new Error('raw provider secret');
         return {
           kind: 'success',
-          value: { iso: '2026-08-30T00:00:00.000Z' },
+          value: providerMode === 'oversized'
+            ? { text: 'x'.repeat(64 * 1024) }
+            : { iso: '2026-08-30T00:00:00.000Z' },
           safeSummary: { title: 'Current time returned', details: {} },
         };
       },
@@ -151,7 +162,21 @@ describe('PostgresToolCatalog', () => {
       kind: 'success',
       value: { iso: '2026-08-30T00:00:00.000Z' },
     });
-    failProvider = true;
+    await expect(runtime.invoke({
+      ...baseCommand,
+      modelRequestId: 'model-tool-request-invalid',
+      input: { unexpected: true },
+    })).rejects.toBeInstanceOf(ToolInputValidationError);
+    expect(await runtime.listCalls(identity.organizationId, runId)).toHaveLength(1);
+
+    providerMode = 'oversized';
+    const oversized = await runtime.invoke({
+      ...baseCommand,
+      modelRequestId: 'model-tool-request-oversized',
+    });
+    expect(oversized).toMatchObject({ kind: 'failed', failure: { code: 'provider_failed' } });
+
+    providerMode = 'failure';
     const failure = await runtime.invoke({ ...baseCommand, modelRequestId: 'model-tool-request-2' });
     expect(failure).toEqual({
       kind: 'failed',
@@ -163,7 +188,7 @@ describe('PostgresToolCatalog', () => {
       },
     });
     expect((await runtime.listCalls(identity.organizationId, runId)).map((call) => call.status))
-      .toEqual(['succeeded', 'failed']);
+      .toEqual(['succeeded', 'failed', 'failed']);
   });
 
   it('persists Employee Confirmation before an open-world Provider can execute', async () => {
@@ -177,9 +202,10 @@ describe('PostgresToolCatalog', () => {
     const identity = identityModule.resolveRequest();
     const catalog = new PostgresToolCatalog(pool);
     const grantId = toolGrantId(randomUUID());
+    const httpRevisionId = toolRevisionId(randomUUID());
     await catalog.provision(identity.organizationId, {
       revisions: [{
-        id: toolRevisionId(randomUUID()),
+        id: httpRevisionId,
         capabilityId: 'cmaster.http.fetch:v1',
         name: 'Fetch HTTPS content',
         description: 'Fetches text from an approved HTTPS host.',
@@ -188,9 +214,23 @@ describe('PostgresToolCatalog', () => {
         recovery: 'retry_same_call',
         risks: ['open_world'],
         providerKey: 'test:http-fetch',
+      }, {
+        id: toolRevisionId(randomUUID()),
+        capabilityId: 'test.non_idempotent.write:v1',
+        name: 'Test non-idempotent write',
+        description: 'Integration-only uncertain side effect.',
+        inputSchema: { type: 'object', properties: {}, additionalProperties: false },
+        effect: 'non_idempotent_write',
+        recovery: 'manual_review',
+        risks: ['destructive'],
+        providerKey: 'test:uncertain-write',
       }],
-      grants: [{ id: grantId, capabilityIds: ['cmaster.http.fetch:v1'] }],
+      grants: [{
+        id: grantId,
+        capabilityIds: ['cmaster.http.fetch:v1', 'test.non_idempotent.write:v1'],
+      }],
     });
+    let providerCalls = 0;
     const provider: ToolProvider = {
       key: 'test:http-fetch',
       summarize() {
@@ -200,14 +240,41 @@ describe('PostgresToolCatalog', () => {
         };
       },
       async execute() {
-        throw new Error('Provider must not execute before Employee Confirmation');
+        providerCalls += 1;
+        return {
+          kind: 'success',
+          value: { text: 'approved content' },
+          safeSummary: { title: 'HTTPS content returned', details: {} },
+        };
+      },
+    };
+    const uncertainProvider: ToolProvider = {
+      key: 'test:uncertain-write',
+      summarize() {
+        return { title: 'Perform test write', details: {} };
+      },
+      async execute() {
+        throw new Error('connection lost after dispatch');
+      },
+    };
+    const baseline = new Slice3BaselinePolicy();
+    const policy: PolicyModule = {
+      evaluate(request) {
+        return request.capabilityId === 'test.non_idempotent.write:v1'
+          ? Promise.resolve({
+            effect: 'allow',
+            policyVersion: 'slice3-baseline-v1',
+            reason: 'baseline_tool_allowed',
+            obligations: [{ kind: 'employee_confirmation' }],
+          })
+          : baseline.evaluate(request);
       },
     };
     const runtime = new PostgresToolRuntime(
       pool,
-      new Slice3BaselinePolicy(),
+      policy,
       new PostgresApprovalModule(pool),
-      [provider],
+      [provider, uncertainProvider],
     );
     const runId = randomUUID();
 
@@ -228,10 +295,91 @@ describe('PostgresToolCatalog', () => {
 
     expect(outcome).toMatchObject({ kind: 'confirmation_required', approval: { status: 'pending' } });
     expect(replayed).toEqual(outcome);
-    const call = (await runtime.listCalls(identity.organizationId, runId))[0];
-    expect(call).toMatchObject({ status: 'awaiting_confirmation' });
-    expect(call?.requestSummary.details).toEqual({
+    expect(providerCalls).toBe(0);
+    const waitingCall = (await runtime.listCalls(identity.organizationId, runId))[0];
+    expect(waitingCall).toMatchObject({ status: 'awaiting_confirmation' });
+    expect(waitingCall?.requestSummary.details).toEqual({
       host: 'docs.example.test', path: '/guide', queryKeys: 'token',
     });
+
+    const resumed = await runtime.resume({
+      identity,
+      toolCallId: outcome.toolCallId,
+      commandId: approvalCommandId(randomUUID()),
+      response: 'confirm',
+      agentRevisionId: command.agentRevisionId,
+      grantId,
+      principalEntitlements: command.principalEntitlements,
+      signal: new AbortController().signal,
+    });
+
+    expect(resumed).toMatchObject({ kind: 'success', value: { text: 'approved content' } });
+    expect(providerCalls).toBe(1);
+    expect((await runtime.listCalls(identity.organizationId, runId))[0]?.status).toBe('succeeded');
+
+    const waitingForRejection = await runtime.invoke({
+      ...command,
+      modelRequestId: 'model-tool-request-rejected',
+    });
+    const rejected = await runtime.resume({
+      identity,
+      toolCallId: waitingForRejection.toolCallId,
+      commandId: approvalCommandId(randomUUID()),
+      response: 'reject',
+      agentRevisionId: command.agentRevisionId,
+      grantId,
+      principalEntitlements: command.principalEntitlements,
+      signal: new AbortController().signal,
+    });
+    expect(rejected).toEqual({
+      kind: 'denied',
+      toolCallId: waitingForRejection.toolCallId,
+      reason: 'employee_rejected',
+    });
+    expect(providerCalls).toBe(1);
+
+    const waitingForUncertainWrite = await runtime.invoke({
+      ...command,
+      modelRequestId: 'model-tool-request-uncertain',
+      capabilityId: 'test.non_idempotent.write:v1',
+      input: {},
+    });
+    const uncertain = await runtime.resume({
+      identity,
+      toolCallId: waitingForUncertainWrite.toolCallId,
+      commandId: approvalCommandId(randomUUID()),
+      response: 'confirm',
+      agentRevisionId: command.agentRevisionId,
+      grantId,
+      principalEntitlements: command.principalEntitlements,
+      signal: new AbortController().signal,
+    });
+    expect(uncertain).toMatchObject({
+      kind: 'requires_review',
+      failure: { code: 'external_effect_unknown', retryable: false },
+    });
+
+    const waitingForRevokedRevision = await runtime.invoke({
+      ...command,
+      modelRequestId: 'model-tool-request-revoked',
+    });
+    expect(waitingForRevokedRevision.kind).toBe('confirmation_required');
+    await catalog.deactivate(identity.organizationId, httpRevisionId);
+    const denied = await runtime.resume({
+      identity,
+      toolCallId: waitingForRevokedRevision.toolCallId,
+      commandId: approvalCommandId(randomUUID()),
+      response: 'confirm',
+      agentRevisionId: command.agentRevisionId,
+      grantId,
+      principalEntitlements: command.principalEntitlements,
+      signal: new AbortController().signal,
+    });
+    expect(denied).toEqual({
+      kind: 'denied',
+      toolCallId: waitingForRevokedRevision.toolCallId,
+      reason: 'authorization_revoked',
+    });
+    expect(providerCalls).toBe(1);
   });
 });

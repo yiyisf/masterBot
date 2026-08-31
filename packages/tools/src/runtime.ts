@@ -10,6 +10,7 @@ import { Ajv } from 'ajv/dist/ajv.js';
 import type { Pool, PoolClient } from 'pg';
 import {
   type InvokeToolCommand,
+  type ResumeToolCallCommand,
   type SafeToolSummary,
   type ToolCall,
   type ToolCallId,
@@ -42,8 +43,12 @@ interface ToolCallRow {
   run_id: string;
   invocation_id: string;
   capability_id: string;
+  request_payload: unknown;
+  effect: ToolEffect;
+  recovery: ToolRecovery;
+  risks: ToolRisk[];
   tool_revision_id: string;
-  status: 'running' | 'succeeded' | 'failed' | 'requires_review' | 'awaiting_confirmation';
+  status: 'running' | 'succeeded' | 'failed' | 'denied' | 'requires_review' | 'awaiting_confirmation';
   idempotency_key: string;
   request_hash: string;
   request_summary: SafeToolSummary;
@@ -112,7 +117,14 @@ function mapCall(row: ToolCallRow): ToolCall {
       value: row.outcome_payload,
       safeSummary: row.outcome_summary,
     }
-    : row.status === 'failed'
+    : row.status === 'denied'
+      ? {
+        kind: 'denied',
+        toolCallId: row.id as ToolCallId,
+        reason: (row.outcome_payload as { reason?: 'employee_rejected' | 'authorization_revoked' } | null)?.reason
+          ?? 'authorization_revoked',
+      }
+      : row.status === 'failed'
       ? {
         kind: 'failed',
         toolCallId: row.id as ToolCallId,
@@ -275,11 +287,15 @@ export class PostgresToolRuntime implements ToolRuntime {
         },
         policyVersion: decision.policyVersion,
       });
-      await this.pool.query(
+      const linked = await this.pool.query(
         `UPDATE tool_calls SET approval_id = $3
-         WHERE organization_id = $1 AND id = $2 AND status = 'awaiting_confirmation'`,
+         WHERE organization_id = $1 AND id = $2
+           AND status = 'awaiting_confirmation' AND approval_id IS NULL`,
         [command.identity.organizationId, toolCallId, approval.value.id],
       );
+      if (linked.rowCount !== 1) {
+        throw new ToolPersistenceError('Tool Approval link was superseded');
+      }
       return {
         kind: 'confirmation_required',
         toolCallId,
@@ -367,6 +383,161 @@ export class PostgresToolRuntime implements ToolRuntime {
     }
     if (completed.rowCount !== 1) throw new ToolPersistenceError('Tool success was superseded');
     return outcome;
+  }
+
+  async resume(command: ResumeToolCallCommand): Promise<ToolOutcome> {
+    const selected = await this.pool.query<ToolCallRow>(
+      `SELECT * FROM tool_calls
+       WHERE organization_id = $1 AND id = $2`,
+      [command.identity.organizationId, command.toolCallId],
+    );
+    const call = selected.rows[0];
+    if (!call || !call.approval_id) throw new ToolInvocationConflictError();
+    const existingOutcome = mapCall(call).outcome;
+    if (existingOutcome) return existingOutcome;
+    if (call.status !== 'awaiting_confirmation') throw new ToolInvocationConflictError();
+
+    const approval = await this.approvals.resolve(
+      command.identity,
+      call.approval_id as ApprovalId,
+      { commandId: command.commandId, response: command.response },
+    );
+    if (approval.value.status === 'rejected') {
+      const denied = await this.pool.query(
+        `UPDATE tool_calls
+         SET status = 'denied', outcome_payload = $3, completed_at = clock_timestamp()
+         WHERE organization_id = $1 AND id = $2 AND status = 'awaiting_confirmation'`,
+        [command.identity.organizationId, command.toolCallId,
+          JSON.stringify({ reason: 'employee_rejected' })],
+      );
+      if (denied.rowCount !== 1) throw new ToolPersistenceError('Tool rejection was superseded');
+      return { kind: 'denied', toolCallId: command.toolCallId, reason: 'employee_rejected' };
+    }
+
+    const revisionResult = await this.pool.query<RuntimeRevisionRow>(
+      `SELECT r.* FROM tool_revisions r
+       JOIN tool_grants g
+         ON g.organization_id = r.organization_id AND g.id = $2
+       WHERE r.organization_id = $1 AND r.id = $3
+         AND r.capability_id = $4 AND r.status = 'active'
+         AND g.capability_ids ? r.capability_id`,
+      [command.identity.organizationId, command.grantId,
+        call.tool_revision_id, call.capability_id],
+    );
+    const revision = revisionResult.rows[0];
+    const decision = await this.policy.evaluate({
+      organizationId: command.identity.organizationId,
+      principalId: command.identity.principalId,
+      agentRevisionId: command.agentRevisionId,
+      principalEntitlements: command.principalEntitlements,
+      agentGranted: revision !== undefined,
+      toolRevisionActive: revision !== undefined,
+      capabilityId: call.capability_id,
+    });
+    if (decision.effect === 'deny' || !revision) {
+      const denied = await this.pool.query(
+        `UPDATE tool_calls
+         SET status = 'denied', outcome_payload = $3, completed_at = clock_timestamp()
+         WHERE organization_id = $1 AND id = $2 AND status = 'awaiting_confirmation'`,
+        [command.identity.organizationId, command.toolCallId,
+          JSON.stringify({ reason: 'authorization_revoked' })],
+      );
+      if (denied.rowCount !== 1) throw new ToolPersistenceError('Tool denial was superseded');
+      return { kind: 'denied', toolCallId: command.toolCallId, reason: 'authorization_revoked' };
+    }
+    const provider = this.providers.get(revision.provider_key);
+    if (!provider) throw new ToolProviderUnavailableError();
+    const started = await this.pool.query(
+      `WITH started_call AS (
+         UPDATE tool_calls SET status = 'running'
+         WHERE organization_id = $1 AND id = $2 AND status = 'awaiting_confirmation'
+         RETURNING id
+       )
+       INSERT INTO tool_dispatch_attempts (
+         id, organization_id, tool_call_id, attempt_number, status
+       ) SELECT $3, $1, id, 1, 'running' FROM started_call
+       RETURNING tool_call_id`,
+      [command.identity.organizationId, command.toolCallId, randomUUID()],
+    );
+    if (started.rowCount !== 1) throw new ToolPersistenceError('Tool resume was superseded');
+
+    let result: ToolProviderResult;
+    try {
+      result = await provider.execute({
+        toolCallId: command.toolCallId,
+        revision: descriptor(revision),
+        runId: call.run_id,
+        invocationId: call.invocation_id,
+        input: call.request_payload,
+        idempotencyKey: call.idempotency_key,
+        signal: command.signal,
+      });
+    } catch {
+      const uncertain = revision.effect === 'non_idempotent_write';
+      const failure = uncertain
+        ? { code: 'external_effect_unknown', message: 'The external effect is unknown.', retryable: false }
+        : { code: 'provider_failed', message: 'The Tool Provider failed.', retryable: true };
+      const failed = await this.pool.query(
+        `WITH attempt AS (
+           UPDATE tool_dispatch_attempts SET status = $3, failure = $4,
+             completed_at = clock_timestamp()
+           WHERE organization_id = $1 AND tool_call_id = $2 AND status = 'running'
+         )
+         UPDATE tool_calls SET status = $5, failure = $4,
+           completed_at = clock_timestamp()
+         WHERE organization_id = $1 AND id = $2 AND status = 'running'`,
+        [command.identity.organizationId, command.toolCallId,
+          uncertain ? 'uncertain' : 'failed', JSON.stringify(failure),
+          uncertain ? 'requires_review' : 'failed'],
+      );
+      if (failed.rowCount !== 1) throw new ToolPersistenceError('Tool failure could not be fenced');
+      return uncertain
+        ? {
+          kind: 'requires_review',
+          toolCallId: command.toolCallId,
+          failure: {
+            code: 'external_effect_unknown',
+            message: 'The external effect is unknown.',
+            retryable: false,
+          },
+        }
+        : {
+          kind: 'failed',
+          toolCallId: command.toolCallId,
+          failure: {
+            code: 'provider_failed',
+            message: 'The Tool Provider failed.',
+            retryable: true,
+          },
+        };
+    }
+    const outcomePayload = serializeBounded(result.value, MAX_TOOL_PAYLOAD_BYTES);
+    const outcomeSummary = validateSummary(result.safeSummary);
+    let completed;
+    try {
+      completed = await this.pool.query(
+        `WITH attempt AS (
+           UPDATE tool_dispatch_attempts SET status = 'succeeded',
+             completed_at = clock_timestamp()
+           WHERE organization_id = $1 AND tool_call_id = $2 AND status = 'running'
+         )
+         UPDATE tool_calls SET status = 'succeeded', outcome_payload = $3,
+           outcome_summary = $4, external_operation_id = $5,
+           completed_at = clock_timestamp()
+         WHERE organization_id = $1 AND id = $2 AND status = 'running'`,
+        [command.identity.organizationId, command.toolCallId, outcomePayload,
+          outcomeSummary, result.externalOperationId ?? null],
+      );
+    } catch {
+      throw new ToolPersistenceError('Tool success could not be persisted');
+    }
+    if (completed.rowCount !== 1) throw new ToolPersistenceError('Tool success was superseded');
+    return {
+      kind: 'success',
+      toolCallId: command.toolCallId,
+      value: result.value,
+      safeSummary: result.safeSummary,
+    };
   }
 
   async listCalls(organizationId: OrganizationId, runId: string): Promise<ToolCall[]> {

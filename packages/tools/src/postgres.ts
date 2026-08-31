@@ -9,6 +9,7 @@ import {
   type ToolEffect,
   ToolProvisioningConflictError,
   type ToolRecovery,
+  ToolRevisionNotFoundError,
   type ToolRevisionId,
   type ToolRisk,
 } from './types.js';
@@ -108,6 +109,18 @@ export class PostgresToolCatalog implements ToolCatalog {
     } finally {
       client.release();
     }
+  }
+
+  async deactivate(
+    organizationId: OrganizationId,
+    revisionId: ToolRevisionId,
+  ): Promise<void> {
+    const result = await this.pool.query(
+      `UPDATE tool_revisions SET status = 'inactive'
+       WHERE organization_id = $1 AND id = $2 AND status = 'active'`,
+      [organizationId, revisionId],
+    );
+    if (result.rowCount !== 1) throw new ToolRevisionNotFoundError();
   }
 
   async list(query: ListGrantedTools): Promise<ToolDescriptor[]> {
