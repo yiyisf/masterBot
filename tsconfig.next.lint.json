@@ -10,5 +10,9 @@
     "packages/**/*.ts",
     "tooling/**/*.ts"
   ],
-  "exclude": []
+  "exclude": [
+    "**/dist/**",
+    "**/.next/**",
+    "**/node_modules/**"
+  ]
 }

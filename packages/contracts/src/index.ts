@@ -17,6 +17,8 @@ export {
   acceptRunResponseSchema,
   cancelRunResponseSchema,
   createRunRequestSchema,
+  resolveInterruptRequestSchema,
+  resolveInterruptResponseSchema,
   runEventEnvelopeSchema,
   runFailureSchema,
   runSnapshotSchema,

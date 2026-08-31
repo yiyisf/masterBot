@@ -9,9 +9,12 @@ export type InvocationId = Brand<string, 'InvocationId'>;
 export type RunEventId = Brand<string, 'RunEventId'>;
 export type DispatchAttemptId = Brand<string, 'DispatchAttemptId'>;
 export type RunCommandId = Brand<string, 'RunCommandId'>;
+export type InterruptId = Brand<string, 'InterruptId'>;
 
-export type RunStatus = 'accepted' | 'queued' | 'running' | 'succeeded' | 'failed' | 'cancelled';
-export type InvocationStatus = 'pending' | 'running' | 'succeeded' | 'failed' | 'cancelled';
+export type RunStatus = 'accepted' | 'queued' | 'running' | 'waiting' | 'succeeded' | 'failed' | 'cancelled';
+export type InvocationStatus = 'pending' | 'running' | 'interrupted' | 'succeeded' | 'failed' | 'cancelled';
+export type InterruptKind = 'tool_confirmation' | 'tool_outcome_review';
+export type InterruptResponse = 'confirm' | 'reject' | 'continue_with_uncertainty';
 export type RunEventType =
   | 'run.accepted'
   | 'invocation.created'
@@ -19,6 +22,10 @@ export type RunEventType =
   | 'run.started'
   | 'invocation.started'
   | 'run.recovery_started'
+  | 'interrupt.requested'
+  | 'interrupt.resolved'
+  | 'run.waiting'
+  | 'run.resumed'
   | 'model.selected'
   | 'model.fallback_selected'
   | 'model.output_discarded'
@@ -40,6 +47,36 @@ export interface RunFailure {
   code: 'engine_failed' | 'model_failed' | 'dispatch_attempts_exhausted' | 'output_delivery_failed';
   message: string;
   retryable: boolean;
+}
+
+export interface ActiveInterrupt {
+  id: InterruptId;
+  kind: InterruptKind;
+  status: 'pending';
+  subjectRef: string;
+  safeSubjectSummary: { title: string; details: Readonly<Record<string, string>> };
+  allowedResponses: readonly InterruptResponse[];
+}
+
+export interface ExecutionCheckpoint {
+  schemaVersion: 1;
+  engineKind: 'echo' | 'ai-sdk';
+  engineVersion: '1';
+  toolCallId: string;
+  outcome: 'confirmation_required' | 'requires_review';
+}
+
+export interface RequestInterruptCommand {
+  kind: InterruptKind;
+  subjectRef: string;
+  safeSubjectSummary: ActiveInterrupt['safeSubjectSummary'];
+  allowedResponses: readonly InterruptResponse[];
+  checkpoint: ExecutionCheckpoint;
+}
+
+export interface ResolveInterruptCommand {
+  commandId: RunCommandId;
+  response: InterruptResponse;
 }
 
 export interface RunSnapshot {
@@ -66,6 +103,7 @@ export interface RunSnapshot {
   };
   usage?: ModelUsage;
   failure?: RunFailure;
+  activeInterrupt?: ActiveInterrupt;
   createdAt: Date;
   startedAt?: Date;
   completedAt?: Date;
@@ -121,6 +159,12 @@ export interface ExecutionModule {
   acceptRun(identity: RequestIdentity, command: AcceptRunCommand): Promise<CommandResult<RunSnapshot>>;
   getRun(identity: RequestIdentity, runId: RunId): Promise<RunSnapshot>;
   cancelRun(identity: RequestIdentity, runId: RunId, commandId: RunCommandId): Promise<CancelRunResult>;
+  resolveInterrupt(
+    identity: RequestIdentity,
+    runId: RunId,
+    interruptId: InterruptId,
+    command: ResolveInterruptCommand,
+  ): Promise<CommandResult<RunSnapshot>>;
   readEvents(identity: RequestIdentity, runId: RunId, afterSequence: number): Promise<RunEventEnvelope[]>;
 }
 
@@ -133,4 +177,7 @@ export function runId(value: string): RunId {
 }
 export function runCommandId(value: string): RunCommandId {
   return value as RunCommandId;
+}
+export function interruptId(value: string): InterruptId {
+  return value as InterruptId;
 }

@@ -36,7 +36,10 @@ test('PostgreSQL adapters query only tables owned by their Module', async () => 
     identity: new Set(['organizations', 'principals']),
     agents: new Set(['agents', 'agent_revisions']),
     conversations: new Set(['conversations', 'messages']),
-    execution: new Set(['runs', 'invocations', 'run_events', 'execution_outbox', 'run_dispatch', 'run_command_receipts']),
+    execution: new Set([
+      'runs', 'invocations', 'run_events', 'execution_outbox', 'run_dispatch',
+      'run_command_receipts', 'execution_checkpoints', 'execution_interrupts',
+    ]),
     models: new Set(['model_profiles', 'model_calls']),
     governance: new Set(['approvals']),
     tools: new Set([

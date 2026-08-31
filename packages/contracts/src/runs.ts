@@ -2,7 +2,7 @@ import { z } from 'zod';
 import { isoDateTimeSchema, uuidSchema } from './conversations.js';
 
 export const runStatusSchema = z.enum([
-  'accepted', 'queued', 'running', 'succeeded', 'failed', 'cancelled',
+  'accepted', 'queued', 'running', 'waiting', 'succeeded', 'failed', 'cancelled',
 ]);
 export const runFailureSchema = z.object({
   code: z.enum(['engine_failed', 'model_failed', 'dispatch_attempts_exhausted', 'output_delivery_failed']),
@@ -27,7 +27,7 @@ export const runSnapshotSchema = z.object({
   engine: z.object({ kind: z.enum(['echo', 'ai-sdk']), version: z.literal('1') }),
   rootInvocation: z.object({
     id: uuidSchema,
-    status: z.enum(['pending', 'running', 'succeeded', 'failed', 'cancelled']),
+    status: z.enum(['pending', 'running', 'interrupted', 'succeeded', 'failed', 'cancelled']),
   }),
   status: runStatusSchema,
   cancellable: z.boolean(),
@@ -44,6 +44,19 @@ export const runSnapshotSchema = z.object({
     totalTokens: z.number().int().nonnegative(),
   }).optional(),
   failure: runFailureSchema.optional(),
+  activeInterrupt: z.object({
+    id: uuidSchema,
+    kind: z.enum(['tool_confirmation', 'tool_outcome_review']),
+    status: z.literal('pending'),
+    subjectRef: z.string().min(1),
+    safeSubjectSummary: z.object({
+      title: z.string().min(1),
+      details: z.record(z.string(), z.string()),
+    }),
+    allowedResponses: z.array(z.enum([
+      'confirm', 'reject', 'continue_with_uncertainty',
+    ])).min(1),
+  }).optional(),
   createdAt: isoDateTimeSchema,
   startedAt: isoDateTimeSchema.optional(),
   completedAt: isoDateTimeSchema.optional(),
@@ -62,6 +75,12 @@ export const runEventEnvelopeSchema = z.object({
 });
 export const cancelRunResponseSchema = z.object({
   outcome: z.literal('cancelled'),
+  run: runSnapshotSchema,
+});
+export const resolveInterruptRequestSchema = z.object({
+  response: z.literal('continue_with_uncertainty'),
+});
+export const resolveInterruptResponseSchema = z.object({
   run: runSnapshotSchema,
 });
 

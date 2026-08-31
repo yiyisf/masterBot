@@ -7,6 +7,8 @@ import {
   messagePageSchema,
   messageSchema,
   problemDetailsSchema,
+  resolveInterruptRequestSchema,
+  resolveInterruptResponseSchema,
   runEventEnvelopeSchema,
   runSnapshotSchema,
   uuidSchema,
@@ -23,6 +25,7 @@ import {
   type Message,
 } from '@cmaster/conversations';
 import {
+  interruptId,
   runCommandId,
   runId,
   RunIdempotencyConflictError,
@@ -241,6 +244,23 @@ export function registerRunApi(app: FastifyInstance, dependencies: RunApiDepende
         return problem(reply, request, 409, 'run_cancellation_too_late', 'Cancellation too late', 'The result was already generated and will be delivered.');
       }
       return reply.send({ outcome: 'cancelled', run: runContract(result.run) });
+    } catch (error) {
+      return sendRunApiError(error, request, reply);
+    }
+  });
+
+  app.post('/api/v1/runs/:runId/interrupts/:interruptId/resolve', async (request, reply) => {
+    try {
+      const params = z.object({ runId: uuidSchema, interruptId: uuidSchema }).parse(request.params);
+      const body = resolveInterruptRequestSchema.parse(request.body);
+      const result = await dependencies.execution.resolveInterrupt(
+        dependencies.identity.resolveRequest(), runId(params.runId), interruptId(params.interruptId), {
+          commandId: runCommandId(idempotencyKey(request)),
+          response: body.response,
+        },
+      );
+      reply.header('Idempotency-Replayed', String(result.replayed));
+      return reply.send(resolveInterruptResponseSchema.parse({ run: runContract(result.value) }));
     } catch (error) {
       return sendRunApiError(error, request, reply);
     }

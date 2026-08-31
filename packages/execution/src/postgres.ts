@@ -9,10 +9,15 @@ import {
   type CancelRunResult,
   type CommandResult,
   type DispatchAttemptId,
+  type ExecutionCheckpoint,
   type ExecutionModule,
   type ExecutionProgressEvent,
+  type ActiveInterrupt,
+  type InterruptId,
   type InvocationId,
   type InvocationStatus,
+  type RequestInterruptCommand,
+  type ResolveInterruptCommand,
   type RunCommandId,
   type RunEventEnvelope,
   type RunEventType,
@@ -53,6 +58,12 @@ interface RunRow {
   prepared_output: { text: string } | null;
   output_generation: number;
   has_streamed_output: boolean;
+  interrupt_id: string | null;
+  interrupt_kind: ActiveInterrupt['kind'] | null;
+  interrupt_subject_ref: string | null;
+  interrupt_safe_subject_summary: ActiveInterrupt['safeSubjectSummary'] | null;
+  interrupt_allowed_responses: ActiveInterrupt['allowedResponses'] | null;
+  latest_checkpoint_data: ExecutionCheckpoint | null;
 }
 
 interface EventRow {
@@ -82,6 +93,7 @@ export interface RunLease {
   outputGeneration: number;
   hasStreamedOutput: boolean;
   preparedOutput?: string;
+  checkpoint?: ExecutionCheckpoint;
 }
 
 function digest(value: unknown): string {
@@ -103,7 +115,8 @@ function mapRun(row: RunRow): RunSnapshot {
       status: row.invocation_status,
     },
     status: row.status,
-    cancellable: ['accepted', 'queued', 'running'].includes(row.status) && row.prepared_output === null,
+    cancellable: ['accepted', 'queued', 'running', 'waiting'].includes(row.status)
+      && row.prepared_output === null,
     lastSequence: row.last_sequence,
     ...(row.assistant_message_id === null
       ? {}
@@ -119,6 +132,20 @@ function mapRun(row: RunRow): RunSnapshot {
       }),
     ...(row.model_usage === null ? {} : { usage: row.model_usage }),
     ...(row.failure === null ? {} : { failure: row.failure }),
+    ...(row.interrupt_id === null || row.interrupt_kind === null
+      || row.interrupt_subject_ref === null || row.interrupt_safe_subject_summary === null
+      || row.interrupt_allowed_responses === null
+      ? {}
+      : {
+        activeInterrupt: {
+          id: row.interrupt_id as InterruptId,
+          kind: row.interrupt_kind,
+          status: 'pending' as const,
+          subjectRef: row.interrupt_subject_ref,
+          safeSubjectSummary: row.interrupt_safe_subject_summary,
+          allowedResponses: row.interrupt_allowed_responses,
+        },
+      }),
     createdAt: row.created_at,
     ...(row.started_at === null ? {} : { startedAt: row.started_at }),
     ...(row.completed_at === null ? {} : { completedAt: row.completed_at }),
@@ -141,11 +168,30 @@ function mapEvent(row: EventRow): RunEventEnvelope {
 
 const runSelect = `
   SELECT r.*, i.status AS invocation_status, i.prepared_output,
-         i.output_generation, i.has_streamed_output
+         i.output_generation, i.has_streamed_output,
+         active_interrupt.id AS interrupt_id,
+         active_interrupt.kind AS interrupt_kind,
+         active_interrupt.subject_ref AS interrupt_subject_ref,
+         active_interrupt.safe_subject_summary AS interrupt_safe_subject_summary,
+         active_interrupt.allowed_responses AS interrupt_allowed_responses,
+         latest_checkpoint.checkpoint_data AS latest_checkpoint_data
   FROM runs r
   JOIN invocations i
     ON i.organization_id = r.organization_id
    AND i.id = r.root_invocation_id
+  LEFT JOIN LATERAL (
+    SELECT id, kind, subject_ref, safe_subject_summary, allowed_responses
+    FROM execution_interrupts
+    WHERE organization_id = r.organization_id AND run_id = r.id AND status = 'pending'
+    LIMIT 1
+  ) active_interrupt ON true
+  LEFT JOIN LATERAL (
+    SELECT checkpoint_data
+    FROM execution_checkpoints
+    WHERE organization_id = r.organization_id AND run_id = r.id AND consumed_at IS NULL
+    ORDER BY created_at DESC
+    LIMIT 1
+  ) latest_checkpoint ON true
 `;
 
 async function selectRun(
@@ -340,6 +386,20 @@ export class PostgresExecutionModule implements ExecutionModule {
            WHERE organization_id = $1 AND run_id = $2`,
           [identity.organizationId, runId],
         );
+        const cancelledInterrupt = await client.query<{ id: string }>(
+          `UPDATE execution_interrupts
+           SET status = 'cancelled', resolution = 'run_cancelled',
+             resolution_command_id = $3, resolved_at = clock_timestamp()
+           WHERE organization_id = $1 AND run_id = $2 AND status = 'pending'
+           RETURNING id`,
+          [identity.organizationId, runId, commandId],
+        );
+        if (cancelledInterrupt.rows[0]) {
+          await appendEvent(client, identity.organizationId, runId, 'interrupt.resolved', {
+            interruptId: cancelledInterrupt.rows[0].id,
+            response: 'run_cancelled',
+          }, commandId);
+        }
         await appendEvent(client, identity.organizationId, runId, 'invocation.cancelled', {
           invocationId: row.root_invocation_id,
         }, commandId);
@@ -356,6 +416,146 @@ export class PostgresExecutionModule implements ExecutionModule {
       const current = await selectRun(client, identity.organizationId, runId);
       await client.query('COMMIT');
       return { kind, run: mapRun(current!), replayed: false };
+    } catch (error) {
+      await client.query('ROLLBACK');
+      throw error;
+    } finally {
+      client.release();
+    }
+  }
+
+  async requestInterrupt(
+    lease: RunLease,
+    command: RequestInterruptCommand,
+  ): Promise<ActiveInterrupt> {
+    const client = await this.pool.connect();
+    try {
+      await client.query('BEGIN');
+      await verifyLease(client, lease);
+      const run = await selectRun(client, lease.organizationId, lease.runId, true);
+      if (!run || run.status !== 'running' || run.prepared_output !== null) throw new StaleLeaseError();
+      const checkpointId = randomUUID();
+      const interruptId = randomUUID();
+      await client.query(
+        `INSERT INTO execution_checkpoints (
+           id, organization_id, run_id, invocation_id, schema_version, checkpoint_data
+         ) VALUES ($1, $2, $3, $4, 1, $5)`,
+        [checkpointId, lease.organizationId, lease.runId, lease.invocationId,
+          JSON.stringify(command.checkpoint)],
+      );
+      await client.query(
+        `INSERT INTO execution_interrupts (
+           id, organization_id, run_id, invocation_id, checkpoint_id, kind,
+           subject_ref, safe_subject_summary, allowed_responses
+         ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+        [interruptId, lease.organizationId, lease.runId, lease.invocationId,
+          checkpointId, command.kind, command.subjectRef,
+          JSON.stringify(command.safeSubjectSummary), JSON.stringify(command.allowedResponses)],
+      );
+      await client.query(
+        `UPDATE runs SET status = 'waiting' WHERE organization_id = $1 AND id = $2`,
+        [lease.organizationId, lease.runId],
+      );
+      await client.query(
+        `UPDATE invocations SET status = 'interrupted'
+         WHERE organization_id = $1 AND id = $2`,
+        [lease.organizationId, lease.invocationId],
+      );
+      const released = await client.query(
+        `UPDATE run_dispatch SET status = 'waiting', lease_owner = NULL,
+           lease_token = NULL, lease_expires_at = NULL, updated_at = clock_timestamp()
+         WHERE organization_id = $1 AND run_id = $2 AND lease_token = $3
+         RETURNING run_id`,
+        [lease.organizationId, lease.runId, lease.leaseToken],
+      );
+      if (released.rowCount !== 1) throw new StaleLeaseError();
+      await appendEvent(client, lease.organizationId, lease.runId, 'interrupt.requested', {
+        interruptId, kind: command.kind, subjectRef: command.subjectRef,
+        safeSubjectSummary: command.safeSubjectSummary,
+        allowedResponses: command.allowedResponses,
+      }, lease.attemptId);
+      await appendEvent(client, lease.organizationId, lease.runId, 'run.waiting', {
+        interruptId, reason: command.kind,
+      }, lease.attemptId);
+      const current = await selectRun(client, lease.organizationId, lease.runId);
+      await client.query('COMMIT');
+      if (!current) throw new RunNotFoundError();
+      const activeInterrupt = mapRun(current).activeInterrupt;
+      if (!activeInterrupt) throw new RunNotFoundError();
+      return activeInterrupt;
+    } catch (error) {
+      await client.query('ROLLBACK');
+      throw error;
+    } finally {
+      client.release();
+    }
+  }
+
+  async resolveInterrupt(
+    identity: RequestIdentity,
+    runId: RunId,
+    interruptId: InterruptId,
+    command: ResolveInterruptCommand,
+  ): Promise<CommandResult<RunSnapshot>> {
+    const client = await this.pool.connect();
+    try {
+      await client.query('BEGIN');
+      const run = await selectRun(client, identity.organizationId, runId, true);
+      if (!run || run.initiating_principal_id !== identity.principalId) {
+        throw new RunNotFoundError();
+      }
+      const selected = await client.query<{
+        status: 'pending' | 'resolved' | 'cancelled';
+        allowed_responses: string[];
+        resolution: string | null;
+        resolution_command_id: string | null;
+      }>(
+        `SELECT status, allowed_responses, resolution, resolution_command_id
+         FROM execution_interrupts
+         WHERE organization_id = $1 AND run_id = $2 AND id = $3 FOR UPDATE`,
+        [identity.organizationId, runId, interruptId],
+      );
+      const interrupt = selected.rows[0];
+      if (!interrupt) throw new RunNotFoundError();
+      if (interrupt.status === 'resolved') {
+        if (interrupt.resolution_command_id !== command.commandId
+          || interrupt.resolution !== command.response) throw new RunIdempotencyConflictError();
+        await client.query('COMMIT');
+        return { value: mapRun(run), replayed: true };
+      }
+      if (run.status !== 'waiting' || !interrupt.allowed_responses.includes(command.response)) {
+        throw new RunIdempotencyConflictError();
+      }
+      await client.query(
+        `UPDATE execution_interrupts SET status = 'resolved', resolution = $4,
+           resolution_command_id = $5, resolved_at = clock_timestamp()
+         WHERE organization_id = $1 AND run_id = $2 AND id = $3 AND status = 'pending'`,
+        [identity.organizationId, runId, interruptId, command.response, command.commandId],
+      );
+      await client.query(
+        `UPDATE runs SET status = 'queued' WHERE organization_id = $1 AND id = $2`,
+        [identity.organizationId, runId],
+      );
+      await client.query(
+        `UPDATE invocations SET status = 'pending'
+         WHERE organization_id = $1 AND id = $2 AND status = 'interrupted'`,
+        [identity.organizationId, run.root_invocation_id],
+      );
+      await client.query(
+        `UPDATE run_dispatch SET status = 'pending', available_at = clock_timestamp(),
+           attempt_number = 0, updated_at = clock_timestamp()
+         WHERE organization_id = $1 AND run_id = $2 AND status = 'waiting'`,
+        [identity.organizationId, runId],
+      );
+      await appendEvent(client, identity.organizationId, runId, 'interrupt.resolved', {
+        interruptId, response: command.response,
+      }, command.commandId);
+      await appendEvent(client, identity.organizationId, runId, 'run.resumed', {
+        interruptId,
+      }, command.commandId);
+      const current = await selectRun(client, identity.organizationId, runId);
+      await client.query('COMMIT');
+      return { value: mapRun(current!), replayed: false };
     } catch (error) {
       await client.query('ROLLBACK');
       throw error;
@@ -499,10 +699,16 @@ export class PostgresExecutionModule implements ExecutionModule {
            WHERE organization_id = $1 AND id = $2`,
           [run.organization_id, run.root_invocation_id],
         );
-        await appendEvent(client, run.organization_id, run.id, 'run.started', {}, attemptId);
-        await appendEvent(client, run.organization_id, run.id, 'invocation.started', {
-          invocationId: run.root_invocation_id,
-        }, attemptId);
+        if (run.latest_checkpoint_data === null) {
+          await appendEvent(client, run.organization_id, run.id, 'run.started', {}, attemptId);
+          await appendEvent(client, run.organization_id, run.id, 'invocation.started', {
+            invocationId: run.root_invocation_id,
+          }, attemptId);
+        } else {
+          await appendEvent(client, run.organization_id, run.id, 'run.recovery_started', {
+            attemptNumber, checkpoint: true,
+          }, attemptId);
+        }
       } else if (attemptNumber > 1) {
         await appendEvent(client, run.organization_id, run.id, 'run.recovery_started', {
           attemptNumber,
@@ -524,6 +730,7 @@ export class PostgresExecutionModule implements ExecutionModule {
         outputGeneration: run.output_generation,
         hasStreamedOutput: run.has_streamed_output,
         ...(run.prepared_output === null ? {} : { preparedOutput: run.prepared_output.text }),
+        ...(run.latest_checkpoint_data === null ? {} : { checkpoint: run.latest_checkpoint_data }),
       };
     } catch (error) {
       await client.query('ROLLBACK');
@@ -682,6 +889,11 @@ export class PostgresExecutionModule implements ExecutionModule {
         `UPDATE invocations SET prepared_output = $3, output_ready_at = clock_timestamp()
          WHERE organization_id = $1 AND id = $2`,
         [lease.organizationId, lease.invocationId, JSON.stringify({ text })],
+      );
+      await client.query(
+        `UPDATE execution_checkpoints SET consumed_at = clock_timestamp()
+         WHERE organization_id = $1 AND run_id = $2 AND consumed_at IS NULL`,
+        [lease.organizationId, lease.runId],
       );
       await appendEvent(client, lease.organizationId, lease.runId, 'invocation.output_ready', {
         invocationId: lease.invocationId,
