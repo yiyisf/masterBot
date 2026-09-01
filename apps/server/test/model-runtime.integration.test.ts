@@ -44,7 +44,11 @@ class ScriptedModelAdapter implements ModelAdapter {
   readonly providerKind = 'openai-compatible' as const;
   fallbackCalls = 0;
 
-  constructor(private readonly mode: 'fallback-after-partial' | 'content-refusal' | 'primary-success') {}
+  constructor(private readonly mode:
+    | 'fallback-after-partial'
+    | 'content-refusal'
+    | 'primary-success'
+    | 'tool-request') {}
 
   async *stream(request: ModelAdapterRequest): AsyncIterable<ModelAdapterEvent> {
     if (request.profile.routeRole === 'fallback') {
@@ -54,6 +58,14 @@ class ScriptedModelAdapter implements ModelAdapter {
         type: 'completed',
         usage: { inputTokens: 4, outputTokens: 3, totalTokens: 7 },
       };
+      return;
+    }
+    if (this.mode === 'tool-request') {
+      yield {
+        type: 'tool_requested',
+        request: { requestId: 'provider-call-1', name: 'current_time', input: {} },
+      };
+      yield { type: 'completed', usage: { inputTokens: 3, outputTokens: 1, totalTokens: 4 } };
       return;
     }
     if (this.mode === 'primary-success') {
@@ -172,6 +184,43 @@ async function fixture(adapter: ScriptedModelAdapter, execute = true) {
 }
 
 describe('AI SDK Model Runtime', () => {
+  it('publishes a Model Tool Request only after its ModelCall is durably completed', async () => {
+    const runtime = await fixture(new ScriptedModelAdapter('tool-request'), false);
+    await runtime.worker.relayOne();
+    const snapshot = await runtime.execution.getRun(
+      runtime.identity.resolveRequest(), runtime.runId,
+    );
+    const events = [];
+    for await (const event of runtime.models.stream({
+      organizationId: runtime.identity.resolveRequest().organizationId,
+      runId: runtime.runId,
+      invocationId: snapshot.rootInvocation.id,
+      prompt: 'use current time',
+      tools: [{
+        name: 'current_time',
+        description: 'Returns the current time.',
+        inputSchema: { type: 'object', properties: {}, additionalProperties: false },
+        outputSchema: { type: 'object' },
+      }],
+      signal: new AbortController().signal,
+    })) events.push(event);
+
+    expect(events.map((event) => event.type)).toEqual([
+      'model_selected', 'model_completed', 'tool_requested',
+    ]);
+    expect(events[2]).toMatchObject({
+      type: 'tool_requested',
+      request: { requestId: 'provider-call-1', name: 'current_time', input: {} },
+    });
+    expect((await runtime.models.listCalls(
+      runtime.identity.resolveRequest().organizationId, runtime.runId,
+    ))[0]).toMatchObject({ status: 'succeeded', hadOutput: true });
+    await runtime.execution.cancelRun(
+      runtime.identity.resolveRequest(), runtime.runId, runCommandId(randomUUID()),
+    );
+    await runtime.provider.shutdown();
+  });
+
   it('discards partial Primary output and completes with the audited Fallback', async () => {
     const adapter = new ScriptedModelAdapter('fallback-after-partial');
     const runtime = await fixture(adapter);

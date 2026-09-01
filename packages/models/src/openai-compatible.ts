@@ -1,5 +1,11 @@
 import { createOpenAI } from '@ai-sdk/openai';
-import { APICallError, InvalidPromptError, streamText } from 'ai';
+import {
+  APICallError,
+  InvalidPromptError,
+  dynamicTool,
+  jsonSchema,
+  streamText,
+} from 'ai';
 import type {
   ModelAdapter,
   ModelAdapterEvent,
@@ -72,16 +78,40 @@ export class OpenAICompatibleModelAdapter implements ModelAdapter {
       // 每个 Profile 独立创建 Provider，避免不同企业端点或凭据在进程内串用。
       name: `cmaster-${request.profile.id}`,
     });
+    const tools = request.tools && request.tools.length > 0
+      ? Object.fromEntries(request.tools.map((item) => [
+        item.name,
+        dynamicTool({
+          description: item.description,
+          inputSchema: jsonSchema(item.inputSchema),
+          outputSchema: jsonSchema(item.outputSchema),
+        }),
+      ]))
+      : undefined;
     const result = streamText({
       // OpenAI-compatible gateways 普遍实现 Chat Completions；避免默认切到仅 OpenAI 支持的 Responses API。
       model: provider.chat(request.profile.providerModelId),
       prompt: request.prompt,
+      ...(tools ? { tools } : {}),
       abortSignal: request.signal,
       // 重试和 Fallback 必须由 Model Module 记录，禁止 SDK 在内部静默重试。
       maxRetries: 0,
     });
-    for await (const text of result.textStream) {
-      if (text.length > 0) yield { type: 'text_delta', text };
+    for await (const part of result.fullStream) {
+      if (part.type === 'text-delta' && part.text.length > 0) {
+        yield { type: 'text_delta', text: part.text };
+      } else if (part.type === 'tool-call') {
+        yield {
+          type: 'tool_requested',
+          request: {
+            requestId: part.toolCallId,
+            name: part.toolName,
+            input: part.input,
+          },
+        };
+      } else if (part.type === 'error') {
+        throw part.error;
+      }
     }
     yield { type: 'completed', usage: normalizedUsage(await result.usage) };
   }

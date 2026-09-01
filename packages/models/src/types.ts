@@ -77,11 +77,25 @@ export interface ModelProfileProvisioning {
   costTier: string;
 }
 
+export interface ModelAvailableTool {
+  name: string;
+  description: string;
+  inputSchema: Readonly<Record<string, unknown>>;
+  outputSchema: Readonly<Record<string, unknown>>;
+}
+
+export interface ModelRequestedTool {
+  requestId: string;
+  name: string;
+  input: unknown;
+}
+
 export interface ModelInvocationRequest {
   organizationId: OrganizationId;
   runId: string;
   invocationId: string;
   prompt: string;
+  tools?: readonly ModelAvailableTool[];
   signal: AbortSignal;
 }
 
@@ -91,17 +105,20 @@ export type ModelEvent =
   | { type: 'model_output_discarded'; profileId: ModelProfileId; reason: 'fallback' | 'failure' }
   | { type: 'model_fallback_selected'; fromProfileId: ModelProfileId; toProfile: ModelSelection }
   | { type: 'model_completed'; callId: ModelCallId; profile: ModelSelection; usage: ModelUsage; fallbackUsed: boolean }
+  | { type: 'tool_requested'; request: ModelRequestedTool }
   | { type: 'model_failed'; callId: ModelCallId; profile: ModelSelection; failure: ModelFailure; hadOutput: boolean };
 
 export interface ModelAdapterRequest {
   profile: ModelProfile;
   apiKey: string;
   prompt: string;
+  tools?: readonly ModelAvailableTool[];
   signal: AbortSignal;
 }
 
 export type ModelAdapterEvent =
   | { type: 'text_delta'; text: string }
+  | { type: 'tool_requested'; request: ModelRequestedTool }
   | { type: 'completed'; usage: ModelUsage };
 
 /**

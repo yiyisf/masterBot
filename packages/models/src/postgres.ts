@@ -13,6 +13,7 @@ import type {
   ModelProfile,
   ModelProfileId,
   ModelProfileProvisioning,
+  ModelRequestedTool,
   ModelUsage,
 } from './types.js';
 
@@ -264,13 +265,15 @@ export class PostgresModelGateway implements ModelGateway {
         const apiKey = this.options.credentials.get(profile.credentialRef);
         if (!apiKey) throw new Error(`Credential ${profile.credentialRef} is unavailable`);
         let completedUsage: ModelUsage | undefined;
+        const pendingToolRequests: ModelRequestedTool[] = [];
         for await (const event of this.adapter.stream({
           profile,
           apiKey,
           prompt: request.prompt,
+          ...(request.tools ? { tools: request.tools } : {}),
           signal: request.signal,
         })) {
-          if (event.type === 'text_delta') {
+          if (event.type === 'text_delta' || event.type === 'tool_requested') {
             if (!hadOutput) {
               hadOutput = true;
               const streaming = await this.pool.query(
@@ -279,7 +282,8 @@ export class PostgresModelGateway implements ModelGateway {
               );
               if (streaming.rowCount !== 1) throw new ModelCallSupersededError();
             }
-            yield event;
+            if (event.type === 'text_delta') yield event;
+            else pendingToolRequests.push(event.request);
           } else {
             completedUsage = event.usage;
           }
@@ -313,6 +317,9 @@ export class PostgresModelGateway implements ModelGateway {
           usage: completedUsage,
           fallbackUsed: fallbackAttempt,
         };
+        for (const toolRequest of pendingToolRequests) {
+          yield { type: 'tool_requested', request: toolRequest };
+        }
         return;
       } catch (error) {
         if (error instanceof ModelCallSupersededError || isPostgresFailure(error)) {

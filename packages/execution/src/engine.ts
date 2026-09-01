@@ -83,6 +83,9 @@ export class AiSdkAgentEngine implements AgentEngine {
             fallbackUsed: event.fallbackUsed,
           };
           break;
+        case 'tool_requested':
+          // Tool requests are consumed by the Slice 3 Tool Loop before they become Engine events.
+          break;
         case 'model_failed':
           yield {
             type: 'model_failed',
