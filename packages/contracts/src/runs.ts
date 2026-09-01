@@ -83,6 +83,12 @@ export const resolveInterruptRequestSchema = z.object({
 export const resolveInterruptResponseSchema = z.object({
   run: runSnapshotSchema,
 });
+export const resolveToolConfirmationRequestSchema = z.object({
+  response: z.enum(['confirm', 'reject']),
+});
+export const resolveToolConfirmationResponseSchema = z.object({
+  run: runSnapshotSchema,
+});
 
 export type AcceptRunResponseContract = z.infer<typeof acceptRunResponseSchema>;
 export type RunSnapshotContract = z.infer<typeof runSnapshotSchema>;

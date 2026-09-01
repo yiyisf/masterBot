@@ -56,6 +56,8 @@ interface ToolCallRow {
   initiating_principal_id: string;
   run_id: string;
   invocation_id: string;
+  agent_revision_id: string;
+  grant_id: string;
   capability_id: string;
   request_payload: unknown;
   effect: ToolEffect;
@@ -288,17 +290,19 @@ export class PostgresToolRuntime implements ToolRuntime {
       await client.query(
         `INSERT INTO tool_calls (
            id, organization_id, initiating_principal_id, run_id, invocation_id,
-           model_request_id, capability_id, tool_revision_id, status, idempotency_key,
-           effect, recovery, risks, request_hash, request_payload, request_summary
+           model_request_id, agent_revision_id, grant_id, capability_id,
+           tool_revision_id, status, idempotency_key, effect, recovery, risks,
+           request_hash, request_payload, request_summary
          ) VALUES (
-           $1, $2, $3, $4, $5, $6, $7, $8,
-           $9, $10, $11, $12, $13, $14, $15, $16
+           $1, $2, $3, $4, $5, $6, $7, $8, $9,
+           $10, $11, $12, $13, $14, $15, $16, $17, $18
          )`,
         [toolCallId, command.identity.organizationId, command.identity.principalId,
           command.runId, command.invocationId, command.modelRequestId,
-          command.capabilityId, revision.id, initialStatus, idempotencyKey,
-          revision.effect, revision.recovery, JSON.stringify(revision.risks),
-          requestHash, requestPayload, requestSummary],
+          command.agentRevisionId, command.grantId, command.capabilityId,
+          revision.id, initialStatus, idempotencyKey, revision.effect,
+          revision.recovery, JSON.stringify(revision.risks), requestHash,
+          requestPayload, requestSummary],
       );
       if (!requiresConfirmation) {
         await client.query(
@@ -532,14 +536,14 @@ export class PostgresToolRuntime implements ToolRuntime {
        WHERE r.organization_id = $1 AND r.id = $3
          AND r.capability_id = $4 AND r.status = 'active'
          AND g.capability_ids ? r.capability_id`,
-      [command.identity.organizationId, command.grantId,
+      [command.identity.organizationId, call.grant_id,
         call.tool_revision_id, call.capability_id],
     );
     const revision = revisionResult.rows[0];
     const decision = await this.policy.evaluate({
       organizationId: command.identity.organizationId,
       principalId: command.identity.principalId,
-      agentRevisionId: command.agentRevisionId,
+      agentRevisionId: call.agent_revision_id as InvokeToolCommand['agentRevisionId'],
       principalEntitlements: command.principalEntitlements,
       agentGranted: revision !== undefined,
       toolRevisionActive: revision !== undefined,

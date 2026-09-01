@@ -365,8 +365,6 @@ describe('PostgresToolCatalog', () => {
       toolCallId: outcome.toolCallId,
       commandId: approvalCommandId(randomUUID()),
       response: 'confirm',
-      agentRevisionId: command.agentRevisionId,
-      grantId,
       principalEntitlements: command.principalEntitlements,
       signal: new AbortController().signal,
     });
@@ -385,8 +383,6 @@ describe('PostgresToolCatalog', () => {
       toolCallId: waitingForOversizedOutput.toolCallId,
       commandId: approvalCommandId(randomUUID()),
       response: 'confirm',
-      agentRevisionId: command.agentRevisionId,
-      grantId,
       principalEntitlements: command.principalEntitlements,
       signal: new AbortController().signal,
     });
@@ -404,8 +400,6 @@ describe('PostgresToolCatalog', () => {
       toolCallId: waitingForRejection.toolCallId,
       commandId: approvalCommandId(randomUUID()),
       response: 'reject',
-      agentRevisionId: command.agentRevisionId,
-      grantId,
       principalEntitlements: command.principalEntitlements,
       signal: new AbortController().signal,
     });
@@ -427,8 +421,6 @@ describe('PostgresToolCatalog', () => {
       toolCallId: waitingForUncertainWrite.toolCallId,
       commandId: approvalCommandId(randomUUID()),
       response: 'confirm',
-      agentRevisionId: command.agentRevisionId,
-      grantId,
       principalEntitlements: command.principalEntitlements,
       signal: new AbortController().signal,
     });
@@ -448,8 +440,6 @@ describe('PostgresToolCatalog', () => {
       toolCallId: waitingForRevokedRevision.toolCallId,
       commandId: approvalCommandId(randomUUID()),
       response: 'confirm',
-      agentRevisionId: command.agentRevisionId,
-      grantId,
       principalEntitlements: command.principalEntitlements,
       signal: new AbortController().signal,
     });

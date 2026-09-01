@@ -42,11 +42,19 @@ describe('next API skeleton', () => {
     await app.close();
   });
 
+  it('fails closed when Tool Runtime is enabled without its Coordinator', () => {
+    expect(() => buildApi({
+      config,
+      database: database(true),
+      featureFlags: new InMemoryFeatureFlags({ nextArchitecture: true, toolRuntime: true }),
+    })).toThrow('Tool Runtime requires a Tool Confirmation Coordinator');
+  });
+
   it('mounts the versioned status contract only when enabled', async () => {
     const disabled = buildApi({
       config,
       database: database(true),
-      featureFlags: new InMemoryFeatureFlags({ nextArchitecture: false }),
+      featureFlags: new InMemoryFeatureFlags({ nextArchitecture: false, toolRuntime: false }),
     });
     expect((await disabled.inject({ method: 'GET', url: '/api/v1/system/status' })).statusCode).toBe(404);
     await disabled.close();
@@ -54,7 +62,7 @@ describe('next API skeleton', () => {
     const enabled = buildApi({
       config,
       database: database(true),
-      featureFlags: new InMemoryFeatureFlags({ nextArchitecture: true }),
+      featureFlags: new InMemoryFeatureFlags({ nextArchitecture: true, toolRuntime: false }),
     });
     const response = await enabled.inject({ method: 'GET', url: '/api/v1/system/status' });
     expect(response.statusCode).toBe(200);

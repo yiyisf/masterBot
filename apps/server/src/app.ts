@@ -5,6 +5,7 @@ import { registerAiUiPresenter } from './ai-ui-presenter.js';
 import type { ServerConfig } from './config.js';
 import { EnvironmentFeatureFlags, type FeatureFlags } from './feature-flags.js';
 import type { DatabaseHealth } from './postgres.js';
+import type { ToolConfirmationCoordinator } from './tool-confirmation-coordinator.js';
 import { registerRunApi, type RunApiDependencies } from './run-api.js';
 
 export interface ApiDependencies {
@@ -12,13 +13,19 @@ export interface ApiDependencies {
   database: DatabaseHealth;
   featureFlags?: FeatureFlags;
   runApi?: RunApiDependencies;
+  toolConfirmationCoordinator?: ToolConfirmationCoordinator;
 }
 
 export function buildApi(dependencies: ApiDependencies): FastifyInstance {
   const app = Fastify({ logger: dependencies.config.runtimeEnvironment !== 'test' });
   const featureFlags = dependencies.featureFlags ?? new EnvironmentFeatureFlags({
     nextArchitecture: dependencies.config.features.nextArchitecture,
+    toolRuntime: dependencies.config.features.toolRuntime,
   });
+
+  if (featureFlags.isEnabled('toolRuntime') && !dependencies.toolConfirmationCoordinator) {
+    throw new Error('Tool Runtime requires a Tool Confirmation Coordinator');
+  }
 
   void app.register(cors, {
     origin: dependencies.config.webOrigin,
@@ -35,7 +42,12 @@ export function buildApi(dependencies: ApiDependencies): FastifyInstance {
 
   if (featureFlags.isEnabled('nextArchitecture')) {
     if (dependencies.runApi) {
-      registerRunApi(app, dependencies.runApi);
+      registerRunApi(app, {
+        ...dependencies.runApi,
+        ...(featureFlags.isEnabled('toolRuntime') && dependencies.toolConfirmationCoordinator
+          ? { toolConfirmation: dependencies.toolConfirmationCoordinator }
+          : {}),
+      });
       registerAiUiPresenter(app, dependencies.runApi);
     }
 

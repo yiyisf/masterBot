@@ -89,8 +89,6 @@ export interface ResumeToolCallCommand {
   toolCallId: ToolCallId;
   commandId: ApprovalCommandId;
   response: 'confirm' | 'reject';
-  agentRevisionId: AgentRevisionId;
-  grantId: ToolGrantId;
   principalEntitlements: readonly string[];
   signal: AbortSignal;
 }

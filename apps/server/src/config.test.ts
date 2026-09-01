@@ -51,6 +51,18 @@ describe('loadServerConfig', () => {
     });
   });
 
+  it('keeps Tool Runtime disabled by default and requires AI SDK Runtime', () => {
+    expect(loadServerConfig({
+      DATABASE_URL: 'postgresql://localhost/cmaster',
+    }, []).features.toolRuntime).toBe(false);
+
+    expect(() => loadServerConfig({
+      DATABASE_URL: 'postgresql://localhost/cmaster',
+      NEXT_ARCHITECTURE_ENABLED: 'true',
+      CMASTER_TOOL_RUNTIME_ENABLED: 'true',
+    }, [])).toThrow('Tool Runtime requires AI SDK Runtime');
+  });
+
   it('treats empty optional model variables from a copied env file as absent', () => {
     const config = loadServerConfig({
       DATABASE_URL: 'postgresql://localhost/cmaster',

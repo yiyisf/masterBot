@@ -26,6 +26,9 @@ const cancelResponse = registry.register('CancelRunResponse', runs.cancelRunResp
 const resolveInterruptResponse = registry.register(
   'ResolveInterruptResponse', runs.resolveInterruptResponseSchema,
 );
+const resolveToolConfirmationResponse = registry.register(
+  'ResolveToolConfirmationResponse', runs.resolveToolConfirmationResponseSchema,
+);
 const systemStatus = registry.register('SystemStatus', systemStatusSchema);
 
 const idempotencyHeaders = z.object({ 'idempotency-key': z.uuid() });
@@ -87,6 +90,27 @@ registry.registerPath({
   method: 'get', path: '/api/v1/runs/{runId}', summary: 'Read a Run Snapshot',
   request: { params: idPath('runId') },
   responses: { 200: { description: 'Run Snapshot', content: { 'application/json': { schema: run } } }, 400: problemResponse('Invalid request'), 404: problemResponse('Not found') },
+});
+registry.registerPath({
+  method: 'post', path: '/api/v1/runs/{runId}/tool-confirmations/{interruptId}/resolve',
+  summary: 'Confirm or reject an active Tool call',
+  request: {
+    params: z.object({ runId: z.uuid(), interruptId: z.uuid() }),
+    headers: idempotencyHeaders,
+    body: {
+      required: true,
+      content: { 'application/json': { schema: runs.resolveToolConfirmationRequestSchema } },
+    },
+  },
+  responses: {
+    200: {
+      description: 'Tool confirmation resolved or replayed',
+      headers: idempotencyReplayHeaders,
+      content: { 'application/json': { schema: resolveToolConfirmationResponse } },
+    },
+    400: problemResponse('Invalid request'), 404: problemResponse('Not found'),
+    409: problemResponse('Tool confirmation or idempotency conflict'),
+  },
 });
 registry.registerPath({
   method: 'post', path: '/api/v1/runs/{runId}/interrupts/{interruptId}/resolve',

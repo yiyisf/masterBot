@@ -21,6 +21,7 @@ const environmentSchema = z.object({
   NEXT_ARCHITECTURE_ENABLED: z.enum(['true', 'false']).default('false').transform((value) => value === 'true'),
   CMASTER_DEVELOPMENT_IDENTITY_ENABLED: z.enum(['true', 'false']).default('false').transform((value) => value === 'true'),
   CMASTER_AI_SDK_RUNTIME_ENABLED: z.enum(['true', 'false']).default('false').transform((value) => value === 'true'),
+  CMASTER_TOOL_RUNTIME_ENABLED: z.enum(['true', 'false']).default('false').transform((value) => value === 'true'),
   CMASTER_RUNTIME_ENV: z.enum(['development', 'test', 'production']).default('development'),
   CMASTER_DEV_ORGANIZATION_ID: z.uuid().default('00000000-0000-4000-8000-000000000001'),
   CMASTER_DEV_PRINCIPAL_ID: z.uuid().default('00000000-0000-4000-8000-000000000002'),
@@ -54,6 +55,7 @@ export interface ServerConfig {
     nextArchitecture: boolean;
     developmentIdentity: boolean;
     aiSdkRuntime: boolean;
+    toolRuntime: boolean;
   };
   runtimeEnvironment: 'development' | 'test' | 'production';
   developmentIdentity: {
@@ -115,6 +117,9 @@ export function loadServerConfig(
   if (parsed.CMASTER_AI_SDK_RUNTIME_ENABLED && !parsed.NEXT_ARCHITECTURE_ENABLED) {
     throw new Error('AI SDK Runtime requires the next architecture');
   }
+  if (parsed.CMASTER_TOOL_RUNTIME_ENABLED && !parsed.CMASTER_AI_SDK_RUNTIME_ENABLED) {
+    throw new Error('Tool Runtime requires AI SDK Runtime');
+  }
   const primaryValues = [
     parsed.CMASTER_PRIMARY_MODEL_BASE_URL,
     parsed.CMASTER_PRIMARY_MODEL_ID,
@@ -143,6 +148,7 @@ export function loadServerConfig(
       nextArchitecture: parsed.NEXT_ARCHITECTURE_ENABLED,
       developmentIdentity: parsed.CMASTER_DEVELOPMENT_IDENTITY_ENABLED,
       aiSdkRuntime: parsed.CMASTER_AI_SDK_RUNTIME_ENABLED,
+      toolRuntime: parsed.CMASTER_TOOL_RUNTIME_ENABLED,
     },
     runtimeEnvironment: parsed.CMASTER_RUNTIME_ENV,
     developmentIdentity: {

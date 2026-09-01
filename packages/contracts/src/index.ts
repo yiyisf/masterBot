@@ -19,6 +19,8 @@ export {
   createRunRequestSchema,
   resolveInterruptRequestSchema,
   resolveInterruptResponseSchema,
+  resolveToolConfirmationRequestSchema,
+  resolveToolConfirmationResponseSchema,
   runEventEnvelopeSchema,
   runFailureSchema,
   runSnapshotSchema,

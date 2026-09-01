@@ -49,6 +49,8 @@ exports.up = (pgm) => {
       run_id uuid NOT NULL,
       invocation_id uuid NOT NULL,
       model_request_id text NOT NULL,
+      agent_revision_id uuid NOT NULL,
+      grant_id uuid NOT NULL,
       capability_id text NOT NULL,
       tool_revision_id uuid NOT NULL,
       status text NOT NULL
@@ -70,7 +72,9 @@ exports.up = (pgm) => {
       UNIQUE (organization_id, id),
       UNIQUE (organization_id, invocation_id, model_request_id),
       FOREIGN KEY (organization_id, tool_revision_id)
-        REFERENCES tool_revisions(organization_id, id)
+        REFERENCES tool_revisions(organization_id, id),
+      FOREIGN KEY (organization_id, grant_id)
+        REFERENCES tool_grants(organization_id, id)
     );
 
     CREATE INDEX tool_calls_run_idx
