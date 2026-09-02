@@ -253,6 +253,9 @@ export function registerRunApi(app: FastifyInstance, dependencies: RunApiDepende
       if (result.kind === 'too_late') {
         return problem(reply, request, 409, 'run_cancellation_too_late', 'Cancellation too late', 'The result was already generated and will be delivered.');
       }
+      if (result.kind === 'tool_effect_in_flight') {
+        return problem(reply, request, 409, 'tool_effect_in_flight', 'Tool effect in flight', 'Cancellation is temporarily unavailable while the Tool Provider result is unknown.');
+      }
       return reply.send({ outcome: 'cancelled', run: runContract(result.run) });
     } catch (error) {
       return sendRunApiError(error, request, reply);

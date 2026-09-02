@@ -75,11 +75,16 @@ describe('ToolConfirmationCoordinator', () => {
     } satisfies Pick<ToolRuntime, 'resume'>;
     const execution = {
       getRun: vi.fn(async () => waiting),
+      enterToolBoundary: vi.fn(async () => { order.push('enter'); }),
+      leaveToolBoundary: vi.fn(async () => { order.push('leave'); }),
       resolveInterrupt: vi.fn(async () => {
         order.push('interrupt');
         return { value: resumed, replayed: false };
       }),
-    } satisfies Pick<ExecutionModule, 'getRun' | 'resolveInterrupt'>;
+    } satisfies Pick<
+      ExecutionModule,
+      'getRun' | 'resolveInterrupt' | 'enterToolBoundary' | 'leaveToolBoundary'
+    >;
     const coordinator = new ToolConfirmationCoordinator(
       execution, tools, new Slice3DevelopmentEntitlements(),
     );
@@ -92,7 +97,7 @@ describe('ToolConfirmationCoordinator', () => {
       },
     );
 
-    expect(order).toEqual(['tool', 'interrupt']);
+    expect(order).toEqual(['enter', 'tool', 'leave', 'interrupt']);
     expect(result).toMatchObject({ run: { status: 'queued' }, outcome: { kind: 'denied' } });
     expect(tools.resume).toHaveBeenCalledWith(expect.objectContaining({
       toolCallId: activeInterrupt.subjectRef,
@@ -106,6 +111,8 @@ describe('ToolConfirmationCoordinator', () => {
     const coordinator = new ToolConfirmationCoordinator(
       {
         getRun: vi.fn(async () => waiting),
+        enterToolBoundary: vi.fn(),
+        leaveToolBoundary: vi.fn(),
         resolveInterrupt: vi.fn(),
       },
       { resume: vi.fn() },

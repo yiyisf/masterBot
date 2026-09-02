@@ -6,6 +6,7 @@ import type { Brand } from '@cmaster/kernel';
 export type ToolRevisionId = Brand<string, 'ToolRevisionId'>;
 export type ToolGrantId = Brand<string, 'ToolGrantId'>;
 export type ToolCallId = Brand<string, 'ToolCallId'>;
+export type CredentialLeaseId = Brand<string, 'CredentialLeaseId'>;
 
 export type ToolEffect = 'read_only' | 'idempotent_write' | 'non_idempotent_write';
 export type ToolRecovery = 'retry_same_call' | 'idempotency_key' | 'reconcile' | 'manual_review';
@@ -44,6 +45,30 @@ export interface SafeToolSummary {
   details: Readonly<Record<string, string>>;
 }
 
+export interface CredentialLease {
+  id: CredentialLeaseId;
+  organizationId: OrganizationId;
+  principalId: RequestIdentity['principalId'];
+  toolCallId: ToolCallId;
+  invocationId: string;
+  allowedOperations: readonly string[];
+  expiresAt: Date;
+  /** Secret values are in-memory only and must never be persisted, logged, or returned to Browser contracts. */
+  values: Readonly<Record<string, string>>;
+}
+
+export interface IssueCredentialLeaseCommand {
+  identity: RequestIdentity;
+  toolCallId: ToolCallId;
+  invocationId: string;
+  capabilityId: string;
+  allowedOperations: readonly string[];
+}
+
+export interface CredentialBroker {
+  issue(command: IssueCredentialLeaseCommand): Promise<CredentialLease>;
+}
+
 export interface ToolProviderRequest {
   toolCallId: ToolCallId;
   revision: ToolDescriptor;
@@ -51,6 +76,7 @@ export interface ToolProviderRequest {
   invocationId: string;
   input: unknown;
   idempotencyKey: string;
+  credentialLease: CredentialLease;
   signal: AbortSignal;
 }
 

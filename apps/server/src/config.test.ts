@@ -63,6 +63,19 @@ describe('loadServerConfig', () => {
     }, [])).toThrow('Tool Runtime requires AI SDK Runtime');
   });
 
+  it('parses an explicit hostname-only HTTPS fetch allowlist', () => {
+    expect(loadServerConfig({
+      DATABASE_URL: 'postgresql://localhost/cmaster',
+      CMASTER_HTTP_FETCH_ALLOWED_HOSTS: 'docs.example.test, API.example.test',
+    }, []).toolRuntime.httpFetchAllowedHosts).toEqual([
+      'docs.example.test', 'api.example.test',
+    ]);
+    expect(() => loadServerConfig({
+      DATABASE_URL: 'postgresql://localhost/cmaster',
+      CMASTER_HTTP_FETCH_ALLOWED_HOSTS: 'https://docs.example.test/path',
+    }, [])).toThrow('hostnames only');
+  });
+
   it('treats empty optional model variables from a copied env file as absent', () => {
     const config = loadServerConfig({
       DATABASE_URL: 'postgresql://localhost/cmaster',

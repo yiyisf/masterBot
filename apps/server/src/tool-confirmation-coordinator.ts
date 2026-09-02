@@ -34,7 +34,10 @@ export interface ToolConfirmationResult {
  */
 export class ToolConfirmationCoordinator {
   constructor(
-    private readonly execution: Pick<ExecutionModule, 'getRun' | 'resolveInterrupt'>,
+    private readonly execution: Pick<
+      ExecutionModule,
+      'getRun' | 'resolveInterrupt' | 'enterToolBoundary' | 'leaveToolBoundary'
+    >,
     private readonly tools: Pick<ToolRuntime, 'resume'>,
     private readonly entitlements: PrincipalEntitlementSource,
   ) {}
@@ -54,14 +57,20 @@ export class ToolConfirmationCoordinator {
       throw new ToolConfirmationConflictError();
     }
 
-    const outcome = await this.tools.resume({
-      identity,
-      toolCallId: interrupt.subjectRef as ToolCallId,
-      commandId: approvalCommandId(command.commandId),
-      response: command.response,
-      principalEntitlements: await this.entitlements.resolve(identity),
-      signal: command.signal,
-    });
+    await this.execution.enterToolBoundary(identity, runId);
+    let outcome: ToolOutcome;
+    try {
+      outcome = await this.tools.resume({
+        identity,
+        toolCallId: interrupt.subjectRef as ToolCallId,
+        commandId: approvalCommandId(command.commandId),
+        response: command.response,
+        principalEntitlements: await this.entitlements.resolve(identity),
+        signal: command.signal,
+      });
+    } finally {
+      await this.execution.leaveToolBoundary(identity, runId);
+    }
     const resolved = await this.execution.resolveInterrupt(identity, runId, interruptId, {
       commandId: runCommandId(command.commandId),
       response: command.response,

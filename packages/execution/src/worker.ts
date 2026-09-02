@@ -93,6 +93,7 @@ export class RunWorker {
     let pending = '';
     let outputStarted = false;
     let completed = false;
+    let interrupted = false;
     let terminalModelFailure: ModelFailure | undefined;
     let lastFlushAt = Date.now();
     const flushIntervalMs = this.config.outputFlushIntervalMs ?? 100;
@@ -127,6 +128,9 @@ export class RunWorker {
         invocationId: lease.invocationId,
         agentRevisionId: lease.agentRevisionId,
         prompt: trigger.prompt,
+        outputGeneration: generation,
+        ...(lease.checkpoint ? { checkpoint: lease.checkpoint } : {}),
+        ...(lease.resumeResponse ? { resumeResponse: lease.resumeResponse } : {}),
       }, signal)) {
         if (event.type === 'text_delta') {
           output += event.text;
@@ -137,6 +141,17 @@ export class RunWorker {
           continue;
         }
         await flush();
+        if (event.type === 'interrupt_requested') {
+          await this.execution.requestInterrupt(lease, {
+            kind: event.kind,
+            subjectRef: event.subjectRef,
+            safeSubjectSummary: event.safeSubjectSummary,
+            allowedResponses: event.allowedResponses,
+            checkpoint: event.checkpoint,
+          });
+          interrupted = true;
+          break;
+        }
         await this.recordEngineEvent(lease, event, record, async (reason) => {
           output = '';
           pending = '';
@@ -149,6 +164,7 @@ export class RunWorker {
       }
       await flush();
 
+      if (interrupted) return undefined;
       if (terminalModelFailure) {
         const failure: RunFailure = {
           code: 'model_failed',
@@ -225,6 +241,8 @@ export class RunWorker {
         });
         break;
       case 'completed':
+        break;
+      case 'interrupt_requested':
         break;
     }
   }

@@ -2,7 +2,13 @@ import type { AgentId, AgentRevisionId, ResolvedAgentRevision } from '@cmaster/a
 import type { ConversationId, MessageId } from '@cmaster/conversations';
 import type { OrganizationId, PrincipalId, RequestIdentity } from '@cmaster/identity';
 import type { Brand } from '@cmaster/kernel';
-import type { ModelFailure, ModelProfileId, ModelUsage } from '@cmaster/models';
+import type {
+  ModelFailure,
+  ModelProfileId,
+  ModelRequestedTool,
+  ModelTranscriptMessage,
+  ModelUsage,
+} from '@cmaster/models';
 
 export type RunId = Brand<string, 'RunId'>;
 export type InvocationId = Brand<string, 'InvocationId'>;
@@ -64,6 +70,15 @@ export interface ExecutionCheckpoint {
   engineVersion: '1';
   toolCallId: string;
   outcome: 'confirmation_required' | 'requires_review';
+  toolLoop?: {
+    modelStepNumber: number;
+    toolCallCount: number;
+    providerNeutralTranscript: readonly ModelTranscriptMessage[];
+    completedToolCallIds: readonly string[];
+    pendingToolRequest: ModelRequestedTool;
+    remainingModelToolRequests: readonly ModelRequestedTool[];
+    outputGeneration: number;
+  };
 }
 
 export interface RequestInterruptCommand {
@@ -146,7 +161,13 @@ export interface CommandResult<Value> {
 
 export type CancelRunResult =
   | { kind: 'cancelled'; run: RunSnapshot; replayed: boolean }
+  | { kind: 'tool_effect_in_flight'; run: RunSnapshot; replayed: boolean }
   | { kind: 'too_late'; run: RunSnapshot; replayed: boolean };
+
+export interface ToolExecutionBoundary {
+  enterToolBoundary(identity: RequestIdentity, runId: RunId): Promise<void>;
+  leaveToolBoundary(identity: RequestIdentity, runId: RunId): Promise<void>;
+}
 
 /**
  * Owns durable Run acceptance, cancellation, snapshots, and ordered Event replay.
@@ -155,7 +176,7 @@ export type CancelRunResult =
  * RunIdempotencyConflictError. Missing or cross-Organization resources throw RunNotFoundError.
  * Event reads are indexed by (runId, sequence), return strict ascending order, and are linear in the page read.
  */
-export interface ExecutionModule {
+export interface ExecutionModule extends ToolExecutionBoundary {
   acceptRun(identity: RequestIdentity, command: AcceptRunCommand): Promise<CommandResult<RunSnapshot>>;
   getRun(identity: RequestIdentity, runId: RunId): Promise<RunSnapshot>;
   cancelRun(identity: RequestIdentity, runId: RunId, commandId: RunCommandId): Promise<CancelRunResult>;

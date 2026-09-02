@@ -26,6 +26,7 @@ export default function RunPage() {
   );
   const [connection, setConnection] = useState('connecting');
   const [error, setError] = useState<string>();
+  const [resolvingInterrupt, setResolvingInterrupt] = useState(false);
 
   const loadMessages = useCallback(async (conversationId: string) => {
     const client = createContractClient(apiUrl);
@@ -77,6 +78,9 @@ export default function RunPage() {
         if (parsed.data.type === 'assistant_message.appended') {
           void loadMessages(initial.conversationId);
         }
+        if (parsed.data.type === 'interrupt.requested') {
+          void loadSnapshot(false);
+        }
         if (['run.succeeded', 'run.failed', 'run.cancelled'].includes(parsed.data.type)) {
           source?.close();
           setConnection('closed');
@@ -105,6 +109,38 @@ export default function RunPage() {
     await loadSnapshot();
   }
 
+  async function resolveConfirmation(response: 'confirm' | 'reject'): Promise<void> {
+    const interrupt = snapshot?.activeInterrupt;
+    if (!interrupt || interrupt.kind !== 'tool_confirmation') return;
+    setResolvingInterrupt(true);
+    setError(undefined);
+    const client = createContractClient(apiUrl);
+    const result = await client.POST('/api/v1/runs/{runId}/tool-confirmations/{interruptId}/resolve', {
+      params: { path: { runId, interruptId: interrupt.id } },
+      headers: { 'idempotency-key': crypto.randomUUID() },
+      body: { response },
+    });
+    if (result.error) setError('无法保存 Tool 确认结果。');
+    await loadSnapshot();
+    setResolvingInterrupt(false);
+  }
+
+  async function continueWithUncertainty(): Promise<void> {
+    const interrupt = snapshot?.activeInterrupt;
+    if (!interrupt || interrupt.kind !== 'tool_outcome_review') return;
+    setResolvingInterrupt(true);
+    setError(undefined);
+    const client = createContractClient(apiUrl);
+    const result = await client.POST('/api/v1/runs/{runId}/interrupts/{interruptId}/resolve', {
+      params: { path: { runId, interruptId: interrupt.id } },
+      headers: { 'idempotency-key': crypto.randomUUID() },
+      body: { response: 'continue_with_uncertainty' },
+    });
+    if (result.error) setError('无法保存不确定结果处理决定。');
+    await loadSnapshot();
+    setResolvingInterrupt(false);
+  }
+
   const status = projection?.status ?? snapshot?.status;
   return (
     <main>
@@ -113,6 +149,39 @@ export default function RunPage() {
       <p>SSE: {connection}</p>
       {projection?.cancellable ? <button className="button" onClick={() => void cancel()}>取消 Run</button> : null}
       {error ? <p className="error" role="alert">{error}</p> : null}
+      {snapshot?.activeInterrupt ? (
+        <section aria-labelledby="tool-interrupt-title">
+          <h2 id="tool-interrupt-title">{snapshot.activeInterrupt.safeSubjectSummary.title}</h2>
+          <dl>
+            {Object.entries(snapshot.activeInterrupt.safeSubjectSummary.details).map(([key, value]) => (
+              <div key={key}><dt>{key}</dt><dd>{value}</dd></div>
+            ))}
+          </dl>
+          {snapshot.activeInterrupt.kind === 'tool_confirmation' ? (
+            <p>
+              <button
+                className="button"
+                disabled={resolvingInterrupt}
+                onClick={() => void resolveConfirmation('confirm')}
+              >确认执行</button>{' '}
+              <button
+                className="button"
+                disabled={resolvingInterrupt}
+                onClick={() => void resolveConfirmation('reject')}
+              >拒绝</button>
+            </p>
+          ) : (
+            <div>
+              <p role="alert">外部副作用是否发生无法确定。继续不会重试原 ToolCall。</p>
+              <button
+                className="button"
+                disabled={resolvingInterrupt}
+                onClick={() => void continueWithUncertainty()}
+              >带着不确定性继续</button>
+            </div>
+          )}
+        </section>
+      ) : null}
       {snapshot?.failure ? (
         <p className="error" role="alert">{snapshot.failure.message}</p>
       ) : null}

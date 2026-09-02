@@ -247,7 +247,14 @@ describe('AI SDK Model Runtime', () => {
       },
       async invoke(_input, request) {
         invoked.push(request.requestId);
-        return { kind: 'completed', modelOutput: { iso: '2026-01-02T12:00:00Z' } };
+        return {
+          kind: 'completed',
+          toolCallId: 'tool-call-1',
+          modelOutput: { iso: '2026-01-02T12:00:00Z' },
+        };
+      },
+      async recover() {
+        throw new Error('not expected');
       },
     });
 

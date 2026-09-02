@@ -132,6 +132,23 @@ async function drainOutbox(runWorker: RunWorker): Promise<void> {
 }
 
 describe('Run Walking Skeleton', () => {
+  it('temporarily rejects cancellation while a Tool effect is in flight', async () => {
+    const accepted = await acceptRunThroughHttp('tool boundary');
+    const runWorker = worker(`boundary-${randomUUID()}`);
+    await drainOutbox(runWorker);
+    const lease = await execution.leaseNext(`boundary-lease-${randomUUID()}`, 1_000, 5);
+    expect(lease?.runId).toBe(runId(accepted.run.id));
+    await execution.enterToolBoundary(identity.resolveRequest(), runId(accepted.run.id));
+
+    await expect(execution.cancelRun(
+      identity.resolveRequest(), runId(accepted.run.id), runCommandId(randomUUID()),
+    )).resolves.toMatchObject({ kind: 'tool_effect_in_flight', run: { status: 'running' } });
+
+    await execution.leaveToolBoundary(identity.resolveRequest(), runId(accepted.run.id));
+    await expect(execution.cancelRun(
+      identity.resolveRequest(), runId(accepted.run.id), runCommandId(randomUUID()),
+    )).resolves.toMatchObject({ kind: 'cancelled', run: { status: 'cancelled' } });
+  });
   it('replays a Command with the same payload and rejects key reuse', async () => {
     const key = commandId(randomUUID());
     const first = await conversations.create(identity.resolveRequest(), { commandId: key, title: 'Stable' });

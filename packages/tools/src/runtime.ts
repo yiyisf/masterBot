@@ -8,7 +8,9 @@ import {
 } from '@cmaster/governance';
 import { Ajv } from 'ajv/dist/ajv.js';
 import type { Pool, PoolClient } from 'pg';
+import { DevelopmentCredentialBroker } from './credentials.js';
 import {
+  type CredentialBroker,
   type InvokeToolCommand,
   type ResumeToolCallCommand,
   type SafeToolSummary,
@@ -39,6 +41,7 @@ interface RuntimeRevisionRow {
 }
 
 interface ProviderDispatchInput {
+  identity: RequestIdentity;
   organizationId: OrganizationId;
   toolCallId: ToolCallId;
   revision: RuntimeRevisionRow;
@@ -206,6 +209,7 @@ export class PostgresToolRuntime implements ToolRuntime {
     private readonly policy: PolicyModule,
     private readonly approvals: ApprovalModule,
     providers: readonly ToolProvider[],
+    private readonly credentials: CredentialBroker = new DevelopmentCredentialBroker(),
   ) {
     this.providers = new Map(providers.map((provider) => [provider.key, provider]));
   }
@@ -332,6 +336,7 @@ export class PostgresToolRuntime implements ToolRuntime {
     }
 
     return this.dispatch({
+      identity: command.identity,
       organizationId: command.identity.organizationId,
       toolCallId,
       revision,
@@ -374,6 +379,18 @@ export class PostgresToolRuntime implements ToolRuntime {
   }
 
   private async dispatch(input: ProviderDispatchInput): Promise<ToolOutcome> {
+    let credentialLease;
+    try {
+      credentialLease = await this.credentials.issue({
+        identity: input.identity,
+        toolCallId: input.toolCallId,
+        invocationId: input.invocationId,
+        capabilityId: input.revision.capability_id,
+        allowedOperations: [input.revision.capability_id],
+      });
+    } catch {
+      return this.closeDispatchFailure(input, false);
+    }
     let result: ToolProviderResult;
     let outcomePayload: string;
     let outcomeSummary: string;
@@ -385,51 +402,16 @@ export class PostgresToolRuntime implements ToolRuntime {
         invocationId: input.invocationId,
         input: input.requestPayload,
         idempotencyKey: input.idempotencyKey,
+        credentialLease,
         signal: input.signal,
       });
       outcomePayload = validateOutput(input.revision.output_schema, result.value);
       outcomeSummary = validateSummary(result.safeSummary);
     } catch {
-      const uncertain = input.revision.effect === 'non_idempotent_write';
-      const failure = uncertain
-        ? { code: 'external_effect_unknown', message: 'The external effect is unknown.', retryable: false }
-        : { code: 'provider_failed', message: 'The Tool Provider failed.', retryable: true };
-      const failed = await this.pool.query(
-        `WITH completed_attempt AS (
-           UPDATE tool_dispatch_attempts
-           SET status = $3, failure = $4, completed_at = clock_timestamp()
-           WHERE organization_id = $1 AND tool_call_id = $2 AND status = 'running'
-           RETURNING tool_call_id
-         )
-         UPDATE tool_calls
-         SET status = $5, failure = $4, completed_at = clock_timestamp()
-         WHERE organization_id = $1 AND id = $2 AND status = 'running'
-           AND EXISTS (
-             SELECT 1 FROM completed_attempt WHERE tool_call_id = tool_calls.id
-           )`,
-        [input.organizationId, input.toolCallId, uncertain ? 'uncertain' : 'failed',
-          JSON.stringify(failure), uncertain ? 'requires_review' : 'failed'],
+      return this.closeDispatchFailure(
+        input,
+        input.revision.effect === 'non_idempotent_write',
       );
-      if (failed.rowCount !== 1) throw new ToolPersistenceError('Tool failure could not be fenced');
-      return uncertain
-        ? {
-          kind: 'requires_review',
-          toolCallId: input.toolCallId,
-          failure: {
-            code: 'external_effect_unknown',
-            message: 'The external effect is unknown.',
-            retryable: false,
-          },
-        }
-        : {
-          kind: 'failed',
-          toolCallId: input.toolCallId,
-          failure: {
-            code: 'provider_failed',
-            message: 'The Tool Provider failed.',
-            retryable: true,
-          },
-        };
     }
 
     let completed;
@@ -461,6 +443,51 @@ export class PostgresToolRuntime implements ToolRuntime {
       value: result.value,
       safeSummary: result.safeSummary,
     };
+  }
+
+  private async closeDispatchFailure(
+    input: ProviderDispatchInput,
+    uncertain: boolean,
+  ): Promise<ToolOutcome> {
+    const failure = uncertain
+      ? { code: 'external_effect_unknown', message: 'The external effect is unknown.', retryable: false }
+      : { code: 'provider_failed', message: 'The Tool Provider failed.', retryable: true };
+    const failed = await this.pool.query(
+      `WITH completed_attempt AS (
+         UPDATE tool_dispatch_attempts
+         SET status = $3, failure = $4, completed_at = clock_timestamp()
+         WHERE organization_id = $1 AND tool_call_id = $2 AND status = 'running'
+         RETURNING tool_call_id
+       )
+       UPDATE tool_calls
+       SET status = $5, failure = $4, completed_at = clock_timestamp()
+       WHERE organization_id = $1 AND id = $2 AND status = 'running'
+         AND EXISTS (
+           SELECT 1 FROM completed_attempt WHERE tool_call_id = tool_calls.id
+         )`,
+      [input.organizationId, input.toolCallId, uncertain ? 'uncertain' : 'failed',
+        JSON.stringify(failure), uncertain ? 'requires_review' : 'failed'],
+    );
+    if (failed.rowCount !== 1) throw new ToolPersistenceError('Tool failure could not be fenced');
+    return uncertain
+      ? {
+        kind: 'requires_review',
+        toolCallId: input.toolCallId,
+        failure: {
+          code: 'external_effect_unknown',
+          message: 'The external effect is unknown.',
+          retryable: false,
+        },
+      }
+      : {
+        kind: 'failed',
+        toolCallId: input.toolCallId,
+        failure: {
+          code: 'provider_failed',
+          message: 'The Tool Provider failed.',
+          retryable: true,
+        },
+      };
   }
 
   private async requestConfirmation(input: {
@@ -577,6 +604,7 @@ export class PostgresToolRuntime implements ToolRuntime {
     if (started.rowCount !== 1) throw new ToolPersistenceError('Tool resume was superseded');
 
     return this.dispatch({
+      identity: command.identity,
       organizationId: command.identity.organizationId,
       toolCallId: command.toolCallId,
       revision,

@@ -13,6 +13,7 @@ import {
   ToolInputValidationError,
   toolGrantId,
   toolRevisionId,
+  type CredentialBroker,
   type ToolProvider,
 } from '@cmaster/tools';
 import {
@@ -326,11 +327,28 @@ describe('PostgresToolCatalog', () => {
         return postgresApprovals.resolve(identity, approvalId, resolution);
       },
     };
+    let credentialLeases = 0;
+    const credentials: CredentialBroker = {
+      async issue(leaseCommand) {
+        credentialLeases += 1;
+        return {
+          id: randomUUID() as never,
+          organizationId: leaseCommand.identity.organizationId,
+          principalId: leaseCommand.identity.principalId,
+          toolCallId: leaseCommand.toolCallId,
+          invocationId: leaseCommand.invocationId,
+          allowedOperations: leaseCommand.allowedOperations,
+          expiresAt: new Date(Date.now() + 60_000),
+          values: {},
+        };
+      },
+    };
     const runtime = new PostgresToolRuntime(
       pool,
       policy,
       approvals,
       [provider, uncertainProvider],
+      credentials,
     );
     const runId = randomUUID();
 
@@ -354,6 +372,7 @@ describe('PostgresToolCatalog', () => {
     expect(outcome).toMatchObject({ kind: 'confirmation_required', approval: { status: 'pending' } });
     expect(replayed).toEqual(outcome);
     expect(providerCalls).toBe(0);
+    expect(credentialLeases).toBe(0);
     const waitingCall = (await runtime.listCalls(identity, runId))[0];
     expect(waitingCall).toMatchObject({ status: 'awaiting_confirmation' });
     expect(waitingCall?.requestSummary.details).toEqual({
@@ -371,6 +390,7 @@ describe('PostgresToolCatalog', () => {
 
     expect(resumed).toMatchObject({ kind: 'success', value: { text: 'approved content' } });
     expect(providerCalls).toBe(1);
+    expect(credentialLeases).toBe(1);
     expect((await runtime.listCalls(identity, runId))[0]?.status).toBe('succeeded');
 
     confirmedProviderMode = 'oversized';

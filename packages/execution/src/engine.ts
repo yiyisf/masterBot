@@ -10,7 +10,13 @@ import type {
   ModelTranscriptMessage,
   ModelUsage,
 } from '@cmaster/models';
-import type { InvocationId, RunId } from './types.js';
+import type {
+  ExecutionCheckpoint,
+  InterruptKind,
+  InterruptResponse,
+  InvocationId,
+  RunId,
+} from './types.js';
 
 export interface EngineInvocation {
   organizationId: OrganizationId;
@@ -18,14 +24,32 @@ export interface EngineInvocation {
   invocationId: InvocationId;
   agentRevisionId: AgentRevisionId;
   prompt: string;
+  outputGeneration?: number;
+  checkpoint?: ExecutionCheckpoint;
+  resumeResponse?: InterruptResponse;
 }
+
+export type AgentToolOutcome =
+  | { kind: 'completed'; toolCallId: string; modelOutput: unknown }
+  | {
+    kind: 'interrupt';
+    interruptKind: InterruptKind;
+    toolCallId: string;
+    safeSummary: { title: string; details: Readonly<Record<string, string>> };
+  };
 
 export interface AgentToolRuntime {
   list(input: EngineInvocation): Promise<readonly ModelAvailableTool[]>;
-  invoke(input: EngineInvocation, request: ModelRequestedTool): Promise<{
-    kind: 'completed';
-    modelOutput: unknown;
-  }>;
+  invoke(
+    input: EngineInvocation,
+    request: ModelRequestedTool,
+    signal: AbortSignal,
+  ): Promise<AgentToolOutcome>;
+  recover(
+    input: EngineInvocation,
+    toolCallId: string,
+    request: ModelRequestedTool,
+  ): Promise<AgentToolOutcome>;
 }
 
 export type EngineEvent =
@@ -35,6 +59,14 @@ export type EngineEvent =
   | { type: 'model_fallback_selected'; fromProfileId: ModelProfileId; toProfile: ModelSelection }
   | { type: 'model_completed'; profile: ModelSelection; usage: ModelUsage; fallbackUsed: boolean }
   | { type: 'model_failed'; profile: ModelSelection; failure: ModelFailure; hadOutput: boolean }
+  | {
+    type: 'interrupt_requested';
+    kind: InterruptKind;
+    subjectRef: string;
+    safeSubjectSummary: { title: string; details: Readonly<Record<string, string>> };
+    allowedResponses: readonly InterruptResponse[];
+    checkpoint: ExecutionCheckpoint;
+  }
   | { type: 'completed' };
 
 export interface AgentEngine {
@@ -70,11 +102,89 @@ export class AiSdkAgentEngine implements AgentEngine {
   ) {}
 
   async *execute(input: EngineInvocation, signal: AbortSignal): AsyncIterable<EngineEvent> {
-    const transcript: ModelTranscriptMessage[] = [{ role: 'user', text: input.prompt }];
+    const restored = input.checkpoint?.toolLoop;
+    const transcript: ModelTranscriptMessage[] = restored
+      ? [...restored.providerNeutralTranscript]
+      : [{ role: 'user', text: input.prompt }];
     const availableTools = this.tools ? await this.tools.list(input) : undefined;
-    let toolCallCount = 0;
+    let modelStepNumber = restored?.modelStepNumber ?? 0;
+    let toolCallCount = restored?.toolCallCount ?? 0;
+    const completedToolCallIds = [...(restored?.completedToolCallIds ?? [])];
+    const pending: Array<{
+      request: ModelRequestedTool;
+      recoverToolCallId?: string;
+    }> = restored
+      ? [
+        { request: restored.pendingToolRequest, recoverToolCallId: input.checkpoint!.toolCallId },
+        ...restored.remainingModelToolRequests.map((request) => ({ request })),
+      ]
+      : [];
 
-    for (let modelStep = 1; modelStep <= 5; modelStep += 1) {
+    while (true) {
+      while (pending.length > 0) {
+        if (!this.tools) throw new ExecutionLimitExceededError('Model requested an unavailable Tool');
+        const current = pending.shift()!;
+        let outcome: AgentToolOutcome;
+        if (current.recoverToolCallId) {
+          outcome = await this.tools.recover(input, current.recoverToolCallId, current.request);
+        } else {
+          toolCallCount += 1;
+          if (toolCallCount > 8) throw new ExecutionLimitExceededError('Tool call limit exceeded');
+          outcome = await this.tools.invoke(input, current.request, signal);
+        }
+
+        if (outcome.kind === 'interrupt'
+          && !(outcome.interruptKind === 'tool_outcome_review'
+            && input.resumeResponse === 'continue_with_uncertainty')) {
+          const checkpoint: ExecutionCheckpoint = {
+            schemaVersion: 1,
+            engineKind: 'ai-sdk',
+            engineVersion: '1',
+            toolCallId: outcome.toolCallId,
+            outcome: outcome.interruptKind === 'tool_confirmation'
+              ? 'confirmation_required'
+              : 'requires_review',
+            toolLoop: {
+              modelStepNumber,
+              toolCallCount,
+              providerNeutralTranscript: transcript,
+              completedToolCallIds,
+              pendingToolRequest: current.request,
+              remainingModelToolRequests: pending.map((item) => item.request),
+              outputGeneration: input.outputGeneration ?? 0,
+            },
+          };
+          yield {
+            type: 'interrupt_requested',
+            kind: outcome.interruptKind,
+            subjectRef: outcome.toolCallId,
+            safeSubjectSummary: outcome.safeSummary,
+            allowedResponses: outcome.interruptKind === 'tool_confirmation'
+              ? ['confirm', 'reject']
+              : ['continue_with_uncertainty'],
+            checkpoint,
+          };
+          return;
+        }
+
+        const modelOutput = outcome.kind === 'completed'
+          ? outcome.modelOutput
+          : {
+            status: 'uncertain',
+            code: 'external_effect_unknown',
+            message: 'The external effect is unknown.',
+          };
+        transcript.push({
+          role: 'tool',
+          requestId: current.request.requestId,
+          name: current.request.name,
+          output: modelOutput,
+        });
+        completedToolCallIds.push(outcome.toolCallId);
+      }
+
+      modelStepNumber += 1;
+      if (modelStepNumber > 5) throw new ExecutionLimitExceededError('Model step limit exceeded');
       let completed = false;
       let assistantText = '';
       const requestedTools: ModelRequestedTool[] = [];
@@ -128,21 +238,9 @@ export class AiSdkAgentEngine implements AgentEngine {
         yield { type: 'completed' };
         return;
       }
-      if (!this.tools) throw new ExecutionLimitExceededError('Model requested an unavailable Tool');
       transcript.push({ role: 'assistant', text: assistantText, toolRequests: requestedTools });
-      for (const request of requestedTools) {
-        toolCallCount += 1;
-        if (toolCallCount > 8) throw new ExecutionLimitExceededError('Tool call limit exceeded');
-        const outcome = await this.tools.invoke(input, request);
-        transcript.push({
-          role: 'tool',
-          requestId: request.requestId,
-          name: request.name,
-          output: outcome.modelOutput,
-        });
-      }
+      pending.push(...requestedTools.map((request) => ({ request })));
     }
-    throw new ExecutionLimitExceededError('Model step limit exceeded');
   }
 }
 

@@ -22,6 +22,7 @@ const environmentSchema = z.object({
   CMASTER_DEVELOPMENT_IDENTITY_ENABLED: z.enum(['true', 'false']).default('false').transform((value) => value === 'true'),
   CMASTER_AI_SDK_RUNTIME_ENABLED: z.enum(['true', 'false']).default('false').transform((value) => value === 'true'),
   CMASTER_TOOL_RUNTIME_ENABLED: z.enum(['true', 'false']).default('false').transform((value) => value === 'true'),
+  CMASTER_HTTP_FETCH_ALLOWED_HOSTS: z.string().default(''),
   CMASTER_RUNTIME_ENV: z.enum(['development', 'test', 'production']).default('development'),
   CMASTER_DEV_ORGANIZATION_ID: z.uuid().default('00000000-0000-4000-8000-000000000001'),
   CMASTER_DEV_PRINCIPAL_ID: z.uuid().default('00000000-0000-4000-8000-000000000002'),
@@ -66,6 +67,9 @@ export interface ServerConfig {
     echoAgentRevisionId: string;
     aiSdkAgentRevisionId: string;
   };
+  toolRuntime: {
+    httpFetchAllowedHosts: readonly string[];
+  };
   modelRuntime?: {
     primary: {
       profileId: string;
@@ -91,6 +95,17 @@ export interface ServerConfig {
     maxAttempts: number;
     concurrency: number;
   };
+}
+
+function parseAllowedHosts(value: string): string[] {
+  const hosts = value.split(',').map((host) => host.trim().toLowerCase()).filter(Boolean);
+  for (const host of hosts) {
+    const parsed = new URL(`https://${host}`);
+    if (parsed.hostname !== host || parsed.port || parsed.pathname !== '/') {
+      throw new Error('HTTP fetch allowlist must contain hostnames only');
+    }
+  }
+  return [...new Set(hosts)];
 }
 
 function roleFromArguments(argv: readonly string[]): string | undefined {
@@ -151,6 +166,9 @@ export function loadServerConfig(
       toolRuntime: parsed.CMASTER_TOOL_RUNTIME_ENABLED,
     },
     runtimeEnvironment: parsed.CMASTER_RUNTIME_ENV,
+    toolRuntime: {
+      httpFetchAllowedHosts: parseAllowedHosts(parsed.CMASTER_HTTP_FETCH_ALLOWED_HOSTS),
+    },
     developmentIdentity: {
       organizationId: parsed.CMASTER_DEV_ORGANIZATION_ID,
       principalId: parsed.CMASTER_DEV_PRINCIPAL_ID,
