@@ -29,7 +29,7 @@ npm run next:server -- --role=all
 npm run next:web
 ```
 
-The API listens on port 3100 and Web on 3101. `CMASTER_WEB_ORIGIN` defaults to `http://localhost:3101` and constrains development CORS.
+The API listens on port 3100 and Web on 3101. `CMASTER_WEB_ORIGIN` defaults to `http://localhost:3101` and constrains development CORS. Contract source uses package-private `#internal/*` imports so Turbopack development resolves explicit TypeScript sources while emitted NodeNext ESM resolves the corresponding JavaScript files.
 
 Server roles:
 

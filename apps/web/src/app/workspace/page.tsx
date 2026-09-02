@@ -19,17 +19,19 @@ export default function WorkspacePage() {
     const client = createContractClient(apiUrl);
     try {
       const conversation = await client.POST('/api/v1/conversations', {
-        headers: { 'idempotency-key': crypto.randomUUID() }, body: {},
+        params: { header: { 'idempotency-key': crypto.randomUUID() } }, body: {},
       });
       if (!conversation.data) throw new Error('Conversation could not be created');
       const message = await client.POST('/api/v1/conversations/{conversationId}/messages', {
-        params: { path: { conversationId: conversation.data.id } },
-        headers: { 'idempotency-key': crypto.randomUUID() },
+        params: {
+          path: { conversationId: conversation.data.id },
+          header: { 'idempotency-key': crypto.randomUUID() },
+        },
         body: { parts: [{ type: 'text', text }] },
       });
       if (!message.data) throw new Error('Message could not be created');
       const run = await client.POST('/api/v1/runs', {
-        headers: { 'idempotency-key': crypto.randomUUID() },
+        params: { header: { 'idempotency-key': crypto.randomUUID() } },
         body: { trigger: { type: 'message', messageId: message.data.id } },
       });
       if (!run.data) throw new Error('Run could not be accepted');

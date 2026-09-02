@@ -3,7 +3,6 @@
 import {
   createContractClient,
   runEventEnvelopeSchema,
-  type MessageContract,
   type RunSnapshotContract,
 } from '@cmaster/contracts';
 import { useParams } from 'next/navigation';
@@ -12,11 +11,17 @@ import { applyRunEvent, projectionFromSnapshot, type RunProjection } from '../..
 
 const apiUrl = process.env.NEXT_PUBLIC_CMASTER_API_URL ?? 'http://localhost:3100';
 
+type DisplayMessage = {
+  id: string;
+  author: 'employee' | 'assistant';
+  parts: ReadonlyArray<{ type: 'text'; text: string }>;
+};
+
 export default function RunPage() {
   const params = useParams<{ runId: string }>();
   const runId = params.runId;
   const [snapshot, setSnapshot] = useState<RunSnapshotContract>();
-  const [messages, setMessages] = useState<MessageContract[]>([]);
+  const [messages, setMessages] = useState<DisplayMessage[]>([]);
   const [projection, dispatch] = useReducer(
     (state: RunProjection | undefined, action: RunProjection | Parameters<typeof applyRunEvent>[1]) => {
       if ('events' in action) return action;
@@ -104,7 +109,10 @@ export default function RunPage() {
   async function cancel(): Promise<void> {
     const client = createContractClient(apiUrl);
     const result = await client.POST('/api/v1/runs/{runId}/commands/cancel', {
-      params: { path: { runId } }, headers: { 'idempotency-key': crypto.randomUUID() },
+      params: {
+        path: { runId },
+        header: { 'idempotency-key': crypto.randomUUID() },
+      },
     });
     if (result.error) setError('结果已经生成，无法取消。');
     await loadSnapshot();
@@ -117,8 +125,10 @@ export default function RunPage() {
     setError(undefined);
     const client = createContractClient(apiUrl);
     const result = await client.POST('/api/v1/runs/{runId}/tool-confirmations/{interruptId}/resolve', {
-      params: { path: { runId, interruptId: interrupt.id } },
-      headers: { 'idempotency-key': crypto.randomUUID() },
+      params: {
+        path: { runId, interruptId: interrupt.id },
+        header: { 'idempotency-key': crypto.randomUUID() },
+      },
       body: { response },
     });
     if (result.error) setError('无法保存 Tool 确认结果。');
@@ -133,8 +143,10 @@ export default function RunPage() {
     setError(undefined);
     const client = createContractClient(apiUrl);
     const result = await client.POST('/api/v1/runs/{runId}/interrupts/{interruptId}/resolve', {
-      params: { path: { runId, interruptId: interrupt.id } },
-      headers: { 'idempotency-key': crypto.randomUUID() },
+      params: {
+        path: { runId, interruptId: interrupt.id },
+        header: { 'idempotency-key': crypto.randomUUID() },
+      },
       body: { response: 'continue_with_uncertainty' },
     });
     if (result.error) setError('无法保存不确定结果处理决定。');
@@ -200,7 +212,7 @@ export default function RunPage() {
         {messages.map((message) => (
           <article className="message" key={message.id}>
             <strong>{message.author}</strong>
-            <p>{message.parts[0].text}</p>
+            <p>{message.parts[0]?.text ?? ''}</p>
           </article>
         ))}
       </section>
