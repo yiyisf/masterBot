@@ -260,7 +260,7 @@ describe('AI SDK Model Runtime', () => {
       },
     });
 
-    expect(invoked).toEqual(['provider-call-1']);
+    expect(invoked).toEqual(['model-step-1-tool-1']);
     expect(adapter.primaryCalls).toBe(2);
     expect(await runtime.execution.getRun(
       runtime.identity.resolveRequest(), runtime.runId,

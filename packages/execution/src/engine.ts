@@ -72,6 +72,7 @@ export type EngineEvent =
     toolName: string;
     safeSummary: { title: string; details: Readonly<Record<string, string>> };
   }
+  | { type: 'checkpoint_reached'; checkpoint: ExecutionCheckpoint }
   | {
     type: 'interrupt_requested';
     kind: InterruptKind;
@@ -129,7 +130,12 @@ export class AiSdkAgentEngine implements AgentEngine {
       recoverToolCallId?: string;
     }> = restored && restoredCheckpoint
       ? [
-        { request: restored.pendingToolRequest, recoverToolCallId: restoredCheckpoint.toolCallId },
+        ...(restored.pendingToolRequest
+          ? [{
+            request: restored.pendingToolRequest,
+            recoverToolCallId: restoredCheckpoint.toolCallId,
+          }]
+          : []),
         ...restored.remainingModelToolRequests.map((request) => ({ request })),
       ]
       : [];
@@ -145,7 +151,10 @@ export class AiSdkAgentEngine implements AgentEngine {
         } else {
           toolCallCount += 1;
           if (toolCallCount > 8) throw new ExecutionLimitExceededError('Tool call limit exceeded');
-          outcome = await this.tools.invoke(input, current.request, signal);
+          outcome = await this.tools.invoke(input, {
+            ...current.request,
+            requestId: `model-step-${modelStepNumber}-tool-${toolCallCount}`,
+          }, signal);
         }
 
         const continuingUncertainOutcome = outcome.kind === 'interrupt'
@@ -210,6 +219,24 @@ export class AiSdkAgentEngine implements AgentEngine {
           output: modelOutput,
         });
         completedToolCallIds.push(outcome.toolCallId);
+        yield {
+          type: 'checkpoint_reached',
+          checkpoint: {
+            schemaVersion: 1,
+            engineKind: 'ai-sdk',
+            engineVersion: '1',
+            toolCallId: outcome.toolCallId,
+            outcome: 'completed',
+            toolLoop: {
+              modelStepNumber,
+              toolCallCount,
+              providerNeutralTranscript: transcript,
+              completedToolCallIds,
+              remainingModelToolRequests: pending.map((item) => item.request),
+              outputGeneration: input.outputGeneration ?? 0,
+            },
+          },
+        };
       }
 
       modelStepNumber += 1;

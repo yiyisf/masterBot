@@ -495,6 +495,32 @@ export class PostgresExecutionModule implements ExecutionModule {
     }
   }
 
+  async saveCheckpoint(lease: RunLease, checkpoint: ExecutionCheckpoint): Promise<void> {
+    const client = await this.pool.connect();
+    try {
+      await client.query('BEGIN');
+      await verifyLease(client, lease);
+      await client.query(
+        `UPDATE execution_checkpoints SET consumed_at = clock_timestamp()
+         WHERE organization_id = $1 AND run_id = $2 AND consumed_at IS NULL`,
+        [lease.organizationId, lease.runId],
+      );
+      await client.query(
+        `INSERT INTO execution_checkpoints (
+           id, organization_id, run_id, invocation_id, schema_version, checkpoint_data
+         ) VALUES ($1, $2, $3, $4, 1, $5)`,
+        [randomUUID(), lease.organizationId, lease.runId, lease.invocationId,
+          JSON.stringify(checkpoint)],
+      );
+      await client.query('COMMIT');
+    } catch (error) {
+      await client.query('ROLLBACK');
+      throw error;
+    } finally {
+      client.release();
+    }
+  }
+
   async requestInterrupt(
     lease: RunLease,
     command: RequestInterruptCommand,
@@ -507,6 +533,11 @@ export class PostgresExecutionModule implements ExecutionModule {
       if (!run || run.status !== 'running' || run.prepared_output !== null) throw new StaleLeaseError();
       const checkpointId = randomUUID();
       const interruptId = randomUUID();
+      await client.query(
+        `UPDATE execution_checkpoints SET consumed_at = clock_timestamp()
+         WHERE organization_id = $1 AND run_id = $2 AND consumed_at IS NULL`,
+        [lease.organizationId, lease.runId],
+      );
       await client.query(
         `INSERT INTO execution_checkpoints (
            id, organization_id, run_id, invocation_id, schema_version, checkpoint_data

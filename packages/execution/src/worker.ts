@@ -141,6 +141,10 @@ export class RunWorker {
           continue;
         }
         await flush();
+        if (event.type === 'checkpoint_reached') {
+          await this.execution.saveCheckpoint(lease, event.checkpoint);
+          continue;
+        }
         if (event.type === 'interrupt_requested') {
           await this.execution.requestInterrupt(lease, {
             kind: event.kind,
@@ -252,6 +256,7 @@ export class RunWorker {
       case 'completed':
         break;
       case 'interrupt_requested':
+      case 'checkpoint_reached':
         break;
     }
   }

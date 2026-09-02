@@ -79,13 +79,13 @@ export interface ExecutionCheckpoint {
   engineKind: 'echo' | 'ai-sdk';
   engineVersion: '1';
   toolCallId: string;
-  outcome: 'confirmation_required' | 'requires_review';
+  outcome: 'completed' | 'confirmation_required' | 'requires_review';
   toolLoop?: {
     modelStepNumber: number;
     toolCallCount: number;
     providerNeutralTranscript: readonly ModelTranscriptMessage[];
     completedToolCallIds: readonly string[];
-    pendingToolRequest: ModelRequestedTool;
+    pendingToolRequest?: ModelRequestedTool;
     remainingModelToolRequests: readonly ModelRequestedTool[];
     outputGeneration: number;
   };
