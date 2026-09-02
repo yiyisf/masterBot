@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { isoDateTimeSchema, uuidSchema } from './conversations.js';
+import { isoDateTimeSchema, uuidSchema } from '#internal/conversations';
 
 export const runStatusSchema = z.enum([
   'accepted', 'queued', 'running', 'waiting', 'succeeded', 'failed', 'cancelled',

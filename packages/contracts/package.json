@@ -11,10 +11,17 @@
       "default": "./dist/index.js"
     }
   },
+  "imports": {
+    "#internal/*": {
+      "types": "./src/*.ts",
+      "development": "./src/*.ts",
+      "default": "./dist/*.js"
+    }
+  },
   "files": ["dist", "openapi"],
   "scripts": {
     "build": "tsc -b",
-    "generate": "tsx scripts/generate-openapi.ts && openapi-typescript openapi/openapi.v1.json -o src/generated/openapi.d.ts",
+    "generate": "tsx --conditions=development scripts/generate-openapi.ts && openapi-typescript openapi/openapi.v1.json -o src/generated/openapi.d.ts",
     "test": "vitest run"
   },
   "dependencies": {

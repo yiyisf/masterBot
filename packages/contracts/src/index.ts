@@ -1,4 +1,4 @@
-export { createContractClient, type ContractClient } from './client.js';
+export { createContractClient, type ContractClient } from '#internal/client';
 export {
   appendMessageRequestSchema,
   conversationSchema,
@@ -11,8 +11,8 @@ export {
   uuidSchema,
   type ConversationContract,
   type MessageContract,
-} from './conversations.js';
-export { problemDetailsSchema, type ProblemDetails } from './problem.js';
+} from '#internal/conversations';
+export { problemDetailsSchema, type ProblemDetails } from '#internal/problem';
 export {
   acceptRunResponseSchema,
   cancelRunResponseSchema,
@@ -28,11 +28,11 @@ export {
   type AcceptRunResponseContract,
   type RunEventContract,
   type RunSnapshotContract,
-} from './runs.js';
+} from '#internal/runs';
 export {
   serverRoleSchema,
   systemStatusSchema,
   type ServerRole,
   type SystemStatus,
-} from './system-status.js';
+} from '#internal/system-status';
 export type { paths } from './generated/openapi.js';
