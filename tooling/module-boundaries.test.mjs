@@ -36,8 +36,15 @@ test('PostgreSQL adapters query only tables owned by their Module', async () => 
     identity: new Set(['organizations', 'principals']),
     agents: new Set(['agents', 'agent_revisions']),
     conversations: new Set(['conversations', 'messages']),
-    execution: new Set(['runs', 'invocations', 'run_events', 'execution_outbox', 'run_dispatch', 'run_command_receipts']),
+    execution: new Set([
+      'runs', 'invocations', 'run_events', 'execution_outbox', 'run_dispatch',
+      'run_command_receipts', 'execution_checkpoints', 'execution_interrupts',
+    ]),
     models: new Set(['model_profiles', 'model_calls']),
+    governance: new Set(['approvals']),
+    tools: new Set([
+      'tool_capabilities', 'tool_revisions', 'tool_grants', 'tool_calls', 'tool_dispatch_attempts',
+    ]),
   };
   const files = {
     identity: 'packages/identity/src/index.ts',
@@ -45,6 +52,8 @@ test('PostgreSQL adapters query only tables owned by their Module', async () => 
     conversations: 'packages/conversations/src/index.ts',
     execution: 'packages/execution/src/postgres.ts',
     models: 'packages/models/src/postgres.ts',
+    governance: 'packages/governance/src/postgres.ts',
+    tools: 'packages/tools/src/postgres.ts',
   };
   for (const [moduleName, relativeFile] of Object.entries(files)) {
     const source = await readFile(path.join(root, relativeFile), 'utf8');

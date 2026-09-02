@@ -44,6 +44,18 @@ module.exports = {
       to: { path: '^(apps|packages/(agents|conversations|execution)/)' },
     },
     {
+      name: 'governance-must-not-depend-on-runtime-modules',
+      severity: 'error',
+      from: { path: '^packages/governance/' },
+      to: { path: '^(apps|packages/(conversations|execution|models|tools)/)' },
+    },
+    {
+      name: 'tools-must-not-depend-on-execution-models-or-conversations',
+      severity: 'error',
+      from: { path: '^packages/tools/' },
+      to: { path: '^(apps|packages/(conversations|execution|models)/)' },
+    },
+    {
       name: 'conversations-must-not-depend-on-agents-or-execution',
       severity: 'error',
       from: { path: '^packages/conversations/' },

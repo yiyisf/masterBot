@@ -322,6 +322,7 @@
                 "enum": [
                   "pending",
                   "running",
+                  "interrupted",
                   "succeeded",
                   "failed",
                   "cancelled"
@@ -339,6 +340,7 @@
               "accepted",
               "queued",
               "running",
+              "waiting",
               "succeeded",
               "failed",
               "cancelled"
@@ -421,6 +423,71 @@
               "code",
               "message",
               "retryable"
+            ]
+          },
+          "activeInterrupt": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string",
+                "format": "uuid"
+              },
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "tool_confirmation",
+                  "tool_outcome_review"
+                ]
+              },
+              "status": {
+                "type": "string",
+                "enum": [
+                  "pending"
+                ]
+              },
+              "subjectRef": {
+                "type": "string",
+                "minLength": 1
+              },
+              "safeSubjectSummary": {
+                "type": "object",
+                "properties": {
+                  "title": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "details": {
+                    "type": "object",
+                    "additionalProperties": {
+                      "type": "string"
+                    }
+                  }
+                },
+                "required": [
+                  "title",
+                  "details"
+                ]
+              },
+              "allowedResponses": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "enum": [
+                    "confirm",
+                    "reject",
+                    "continue_with_uncertainty"
+                  ]
+                },
+                "minItems": 1
+              }
+            },
+            "required": [
+              "id",
+              "kind",
+              "status",
+              "subjectRef",
+              "safeSubjectSummary",
+              "allowedResponses"
             ]
           },
           "createdAt": {
@@ -610,6 +677,7 @@
                     "enum": [
                       "pending",
                       "running",
+                      "interrupted",
                       "succeeded",
                       "failed",
                       "cancelled"
@@ -627,6 +695,7 @@
                   "accepted",
                   "queued",
                   "running",
+                  "waiting",
                   "succeeded",
                   "failed",
                   "cancelled"
@@ -711,6 +780,71 @@
                   "retryable"
                 ]
               },
+              "activeInterrupt": {
+                "type": "object",
+                "properties": {
+                  "id": {
+                    "type": "string",
+                    "format": "uuid"
+                  },
+                  "kind": {
+                    "type": "string",
+                    "enum": [
+                      "tool_confirmation",
+                      "tool_outcome_review"
+                    ]
+                  },
+                  "status": {
+                    "type": "string",
+                    "enum": [
+                      "pending"
+                    ]
+                  },
+                  "subjectRef": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "safeSubjectSummary": {
+                    "type": "object",
+                    "properties": {
+                      "title": {
+                        "type": "string",
+                        "minLength": 1
+                      },
+                      "details": {
+                        "type": "object",
+                        "additionalProperties": {
+                          "type": "string"
+                        }
+                      }
+                    },
+                    "required": [
+                      "title",
+                      "details"
+                    ]
+                  },
+                  "allowedResponses": {
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "enum": [
+                        "confirm",
+                        "reject",
+                        "continue_with_uncertainty"
+                      ]
+                    },
+                    "minItems": 1
+                  }
+                },
+                "required": [
+                  "id",
+                  "kind",
+                  "status",
+                  "subjectRef",
+                  "safeSubjectSummary",
+                  "allowedResponses"
+                ]
+              },
               "createdAt": {
                 "type": "string",
                 "format": "date-time"
@@ -743,6 +877,576 @@
         },
         "required": [
           "outcome",
+          "run"
+        ]
+      },
+      "ResolveInterruptResponse": {
+        "type": "object",
+        "properties": {
+          "run": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string",
+                "format": "uuid"
+              },
+              "organizationId": {
+                "type": "string",
+                "format": "uuid"
+              },
+              "initiatingPrincipalId": {
+                "type": "string",
+                "format": "uuid"
+              },
+              "conversationId": {
+                "type": "string",
+                "format": "uuid"
+              },
+              "trigger": {
+                "type": "object",
+                "properties": {
+                  "type": {
+                    "type": "string",
+                    "enum": [
+                      "message"
+                    ]
+                  },
+                  "messageId": {
+                    "type": "string",
+                    "format": "uuid"
+                  }
+                },
+                "required": [
+                  "type",
+                  "messageId"
+                ]
+              },
+              "agentId": {
+                "type": "string",
+                "format": "uuid"
+              },
+              "agentRevisionId": {
+                "type": "string",
+                "format": "uuid"
+              },
+              "engine": {
+                "type": "object",
+                "properties": {
+                  "kind": {
+                    "type": "string",
+                    "enum": [
+                      "echo",
+                      "ai-sdk"
+                    ]
+                  },
+                  "version": {
+                    "type": "string",
+                    "enum": [
+                      "1"
+                    ]
+                  }
+                },
+                "required": [
+                  "kind",
+                  "version"
+                ]
+              },
+              "rootInvocation": {
+                "type": "object",
+                "properties": {
+                  "id": {
+                    "type": "string",
+                    "format": "uuid"
+                  },
+                  "status": {
+                    "type": "string",
+                    "enum": [
+                      "pending",
+                      "running",
+                      "interrupted",
+                      "succeeded",
+                      "failed",
+                      "cancelled"
+                    ]
+                  }
+                },
+                "required": [
+                  "id",
+                  "status"
+                ]
+              },
+              "status": {
+                "type": "string",
+                "enum": [
+                  "accepted",
+                  "queued",
+                  "running",
+                  "waiting",
+                  "succeeded",
+                  "failed",
+                  "cancelled"
+                ]
+              },
+              "cancellable": {
+                "type": "boolean"
+              },
+              "lastSequence": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "assistantMessageId": {
+                "type": "string",
+                "format": "uuid"
+              },
+              "model": {
+                "type": "object",
+                "properties": {
+                  "profileId": {
+                    "type": "string",
+                    "format": "uuid"
+                  },
+                  "displayName": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "fallbackUsed": {
+                    "type": "boolean"
+                  }
+                },
+                "required": [
+                  "profileId",
+                  "displayName",
+                  "fallbackUsed"
+                ]
+              },
+              "usage": {
+                "type": "object",
+                "properties": {
+                  "inputTokens": {
+                    "type": "integer",
+                    "minimum": 0
+                  },
+                  "outputTokens": {
+                    "type": "integer",
+                    "minimum": 0
+                  },
+                  "totalTokens": {
+                    "type": "integer",
+                    "minimum": 0
+                  }
+                },
+                "required": [
+                  "inputTokens",
+                  "outputTokens",
+                  "totalTokens"
+                ]
+              },
+              "failure": {
+                "type": "object",
+                "properties": {
+                  "code": {
+                    "type": "string",
+                    "enum": [
+                      "engine_failed",
+                      "model_failed",
+                      "dispatch_attempts_exhausted",
+                      "output_delivery_failed"
+                    ]
+                  },
+                  "message": {
+                    "type": "string"
+                  },
+                  "retryable": {
+                    "type": "boolean"
+                  }
+                },
+                "required": [
+                  "code",
+                  "message",
+                  "retryable"
+                ]
+              },
+              "activeInterrupt": {
+                "type": "object",
+                "properties": {
+                  "id": {
+                    "type": "string",
+                    "format": "uuid"
+                  },
+                  "kind": {
+                    "type": "string",
+                    "enum": [
+                      "tool_confirmation",
+                      "tool_outcome_review"
+                    ]
+                  },
+                  "status": {
+                    "type": "string",
+                    "enum": [
+                      "pending"
+                    ]
+                  },
+                  "subjectRef": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "safeSubjectSummary": {
+                    "type": "object",
+                    "properties": {
+                      "title": {
+                        "type": "string",
+                        "minLength": 1
+                      },
+                      "details": {
+                        "type": "object",
+                        "additionalProperties": {
+                          "type": "string"
+                        }
+                      }
+                    },
+                    "required": [
+                      "title",
+                      "details"
+                    ]
+                  },
+                  "allowedResponses": {
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "enum": [
+                        "confirm",
+                        "reject",
+                        "continue_with_uncertainty"
+                      ]
+                    },
+                    "minItems": 1
+                  }
+                },
+                "required": [
+                  "id",
+                  "kind",
+                  "status",
+                  "subjectRef",
+                  "safeSubjectSummary",
+                  "allowedResponses"
+                ]
+              },
+              "createdAt": {
+                "type": "string",
+                "format": "date-time"
+              },
+              "startedAt": {
+                "type": "string",
+                "format": "date-time"
+              },
+              "completedAt": {
+                "type": "string",
+                "format": "date-time"
+              }
+            },
+            "required": [
+              "id",
+              "organizationId",
+              "initiatingPrincipalId",
+              "conversationId",
+              "trigger",
+              "agentId",
+              "agentRevisionId",
+              "engine",
+              "rootInvocation",
+              "status",
+              "cancellable",
+              "lastSequence",
+              "createdAt"
+            ]
+          }
+        },
+        "required": [
+          "run"
+        ]
+      },
+      "ResolveToolConfirmationResponse": {
+        "type": "object",
+        "properties": {
+          "run": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string",
+                "format": "uuid"
+              },
+              "organizationId": {
+                "type": "string",
+                "format": "uuid"
+              },
+              "initiatingPrincipalId": {
+                "type": "string",
+                "format": "uuid"
+              },
+              "conversationId": {
+                "type": "string",
+                "format": "uuid"
+              },
+              "trigger": {
+                "type": "object",
+                "properties": {
+                  "type": {
+                    "type": "string",
+                    "enum": [
+                      "message"
+                    ]
+                  },
+                  "messageId": {
+                    "type": "string",
+                    "format": "uuid"
+                  }
+                },
+                "required": [
+                  "type",
+                  "messageId"
+                ]
+              },
+              "agentId": {
+                "type": "string",
+                "format": "uuid"
+              },
+              "agentRevisionId": {
+                "type": "string",
+                "format": "uuid"
+              },
+              "engine": {
+                "type": "object",
+                "properties": {
+                  "kind": {
+                    "type": "string",
+                    "enum": [
+                      "echo",
+                      "ai-sdk"
+                    ]
+                  },
+                  "version": {
+                    "type": "string",
+                    "enum": [
+                      "1"
+                    ]
+                  }
+                },
+                "required": [
+                  "kind",
+                  "version"
+                ]
+              },
+              "rootInvocation": {
+                "type": "object",
+                "properties": {
+                  "id": {
+                    "type": "string",
+                    "format": "uuid"
+                  },
+                  "status": {
+                    "type": "string",
+                    "enum": [
+                      "pending",
+                      "running",
+                      "interrupted",
+                      "succeeded",
+                      "failed",
+                      "cancelled"
+                    ]
+                  }
+                },
+                "required": [
+                  "id",
+                  "status"
+                ]
+              },
+              "status": {
+                "type": "string",
+                "enum": [
+                  "accepted",
+                  "queued",
+                  "running",
+                  "waiting",
+                  "succeeded",
+                  "failed",
+                  "cancelled"
+                ]
+              },
+              "cancellable": {
+                "type": "boolean"
+              },
+              "lastSequence": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "assistantMessageId": {
+                "type": "string",
+                "format": "uuid"
+              },
+              "model": {
+                "type": "object",
+                "properties": {
+                  "profileId": {
+                    "type": "string",
+                    "format": "uuid"
+                  },
+                  "displayName": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "fallbackUsed": {
+                    "type": "boolean"
+                  }
+                },
+                "required": [
+                  "profileId",
+                  "displayName",
+                  "fallbackUsed"
+                ]
+              },
+              "usage": {
+                "type": "object",
+                "properties": {
+                  "inputTokens": {
+                    "type": "integer",
+                    "minimum": 0
+                  },
+                  "outputTokens": {
+                    "type": "integer",
+                    "minimum": 0
+                  },
+                  "totalTokens": {
+                    "type": "integer",
+                    "minimum": 0
+                  }
+                },
+                "required": [
+                  "inputTokens",
+                  "outputTokens",
+                  "totalTokens"
+                ]
+              },
+              "failure": {
+                "type": "object",
+                "properties": {
+                  "code": {
+                    "type": "string",
+                    "enum": [
+                      "engine_failed",
+                      "model_failed",
+                      "dispatch_attempts_exhausted",
+                      "output_delivery_failed"
+                    ]
+                  },
+                  "message": {
+                    "type": "string"
+                  },
+                  "retryable": {
+                    "type": "boolean"
+                  }
+                },
+                "required": [
+                  "code",
+                  "message",
+                  "retryable"
+                ]
+              },
+              "activeInterrupt": {
+                "type": "object",
+                "properties": {
+                  "id": {
+                    "type": "string",
+                    "format": "uuid"
+                  },
+                  "kind": {
+                    "type": "string",
+                    "enum": [
+                      "tool_confirmation",
+                      "tool_outcome_review"
+                    ]
+                  },
+                  "status": {
+                    "type": "string",
+                    "enum": [
+                      "pending"
+                    ]
+                  },
+                  "subjectRef": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "safeSubjectSummary": {
+                    "type": "object",
+                    "properties": {
+                      "title": {
+                        "type": "string",
+                        "minLength": 1
+                      },
+                      "details": {
+                        "type": "object",
+                        "additionalProperties": {
+                          "type": "string"
+                        }
+                      }
+                    },
+                    "required": [
+                      "title",
+                      "details"
+                    ]
+                  },
+                  "allowedResponses": {
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "enum": [
+                        "confirm",
+                        "reject",
+                        "continue_with_uncertainty"
+                      ]
+                    },
+                    "minItems": 1
+                  }
+                },
+                "required": [
+                  "id",
+                  "kind",
+                  "status",
+                  "subjectRef",
+                  "safeSubjectSummary",
+                  "allowedResponses"
+                ]
+              },
+              "createdAt": {
+                "type": "string",
+                "format": "date-time"
+              },
+              "startedAt": {
+                "type": "string",
+                "format": "date-time"
+              },
+              "completedAt": {
+                "type": "string",
+                "format": "date-time"
+              }
+            },
+            "required": [
+              "id",
+              "organizationId",
+              "initiatingPrincipalId",
+              "conversationId",
+              "trigger",
+              "agentId",
+              "agentRevisionId",
+              "engine",
+              "rootInvocation",
+              "status",
+              "cancellable",
+              "lastSequence",
+              "createdAt"
+            ]
+          }
+        },
+        "required": [
           "run"
         ]
       },
@@ -1271,6 +1975,225 @@
           },
           "404": {
             "description": "Not found",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/runs/{runId}/tool-confirmations/{interruptId}/resolve": {
+      "post": {
+        "summary": "Confirm or reject an active Tool call",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "required": true,
+            "name": "runId",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "required": true,
+            "name": "interruptId",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "required": true,
+            "name": "idempotency-key",
+            "in": "header"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "response": {
+                    "type": "string",
+                    "enum": [
+                      "confirm",
+                      "reject"
+                    ]
+                  }
+                },
+                "required": [
+                  "response"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Tool confirmation resolved or replayed",
+            "headers": {
+              "Idempotency-Replayed": {
+                "schema": {
+                  "type": "string",
+                  "enum": [
+                    "true",
+                    "false"
+                  ]
+                },
+                "required": true
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ResolveToolConfirmationResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Tool confirmation or idempotency conflict",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/runs/{runId}/interrupts/{interruptId}/resolve": {
+      "post": {
+        "summary": "Resolve an active Run Interrupt",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "required": true,
+            "name": "runId",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "required": true,
+            "name": "interruptId",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "required": true,
+            "name": "idempotency-key",
+            "in": "header"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "response": {
+                    "type": "string",
+                    "enum": [
+                      "continue_with_uncertainty"
+                    ]
+                  }
+                },
+                "required": [
+                  "response"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Interrupt resolved or replayed",
+            "headers": {
+              "Idempotency-Replayed": {
+                "schema": {
+                  "type": "string",
+                  "enum": [
+                    "true",
+                    "false"
+                  ]
+                },
+                "required": true
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ResolveInterruptResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Interrupt response or idempotency conflict",
             "content": {
               "application/problem+json": {
                 "schema": {

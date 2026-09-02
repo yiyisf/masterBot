@@ -16,6 +16,22 @@ function apiError(statusCode: number, responseBody?: string): APICallError {
   });
 }
 
+function modelProfile(baseUrl: string): ModelProfile {
+  return {
+    id: modelProfileId('00000000-0000-4000-8000-000000000006'),
+    organizationId: '00000000-0000-4000-8000-000000000001' as OrganizationId,
+    displayName: 'Test Model',
+    routeRole: 'primary',
+    providerKind: 'openai-compatible',
+    baseUrl,
+    providerModelId: 'test-model',
+    credentialRef: 'env:test',
+    capabilities: { streamingText: true },
+    dataHandlingTier: 'test',
+    costTier: 'test',
+  };
+}
+
 describe('OpenAICompatibleModelAdapter error classification', () => {
   const adapter = new OpenAICompatibleModelAdapter();
 
@@ -61,19 +77,7 @@ describe('OpenAICompatibleModelAdapter error classification', () => {
     await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
     try {
       const address = server.address() as AddressInfo;
-      const profile: ModelProfile = {
-        id: modelProfileId('00000000-0000-4000-8000-000000000006'),
-        organizationId: '00000000-0000-4000-8000-000000000001' as OrganizationId,
-        displayName: 'Test Model',
-        routeRole: 'primary',
-        providerKind: 'openai-compatible',
-        baseUrl: `http://127.0.0.1:${address.port}/v1`,
-        providerModelId: 'test-model',
-        credentialRef: 'env:test',
-        capabilities: { streamingText: true },
-        dataHandlingTier: 'test',
-        costTier: 'test',
-      };
+      const profile = modelProfile(`http://127.0.0.1:${address.port}/v1`);
       const events: ModelAdapterEvent[] = [];
       for await (const event of adapter.stream({
         profile,
@@ -86,6 +90,93 @@ describe('OpenAICompatibleModelAdapter error classification', () => {
       expect(events).toEqual([
         { type: 'text_delta', text: 'hello' },
         { type: 'completed', usage: { inputTokens: 2, outputTokens: 1, totalTokens: 3 } },
+      ]);
+    } finally {
+      await new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
+    }
+  });
+
+  it('projects dynamic Tool schemas and returns Provider tool calls without executing them', async () => {
+    let requestBody: {
+      tools?: Array<{ function?: { name?: string } }>;
+      messages?: Array<{ role?: string; tool_call_id?: string; content?: unknown }>;
+    } | undefined;
+    const server = createServer((request, response) => {
+      let body = '';
+      request.setEncoding('utf8');
+      request.on('data', (chunk) => { body += chunk; });
+      request.on('end', () => {
+        requestBody = JSON.parse(body) as typeof requestBody;
+        response.writeHead(200, { 'content-type': 'text/event-stream', connection: 'keep-alive' });
+        const base = { id: 'chatcmpl-tool', object: 'chat.completion.chunk', created: 1, model: 'test-model' };
+        response.write(`data: ${JSON.stringify({
+          ...base,
+          choices: [{
+            index: 0,
+            delta: {
+              role: 'assistant',
+              tool_calls: [{
+                index: 0, id: 'provider-call-1', type: 'function',
+                function: { name: 'current_time', arguments: '{}' },
+              }],
+            },
+            finish_reason: null,
+          }],
+        })}\n\n`);
+        response.write(`data: ${JSON.stringify({
+          ...base,
+          choices: [{ index: 0, delta: {}, finish_reason: 'tool_calls' }],
+          usage: { prompt_tokens: 3, completion_tokens: 1, total_tokens: 4 },
+        })}\n\n`);
+        response.end('data: [DONE]\n\n');
+      });
+    });
+    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+    try {
+      const address = server.address() as AddressInfo;
+      const events: ModelAdapterEvent[] = [];
+      for await (const event of adapter.stream({
+        profile: modelProfile(`http://127.0.0.1:${address.port}/v1`),
+        apiKey: 'test-secret',
+        prompt: 'what time is it?',
+        transcript: [
+          { role: 'user', text: 'what time is it?' },
+          {
+            role: 'assistant',
+            text: '',
+            toolRequests: [{ requestId: 'prior-call', name: 'current_time', input: {} }],
+          },
+          {
+            role: 'tool',
+            requestId: 'prior-call',
+            name: 'current_time',
+            output: { iso: '2026-01-02T12:00:00Z' },
+          },
+        ],
+        tools: [{
+          name: 'current_time',
+          description: 'Returns the current time.',
+          inputSchema: { type: 'object', properties: {}, additionalProperties: false },
+          outputSchema: { type: 'object' },
+        }],
+        signal: new AbortController().signal,
+      })) events.push(event);
+
+      expect(requestBody?.tools?.[0]?.function?.name).toBe('current_time');
+      expect(requestBody?.messages?.map((message) => message.role)).toEqual([
+        'user', 'assistant', 'tool',
+      ]);
+      expect(requestBody?.messages?.[2]).toMatchObject({
+        role: 'tool',
+        tool_call_id: 'prior-call',
+        content: '{"iso":"2026-01-02T12:00:00Z"}',
+      });
+      expect(events).toEqual([
+        {
+          type: 'tool_requested',
+          request: { requestId: 'provider-call-1', name: 'current_time', input: {} },
+        },
+        { type: 'completed', usage: { inputTokens: 3, outputTokens: 1, totalTokens: 4 } },
       ]);
     } finally {
       await new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));

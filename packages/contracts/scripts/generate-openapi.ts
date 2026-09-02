@@ -23,6 +23,12 @@ const run = registry.register('RunSnapshot', runs.runSnapshotSchema);
 const acceptRunResponse = registry.register('AcceptRunResponse', runs.acceptRunResponseSchema);
 registry.register('RunEvent', runs.runEventEnvelopeSchema);
 const cancelResponse = registry.register('CancelRunResponse', runs.cancelRunResponseSchema);
+const resolveInterruptResponse = registry.register(
+  'ResolveInterruptResponse', runs.resolveInterruptResponseSchema,
+);
+const resolveToolConfirmationResponse = registry.register(
+  'ResolveToolConfirmationResponse', runs.resolveToolConfirmationResponseSchema,
+);
 const systemStatus = registry.register('SystemStatus', systemStatusSchema);
 
 const idempotencyHeaders = z.object({ 'idempotency-key': z.uuid() });
@@ -84,6 +90,48 @@ registry.registerPath({
   method: 'get', path: '/api/v1/runs/{runId}', summary: 'Read a Run Snapshot',
   request: { params: idPath('runId') },
   responses: { 200: { description: 'Run Snapshot', content: { 'application/json': { schema: run } } }, 400: problemResponse('Invalid request'), 404: problemResponse('Not found') },
+});
+registry.registerPath({
+  method: 'post', path: '/api/v1/runs/{runId}/tool-confirmations/{interruptId}/resolve',
+  summary: 'Confirm or reject an active Tool call',
+  request: {
+    params: z.object({ runId: z.uuid(), interruptId: z.uuid() }),
+    headers: idempotencyHeaders,
+    body: {
+      required: true,
+      content: { 'application/json': { schema: runs.resolveToolConfirmationRequestSchema } },
+    },
+  },
+  responses: {
+    200: {
+      description: 'Tool confirmation resolved or replayed',
+      headers: idempotencyReplayHeaders,
+      content: { 'application/json': { schema: resolveToolConfirmationResponse } },
+    },
+    400: problemResponse('Invalid request'), 404: problemResponse('Not found'),
+    409: problemResponse('Tool confirmation or idempotency conflict'),
+  },
+});
+registry.registerPath({
+  method: 'post', path: '/api/v1/runs/{runId}/interrupts/{interruptId}/resolve',
+  summary: 'Resolve an active Run Interrupt',
+  request: {
+    params: z.object({ runId: z.uuid(), interruptId: z.uuid() }),
+    headers: idempotencyHeaders,
+    body: {
+      required: true,
+      content: { 'application/json': { schema: runs.resolveInterruptRequestSchema } },
+    },
+  },
+  responses: {
+    200: {
+      description: 'Interrupt resolved or replayed',
+      headers: idempotencyReplayHeaders,
+      content: { 'application/json': { schema: resolveInterruptResponse } },
+    },
+    400: problemResponse('Invalid request'), 404: problemResponse('Not found'),
+    409: problemResponse('Interrupt response or idempotency conflict'),
+  },
 });
 registry.registerPath({
   method: 'get', path: '/api/v1/runs/{runId}/events', summary: 'Stream replayable Run Events',

@@ -7,6 +7,10 @@ import {
   messagePageSchema,
   messageSchema,
   problemDetailsSchema,
+  resolveInterruptRequestSchema,
+  resolveInterruptResponseSchema,
+  resolveToolConfirmationRequestSchema,
+  resolveToolConfirmationResponseSchema,
   runEventEnvelopeSchema,
   runSnapshotSchema,
   uuidSchema,
@@ -23,6 +27,7 @@ import {
   type Message,
 } from '@cmaster/conversations';
 import {
+  interruptId,
   runCommandId,
   runId,
   RunIdempotencyConflictError,
@@ -37,6 +42,10 @@ import type { IdentityModule } from '@cmaster/identity';
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { ZodError, z } from 'zod';
 import type { RunEventNotifier } from './run-event-notifier.js';
+import {
+  ToolConfirmationConflictError,
+  type ToolConfirmationCoordinator,
+} from './tool-confirmation-coordinator.js';
 
 export interface RunApiDependencies {
   identity: IdentityModule;
@@ -44,6 +53,7 @@ export interface RunApiDependencies {
   conversations: ConversationModule;
   execution: ExecutionModule;
   notifier: RunEventNotifier;
+  toolConfirmation?: ToolConfirmationCoordinator;
 }
 
 export async function* followRunEventBatches(
@@ -122,6 +132,9 @@ export function sendRunApiError(
   }
   if (error instanceof ConversationNotFoundError || error instanceof MessageNotFoundError || error instanceof RunNotFoundError) {
     return problem(reply, request, 404, 'resource_not_found', 'Resource not found', 'The requested resource was not found.');
+  }
+  if (error instanceof ToolConfirmationConflictError) {
+    return problem(reply, request, 409, 'tool_confirmation_conflict', 'Tool confirmation conflict', 'The Tool confirmation is no longer active.');
   }
   if (error instanceof IdempotencyConflictError || error instanceof RunIdempotencyConflictError) {
     return problem(reply, request, 409, 'idempotency_conflict', 'Idempotency conflict', 'The Idempotency-Key was already used for another command.');
@@ -240,7 +253,50 @@ export function registerRunApi(app: FastifyInstance, dependencies: RunApiDepende
       if (result.kind === 'too_late') {
         return problem(reply, request, 409, 'run_cancellation_too_late', 'Cancellation too late', 'The result was already generated and will be delivered.');
       }
+      if (result.kind === 'tool_effect_in_flight') {
+        return problem(reply, request, 409, 'tool_effect_in_flight', 'Tool effect in flight', 'Cancellation is temporarily unavailable while the Tool Provider result is unknown.');
+      }
       return reply.send({ outcome: 'cancelled', run: runContract(result.run) });
+    } catch (error) {
+      return sendRunApiError(error, request, reply);
+    }
+  });
+
+  if (dependencies.toolConfirmation) {
+    app.post('/api/v1/runs/:runId/tool-confirmations/:interruptId/resolve', async (request, reply) => {
+      try {
+        const params = z.object({ runId: uuidSchema, interruptId: uuidSchema }).parse(request.params);
+        const body = resolveToolConfirmationRequestSchema.parse(request.body);
+        // Confirmation is durable; Browser disconnect must not abort an in-flight Provider operation.
+        const result = await dependencies.toolConfirmation!.resolve(
+          dependencies.identity.resolveRequest(), runId(params.runId), interruptId(params.interruptId), {
+            commandId: idempotencyKey(request),
+            response: body.response,
+            signal: new AbortController().signal,
+          },
+        );
+        reply.header('Idempotency-Replayed', String(result.replayed));
+        return reply.send(resolveToolConfirmationResponseSchema.parse({
+          run: runContract(result.run),
+        }));
+      } catch (error) {
+        return sendRunApiError(error, request, reply);
+      }
+    });
+  }
+
+  app.post('/api/v1/runs/:runId/interrupts/:interruptId/resolve', async (request, reply) => {
+    try {
+      const params = z.object({ runId: uuidSchema, interruptId: uuidSchema }).parse(request.params);
+      const body = resolveInterruptRequestSchema.parse(request.body);
+      const result = await dependencies.execution.resolveInterrupt(
+        dependencies.identity.resolveRequest(), runId(params.runId), interruptId(params.interruptId), {
+          commandId: runCommandId(idempotencyKey(request)),
+          response: body.response,
+        },
+      );
+      reply.header('Idempotency-Replayed', String(result.replayed));
+      return reply.send(resolveInterruptResponseSchema.parse({ run: runContract(result.value) }));
     } catch (error) {
       return sendRunApiError(error, request, reply);
     }

@@ -24,9 +24,33 @@ _Avoid_: Consumer, local user
 A non-human Principal that owns scheduled or system-initiated work under explicit organizational permissions.
 _Avoid_: Agent, system user
 
+**Principal Entitlement**:
+An enterprise-authorized capability assigned to a Principal and supplied as an input to Policy evaluation. It is distinct from an Agent's Tool Grant and from permissions enforced by an external target system.
+_Avoid_: Tool Grant, Agent capability, Provider credential
+
 **Delegation**:
 The constrained authority passed from a Principal through an Agent Invocation to a child Invocation; delegation may preserve or reduce authority but never expand it.
 _Avoid_: Impersonation, role inheritance
+
+**Approval Subject**:
+An immutable governed action or request to which an approval decision applies. Changing the action, input, or authority context creates a new Approval Subject.
+_Avoid_: Editable approval form, reusable permission
+
+**Approval**:
+An auditable approval or rejection of one immutable Approval Subject that satisfies a Policy obligation. It does not change the Subject or grant reusable authority.
+_Avoid_: Tool Grant, permission, parameter editing
+
+**Tool Approval**:
+A one-time Approval whose Subject is one exact Tool operation request, including its Tool identity and version, input, and authority context. A new or changed request requires a new Tool Approval.
+_Avoid_: Tool permission, Run-wide approval, approval session
+
+**Employee Confirmation**:
+An Approval resolved by the initiating Employee to affirm the intent to perform its exact immutable Subject. It satisfies a confirmation obligation but cannot authorize an action the Employee was not already allowed to request.
+_Avoid_: Manager approval, four-eyes approval, privilege grant
+
+**Policy Decision**:
+A versioned allow or deny result for one governed action and authority context, with safe reason codes and any obligations that must be satisfied before execution. An obligation adds controls but never turns a denied action into an allowed one.
+_Avoid_: Authentication claim, Tool Grant, mutable rule configuration
 
 ## Conversations and Execution
 
@@ -49,6 +73,14 @@ _Avoid_: Transport request, Invocation
 **Invocation**:
 One Agent's participation within a Run. Invocations form a parent-child tree when work is delegated.
 _Avoid_: Worker session, harness session
+
+**Interrupt**:
+A durable pause in a Run while it waits for an external response to a specific request. An unresolved Interrupt outlives Browser connections and Worker leases; resolving it allows execution to resume from a safe checkpoint.
+_Avoid_: UI modal, Worker sleep, stream disconnection
+
+**Waiting Run**:
+A non-terminal Run paused by an unresolved Interrupt, with no Agent actively executing. It remains cancellable and may return to execution after the Interrupt is resolved.
+_Avoid_: Running Run, failed Run, blocked Worker
 
 **Plan**:
 A temporary proposed sequence of work within a Run's Working State. Plan steps become Tasks only through an explicit promotion decision.
@@ -117,6 +149,34 @@ _Avoid_: Tool, plugin
 **Tool**:
 An atomic operation an Agent may invoke through a stable identity and an input/output contract.
 _Avoid_: Skill, Connector, MCP server
+
+**Tool Capability**:
+A stable Tool identity and major input/output contract that an Agent may be granted. Compatible implementation changes do not create a new Capability; broader operations, authority, credential scope, or data access do.
+_Avoid_: Tool implementation, Provider endpoint, unversioned action name
+
+**Tool Revision**:
+An immutable, reviewed realization of a Tool Capability with a concrete Provider binding and declared effect, recovery, and risk characteristics. An Invocation resolves granted Capabilities to exact Revisions and keeps them fixed through recovery.
+_Avoid_: Dynamic Provider metadata, mutable Tool configuration, Agent grant
+
+**Tool Grant**:
+An Agent Revision's permission to request a specific Tool Capability. It does not authorize every Principal or bypass runtime Policy and Employee Confirmation.
+_Avoid_: Tool Revision pin, Credential, unconditional execution permission
+
+**Model Tool Request**:
+A candidate Tool operation proposed by a Model from the Tools made available to it. It carries no execution authority and becomes a Tool Call only after Tool Runtime validation, authorization, and durable acceptance.
+_Avoid_: Tool Call, Tool Grant, Provider dispatch
+
+**Tool Call**:
+One immutable request accepted by Tool Runtime for an Invocation to execute a specific Tool Revision with fixed input and authority context. Its durable lifecycle records policy, confirmation, dispatch, and outcome without promising exactly-once external effects.
+_Avoid_: Model Tool Request, Tool, retry attempt
+
+**Tool Outcome**:
+The normalized result of one Tool Call, including success, denial, classified failure, or uncertain external effect. It is safe to pass across Module seams and never exposes credentials or raw Provider errors.
+_Avoid_: Provider response, thrown exception, Run result
+
+**Uncertain Tool Outcome**:
+A Tool Outcome for which the external effect may have occurred but cannot yet be proven. It remains an immutable audit fact; an Employee may continue with that uncertainty or cancel the Run, but cannot relabel it as success or failure without external evidence.
+_Avoid_: Failed Tool Call, retry permission, manually confirmed success
 
 **Connector**:
 A configured connection to an enterprise system that may contribute one or more Tools.

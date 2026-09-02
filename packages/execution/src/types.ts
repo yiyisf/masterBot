@@ -2,16 +2,25 @@ import type { AgentId, AgentRevisionId, ResolvedAgentRevision } from '@cmaster/a
 import type { ConversationId, MessageId } from '@cmaster/conversations';
 import type { OrganizationId, PrincipalId, RequestIdentity } from '@cmaster/identity';
 import type { Brand } from '@cmaster/kernel';
-import type { ModelFailure, ModelProfileId, ModelUsage } from '@cmaster/models';
+import type {
+  ModelFailure,
+  ModelProfileId,
+  ModelRequestedTool,
+  ModelTranscriptMessage,
+  ModelUsage,
+} from '@cmaster/models';
 
 export type RunId = Brand<string, 'RunId'>;
 export type InvocationId = Brand<string, 'InvocationId'>;
 export type RunEventId = Brand<string, 'RunEventId'>;
 export type DispatchAttemptId = Brand<string, 'DispatchAttemptId'>;
 export type RunCommandId = Brand<string, 'RunCommandId'>;
+export type InterruptId = Brand<string, 'InterruptId'>;
 
-export type RunStatus = 'accepted' | 'queued' | 'running' | 'succeeded' | 'failed' | 'cancelled';
-export type InvocationStatus = 'pending' | 'running' | 'succeeded' | 'failed' | 'cancelled';
+export type RunStatus = 'accepted' | 'queued' | 'running' | 'waiting' | 'succeeded' | 'failed' | 'cancelled';
+export type InvocationStatus = 'pending' | 'running' | 'interrupted' | 'succeeded' | 'failed' | 'cancelled';
+export type InterruptKind = 'tool_confirmation' | 'tool_outcome_review';
+export type InterruptResponse = 'confirm' | 'reject' | 'continue_with_uncertainty';
 export type RunEventType =
   | 'run.accepted'
   | 'invocation.created'
@@ -19,11 +28,20 @@ export type RunEventType =
   | 'run.started'
   | 'invocation.started'
   | 'run.recovery_started'
+  | 'interrupt.requested'
+  | 'interrupt.resolved'
+  | 'run.waiting'
+  | 'run.resumed'
   | 'model.selected'
   | 'model.fallback_selected'
   | 'model.output_discarded'
   | 'model.completed'
   | 'model.failed'
+  | 'tool.succeeded'
+  | 'tool.denied'
+  | 'tool.failed'
+  | 'tool.confirmation_required'
+  | 'tool.requires_review'
   | 'invocation.output_started'
   | 'invocation.output_delta'
   | 'invocation.output_reset'
@@ -37,9 +55,53 @@ export type RunEventType =
   | 'run.failed';
 
 export interface RunFailure {
-  code: 'engine_failed' | 'model_failed' | 'dispatch_attempts_exhausted' | 'output_delivery_failed';
+  code: 'engine_failed' | 'model_failed' | 'execution_limit_exceeded' | 'dispatch_attempts_exhausted' | 'output_delivery_failed';
   message: string;
   retryable: boolean;
+}
+
+export interface ExecutionInterrupt {
+  id: InterruptId;
+  kind: InterruptKind;
+  status: 'pending' | 'resolved' | 'cancelled';
+  subjectRef: string;
+  safeSubjectSummary: { title: string; details: Readonly<Record<string, string>> };
+  allowedResponses: readonly InterruptResponse[];
+  resolution?: InterruptResponse | 'run_cancelled';
+}
+
+export interface ActiveInterrupt extends Omit<ExecutionInterrupt, 'status' | 'resolution'> {
+  status: 'pending';
+}
+
+export interface ExecutionCheckpoint {
+  schemaVersion: 1;
+  engineKind: 'echo' | 'ai-sdk';
+  engineVersion: '1';
+  toolCallId: string;
+  outcome: 'completed' | 'confirmation_required' | 'requires_review';
+  toolLoop?: {
+    modelStepNumber: number;
+    toolCallCount: number;
+    providerNeutralTranscript: readonly ModelTranscriptMessage[];
+    completedToolCallIds: readonly string[];
+    pendingToolRequest?: ModelRequestedTool;
+    remainingModelToolRequests: readonly ModelRequestedTool[];
+    outputGeneration: number;
+  };
+}
+
+export interface RequestInterruptCommand {
+  kind: InterruptKind;
+  subjectRef: string;
+  safeSubjectSummary: ActiveInterrupt['safeSubjectSummary'];
+  allowedResponses: readonly InterruptResponse[];
+  checkpoint: ExecutionCheckpoint;
+}
+
+export interface ResolveInterruptCommand {
+  commandId: RunCommandId;
+  response: InterruptResponse;
 }
 
 export interface RunSnapshot {
@@ -66,6 +128,7 @@ export interface RunSnapshot {
   };
   usage?: ModelUsage;
   failure?: RunFailure;
+  activeInterrupt?: ActiveInterrupt;
   createdAt: Date;
   startedAt?: Date;
   completedAt?: Date;
@@ -77,6 +140,13 @@ export type ExecutionProgressEvent =
   | { type: 'model_output_discarded'; profileId: ModelProfileId; reason: 'fallback' | 'failure' }
   | { type: 'model_completed'; profileId: ModelProfileId; usage: ModelUsage; fallbackUsed: boolean }
   | { type: 'model_failed'; profileId: ModelProfileId; failure: ModelFailure; hadOutput: boolean }
+  | {
+    type: 'tool_status';
+    status: 'succeeded' | 'denied' | 'failed' | 'confirmation_required' | 'requires_review';
+    toolCallId: string;
+    toolName: string;
+    safeSummary: ActiveInterrupt['safeSubjectSummary'];
+  }
   | { type: 'output_started'; generation: number }
   | { type: 'output_delta'; generation: number; text: string }
   | { type: 'output_reset'; generation: number; reason: 'fallback' | 'failure' | 'recovery' }
@@ -108,7 +178,13 @@ export interface CommandResult<Value> {
 
 export type CancelRunResult =
   | { kind: 'cancelled'; run: RunSnapshot; replayed: boolean }
+  | { kind: 'tool_effect_in_flight'; run: RunSnapshot; replayed: boolean }
   | { kind: 'too_late'; run: RunSnapshot; replayed: boolean };
+
+export interface ToolExecutionBoundary {
+  enterToolBoundary(identity: RequestIdentity, runId: RunId): Promise<void>;
+  leaveToolBoundary(identity: RequestIdentity, runId: RunId): Promise<void>;
+}
 
 /**
  * Owns durable Run acceptance, cancellation, snapshots, and ordered Event replay.
@@ -117,10 +193,21 @@ export type CancelRunResult =
  * RunIdempotencyConflictError. Missing or cross-Organization resources throw RunNotFoundError.
  * Event reads are indexed by (runId, sequence), return strict ascending order, and are linear in the page read.
  */
-export interface ExecutionModule {
+export interface ExecutionModule extends ToolExecutionBoundary {
   acceptRun(identity: RequestIdentity, command: AcceptRunCommand): Promise<CommandResult<RunSnapshot>>;
   getRun(identity: RequestIdentity, runId: RunId): Promise<RunSnapshot>;
+  getInterrupt(
+    identity: RequestIdentity,
+    runId: RunId,
+    interruptId: InterruptId,
+  ): Promise<ExecutionInterrupt>;
   cancelRun(identity: RequestIdentity, runId: RunId, commandId: RunCommandId): Promise<CancelRunResult>;
+  resolveInterrupt(
+    identity: RequestIdentity,
+    runId: RunId,
+    interruptId: InterruptId,
+    command: ResolveInterruptCommand,
+  ): Promise<CommandResult<RunSnapshot>>;
   readEvents(identity: RequestIdentity, runId: RunId, afterSequence: number): Promise<RunEventEnvelope[]>;
 }
 
@@ -133,4 +220,7 @@ export function runId(value: string): RunId {
 }
 export function runCommandId(value: string): RunCommandId {
   return value as RunCommandId;
+}
+export function interruptId(value: string): InterruptId {
+  return value as InterruptId;
 }

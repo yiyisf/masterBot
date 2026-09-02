@@ -10,6 +10,7 @@ import {
   PostgresExecutionModule,
   runCommandId,
   RunWorker,
+  type AgentToolRuntime,
 } from '@cmaster/execution';
 import {
   organizationId,
@@ -43,8 +44,13 @@ afterAll(async () => {
 class ScriptedModelAdapter implements ModelAdapter {
   readonly providerKind = 'openai-compatible' as const;
   fallbackCalls = 0;
+  primaryCalls = 0;
 
-  constructor(private readonly mode: 'fallback-after-partial' | 'content-refusal' | 'primary-success') {}
+  constructor(private readonly mode:
+    | 'fallback-after-partial'
+    | 'content-refusal'
+    | 'primary-success'
+    | 'tool-request') {}
 
   async *stream(request: ModelAdapterRequest): AsyncIterable<ModelAdapterEvent> {
     if (request.profile.routeRole === 'fallback') {
@@ -54,6 +60,20 @@ class ScriptedModelAdapter implements ModelAdapter {
         type: 'completed',
         usage: { inputTokens: 4, outputTokens: 3, totalTokens: 7 },
       };
+      return;
+    }
+    this.primaryCalls += 1;
+    if (this.mode === 'tool-request') {
+      if (this.primaryCalls === 1) {
+        yield {
+          type: 'tool_requested',
+          request: { requestId: 'provider-call-1', name: 'current_time', input: {} },
+        };
+        yield { type: 'completed', usage: { inputTokens: 3, outputTokens: 1, totalTokens: 4 } };
+        return;
+      }
+      yield { type: 'text_delta', text: 'It is noon.' };
+      yield { type: 'completed', usage: { inputTokens: 5, outputTokens: 3, totalTokens: 8 } };
       return;
     }
     if (this.mode === 'primary-success') {
@@ -73,7 +93,11 @@ class ScriptedModelAdapter implements ModelAdapter {
   }
 }
 
-async function fixture(adapter: ScriptedModelAdapter, execute = true) {
+async function fixture(
+  adapter: ScriptedModelAdapter,
+  execute = true,
+  toolRuntime?: AgentToolRuntime,
+) {
   const identity = new PostgresDevelopmentIdentity(pool, {
     organizationId: organizationId(randomUUID()),
     organizationName: `Model Runtime ${randomUUID()}`,
@@ -147,7 +171,7 @@ async function fixture(adapter: ScriptedModelAdapter, execute = true) {
   const worker = new RunWorker(
     execution,
     conversations,
-    [new AiSdkAgentEngine(models)],
+    [new AiSdkAgentEngine(models, toolRuntime)],
     { workerId: `model-worker-${randomUUID()}`, leaseTtlMs: 1_000, maxAttempts: 5 },
   );
   if (execute) {
@@ -172,6 +196,87 @@ async function fixture(adapter: ScriptedModelAdapter, execute = true) {
 }
 
 describe('AI SDK Model Runtime', () => {
+  it('publishes a Model Tool Request only after its ModelCall is durably completed', async () => {
+    const runtime = await fixture(new ScriptedModelAdapter('tool-request'), false);
+    await runtime.worker.relayOne();
+    const snapshot = await runtime.execution.getRun(
+      runtime.identity.resolveRequest(), runtime.runId,
+    );
+    const events = [];
+    for await (const event of runtime.models.stream({
+      organizationId: runtime.identity.resolveRequest().organizationId,
+      runId: runtime.runId,
+      invocationId: snapshot.rootInvocation.id,
+      prompt: 'use current time',
+      tools: [{
+        name: 'current_time',
+        description: 'Returns the current time.',
+        inputSchema: { type: 'object', properties: {}, additionalProperties: false },
+        outputSchema: { type: 'object' },
+      }],
+      signal: new AbortController().signal,
+    })) events.push(event);
+
+    expect(events.map((event) => event.type)).toEqual([
+      'model_selected', 'model_completed', 'tool_requested',
+    ]);
+    expect(events[2]).toMatchObject({
+      type: 'tool_requested',
+      request: { requestId: 'provider-call-1', name: 'current_time', input: {} },
+    });
+    expect((await runtime.models.listCalls(
+      runtime.identity.resolveRequest().organizationId, runtime.runId,
+    ))[0]).toMatchObject({ status: 'succeeded', hadOutput: true });
+    await runtime.execution.cancelRun(
+      runtime.identity.resolveRequest(), runtime.runId, runCommandId(randomUUID()),
+    );
+    await runtime.provider.shutdown();
+  });
+
+  it('completes a sequential Tool Loop and accumulates usage across Model Steps', async () => {
+    const adapter = new ScriptedModelAdapter('tool-request');
+    const invoked: string[] = [];
+    const runtime = await fixture(adapter, true, {
+      async list() {
+        return [{
+          name: 'current_time',
+          description: 'Returns the current time.',
+          inputSchema: { type: 'object', properties: {}, additionalProperties: false },
+          outputSchema: { type: 'object' },
+        }];
+      },
+      async invoke(_input, request) {
+        invoked.push(request.requestId);
+        return {
+          kind: 'completed',
+          outcomeKind: 'success',
+          toolCallId: 'tool-call-1',
+          modelOutput: { iso: '2026-01-02T12:00:00Z' },
+          safeSummary: { title: 'Current time read', details: {} },
+        };
+      },
+      async recover() {
+        throw new Error('not expected');
+      },
+    });
+
+    expect(invoked).toEqual(['model-step-1-tool-1']);
+    expect(adapter.primaryCalls).toBe(2);
+    expect(await runtime.execution.getRun(
+      runtime.identity.resolveRequest(), runtime.runId,
+    )).toMatchObject({
+      status: 'succeeded',
+      usage: { inputTokens: 8, outputTokens: 4, totalTokens: 12 },
+    });
+    const messages = await runtime.conversations.listMessages(
+      runtime.identity.resolveRequest(), conversationId(runtime.conversationId), 0, 100,
+    );
+    expect(messages.map((message) => message.parts[0]?.text)).toEqual([
+      'model input', 'It is noon.',
+    ]);
+    await runtime.provider.shutdown();
+  });
+
   it('discards partial Primary output and completes with the audited Fallback', async () => {
     const adapter = new ScriptedModelAdapter('fallback-after-partial');
     const runtime = await fixture(adapter);

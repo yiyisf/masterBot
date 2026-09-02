@@ -21,6 +21,8 @@ const environmentSchema = z.object({
   NEXT_ARCHITECTURE_ENABLED: z.enum(['true', 'false']).default('false').transform((value) => value === 'true'),
   CMASTER_DEVELOPMENT_IDENTITY_ENABLED: z.enum(['true', 'false']).default('false').transform((value) => value === 'true'),
   CMASTER_AI_SDK_RUNTIME_ENABLED: z.enum(['true', 'false']).default('false').transform((value) => value === 'true'),
+  CMASTER_TOOL_RUNTIME_ENABLED: z.enum(['true', 'false']).default('false').transform((value) => value === 'true'),
+  CMASTER_HTTP_FETCH_ALLOWED_HOSTS: z.string().default(''),
   CMASTER_RUNTIME_ENV: z.enum(['development', 'test', 'production']).default('development'),
   CMASTER_DEV_ORGANIZATION_ID: z.uuid().default('00000000-0000-4000-8000-000000000001'),
   CMASTER_DEV_PRINCIPAL_ID: z.uuid().default('00000000-0000-4000-8000-000000000002'),
@@ -54,6 +56,7 @@ export interface ServerConfig {
     nextArchitecture: boolean;
     developmentIdentity: boolean;
     aiSdkRuntime: boolean;
+    toolRuntime: boolean;
   };
   runtimeEnvironment: 'development' | 'test' | 'production';
   developmentIdentity: {
@@ -63,6 +66,9 @@ export interface ServerConfig {
     agentId: string;
     echoAgentRevisionId: string;
     aiSdkAgentRevisionId: string;
+  };
+  toolRuntime: {
+    httpFetchAllowedHosts: readonly string[];
   };
   modelRuntime?: {
     primary: {
@@ -91,6 +97,17 @@ export interface ServerConfig {
   };
 }
 
+function parseAllowedHosts(value: string): string[] {
+  const hosts = value.split(',').map((host) => host.trim().toLowerCase()).filter(Boolean);
+  for (const host of hosts) {
+    const parsed = new URL(`https://${host}`);
+    if (parsed.hostname !== host || parsed.port || parsed.pathname !== '/') {
+      throw new Error('HTTP fetch allowlist must contain hostnames only');
+    }
+  }
+  return [...new Set(hosts)];
+}
+
 function roleFromArguments(argv: readonly string[]): string | undefined {
   const inline = argv.find((value) => value.startsWith('--role='));
   if (inline !== undefined) return inline.slice('--role='.length);
@@ -114,6 +131,9 @@ export function loadServerConfig(
   }
   if (parsed.CMASTER_AI_SDK_RUNTIME_ENABLED && !parsed.NEXT_ARCHITECTURE_ENABLED) {
     throw new Error('AI SDK Runtime requires the next architecture');
+  }
+  if (parsed.CMASTER_TOOL_RUNTIME_ENABLED && !parsed.CMASTER_AI_SDK_RUNTIME_ENABLED) {
+    throw new Error('Tool Runtime requires AI SDK Runtime');
   }
   const primaryValues = [
     parsed.CMASTER_PRIMARY_MODEL_BASE_URL,
@@ -143,8 +163,12 @@ export function loadServerConfig(
       nextArchitecture: parsed.NEXT_ARCHITECTURE_ENABLED,
       developmentIdentity: parsed.CMASTER_DEVELOPMENT_IDENTITY_ENABLED,
       aiSdkRuntime: parsed.CMASTER_AI_SDK_RUNTIME_ENABLED,
+      toolRuntime: parsed.CMASTER_TOOL_RUNTIME_ENABLED,
     },
     runtimeEnvironment: parsed.CMASTER_RUNTIME_ENV,
+    toolRuntime: {
+      httpFetchAllowedHosts: parseAllowedHosts(parsed.CMASTER_HTTP_FETCH_ALLOWED_HOSTS),
+    },
     developmentIdentity: {
       organizationId: parsed.CMASTER_DEV_ORGANIZATION_ID,
       principalId: parsed.CMASTER_DEV_PRINCIPAL_ID,

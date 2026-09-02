@@ -75,6 +75,11 @@ git status --short
 
 - 按 [`docs/engineering/first-milestone-sequence.md`](./docs/engineering/first-milestone-sequence.md) 实施 Walking Skeleton。
 - 每个 PR 只覆盖一个可验证 Slice 或基础决策。
+- 当前 Slice 优先按已接受的数据模型、Module Interface 和 ADR 完成最小端到端闭环；不得为未规划的业务规则、管理能力或假设性极端组合扩展范围。
+- 选择满足当前验收且容易演进的最简单实现；只有规范明确的安全、授权、幂等、并发和恢复失败路径必须在首版闭环，不得借“避免过度设计”省略。
+- 对未来能力只保留已有架构要求的稳定 Seam；没有第二个真实 Adapter、调用者或当前验收需求时，不新增状态、Port、配置表或策略语言。
+- 能力由 Architecture/Data Model 指定的所属 Module 实现；当前 Slice 为完成闭环需要该能力时，直接在所属 Module 内增量实现，不等待或臆造一个按能力命名的独立 Slice。
+- Slice 是交付边界，不是领域所有权边界；同一 Slice 可以修改多个 Module，但不得把行为放进错误 Module 或临时跨表绕过 Interface。
 - 未完成能力通过 Feature Flag 或不挂载路由隔离。
 - 每类权威数据只能有一个写路径；禁止长期双写。
 - 不先做全目录移动；行为被新 Module 替换时再迁移代码。
@@ -214,4 +219,5 @@ npm run test:run
 - 难以逆转、存在真实权衡且不解释会令人困惑的决定：新增 ADR。
 - 目标架构或实施顺序改变：更新 `docs/architecture/`。
 - 普通 Adapter/库替换通常不新增领域术语，也不需要 ADR。
+- 使用 Grill 对齐 Slice/设计时，全部问题达成共同理解后必须在仓库输出自包含 HTML 设计文档，记录决定、理由、否决方案、领域术语、Module 所有权、关键流程和验收测试；不得只保留聊天记录。
 - 本仓库的两份编码 Agent 指引必须同步维护。

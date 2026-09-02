@@ -132,6 +132,23 @@ async function drainOutbox(runWorker: RunWorker): Promise<void> {
 }
 
 describe('Run Walking Skeleton', () => {
+  it('temporarily rejects cancellation while a Tool effect is in flight', async () => {
+    const accepted = await acceptRunThroughHttp('tool boundary');
+    const runWorker = worker(`boundary-${randomUUID()}`);
+    await drainOutbox(runWorker);
+    const lease = await execution.leaseNext(`boundary-lease-${randomUUID()}`, 1_000, 5);
+    expect(lease?.runId).toBe(runId(accepted.run.id));
+    await execution.enterToolBoundary(identity.resolveRequest(), runId(accepted.run.id));
+
+    await expect(execution.cancelRun(
+      identity.resolveRequest(), runId(accepted.run.id), runCommandId(randomUUID()),
+    )).resolves.toMatchObject({ kind: 'tool_effect_in_flight', run: { status: 'running' } });
+
+    await execution.leaveToolBoundary(identity.resolveRequest(), runId(accepted.run.id));
+    await expect(execution.cancelRun(
+      identity.resolveRequest(), runId(accepted.run.id), runCommandId(randomUUID()),
+    )).resolves.toMatchObject({ kind: 'cancelled', run: { status: 'cancelled' } });
+  });
   it('replays a Command with the same payload and rejects key reuse', async () => {
     const key = commandId(randomUUID());
     const first = await conversations.create(identity.resolveRequest(), { commandId: key, title: 'Stable' });
@@ -155,6 +172,127 @@ describe('Run Walking Skeleton', () => {
     );
     expect(messages.map((item) => item.parts[0]?.text)).toEqual(['durable echo', 'durable echo']);
     expect(messages[1]?.sourceRunId).toBe(accepted.run.id);
+  });
+
+  it('durably waits for review of an uncertain Tool outcome and resumes once', async () => {
+    const accepted = await acceptRunThroughHttp('review uncertain tool outcome');
+    await worker('interrupt-relay').relayOne();
+    const lease = await execution.leaseNext('interrupt-worker', 1_000, 5);
+    expect(lease).toBeDefined();
+
+    const interrupt = await execution.requestInterrupt(lease!, {
+      kind: 'tool_outcome_review',
+      subjectRef: randomUUID(),
+      safeSubjectSummary: { title: 'External effect is unknown', details: {} },
+      allowedResponses: ['continue_with_uncertainty'],
+      checkpoint: {
+        schemaVersion: 1,
+        engineKind: lease!.engineKind,
+        engineVersion: lease!.engineVersion,
+        toolCallId: randomUUID(),
+        outcome: 'requires_review',
+      },
+    });
+
+    const waiting = await execution.getRun(identity.resolveRequest(), runId(accepted.run.id));
+    expect(waiting).toMatchObject({
+      status: 'waiting',
+      rootInvocation: { status: 'interrupted' },
+      activeInterrupt: {
+        id: interrupt.id,
+        kind: 'tool_outcome_review',
+        allowedResponses: ['continue_with_uncertainty'],
+      },
+    });
+    expect(await execution.leaseNext('other-worker', 1_000, 5)).toBeUndefined();
+
+    const otherEmployee = new PostgresDevelopmentIdentity(pool, {
+      organizationId: identityConfig.organizationId,
+      organizationName: identityConfig.organizationName,
+      principalId: principalId(randomUUID()),
+      principalDisplayName: 'Other Employee',
+    });
+    await otherEmployee.provision();
+    await expect(execution.resolveInterrupt(
+      otherEmployee.resolveRequest(), runId(accepted.run.id), interrupt.id,
+      { commandId: runCommandId(randomUUID()), response: 'continue_with_uncertainty' },
+    )).rejects.toBeInstanceOf(RunNotFoundError);
+
+    const interruptApi = buildApi({
+      config,
+      database: { check: async () => true },
+      runApi: { identity, agents, conversations, execution, notifier },
+    });
+    const resolutionKey = randomUUID();
+    const resolutionRequest = {
+      method: 'POST' as const,
+      url: `/api/v1/runs/${accepted.run.id}/interrupts/${interrupt.id}/resolve`,
+      headers: { 'idempotency-key': resolutionKey },
+      payload: { response: 'continue_with_uncertainty' },
+    };
+    const resumed = await interruptApi.inject(resolutionRequest);
+    expect(resumed.statusCode).toBe(200);
+    expect(resumed.headers['idempotency-replayed']).toBe('false');
+    expect(resumed.json()).toMatchObject({
+      run: { status: 'queued', rootInvocation: { status: 'pending' } },
+    });
+    expect(resumed.json<{ run: { activeInterrupt?: unknown } }>().run.activeInterrupt)
+      .toBeUndefined();
+    const replayedResolution = await interruptApi.inject(resolutionRequest);
+    expect(replayedResolution.statusCode).toBe(200);
+    expect(replayedResolution.headers['idempotency-replayed']).toBe('true');
+    await interruptApi.close();
+    expect((await execution.readEvents(identity.resolveRequest(), runId(accepted.run.id), 0))
+      .map((event) => event.type)).toEqual(expect.arrayContaining([
+      'interrupt.requested', 'run.waiting', 'interrupt.resolved', 'run.resumed',
+    ]));
+    const resumedLease = await execution.leaseNext('resumed-worker', 1_000, 5);
+    expect(resumedLease).toMatchObject({
+      runId: accepted.run.id,
+      checkpoint: {
+        schemaVersion: 1,
+        toolCallId: expect.any(String),
+        outcome: 'requires_review',
+      },
+    });
+    const recoveryEvents = await execution.readEvents(
+      identity.resolveRequest(), runId(accepted.run.id), 0,
+    );
+    expect(recoveryEvents.filter((event) => event.type === 'run.started')).toHaveLength(1);
+    expect(recoveryEvents.filter((event) => event.type === 'run.recovery_started')).toHaveLength(1);
+    await execution.cancelRun(
+      identity.resolveRequest(), runId(accepted.run.id), runCommandId(randomUUID()),
+    );
+  });
+
+  it('cancels a waiting Run and closes its active Interrupt without resuming work', async () => {
+    const accepted = await acceptRunThroughHttp('cancel waiting interrupt');
+    await drainOutbox(worker('interrupt-cancel-relay'));
+    const lease = await execution.leaseNext('interrupt-cancel-worker', 1_000, 5);
+    expect(lease?.runId).toBe(accepted.run.id);
+    await execution.requestInterrupt(lease!, {
+      kind: 'tool_confirmation',
+      subjectRef: randomUUID(),
+      safeSubjectSummary: { title: 'Confirm Tool call', details: {} },
+      allowedResponses: ['confirm', 'reject'],
+      checkpoint: {
+        schemaVersion: 1,
+        engineKind: lease!.engineKind,
+        engineVersion: lease!.engineVersion,
+        toolCallId: randomUUID(),
+        outcome: 'confirmation_required',
+      },
+    });
+
+    const cancelled = await execution.cancelRun(
+      identity.resolveRequest(), runId(accepted.run.id), runCommandId(randomUUID()),
+    );
+    expect(cancelled).toMatchObject({
+      kind: 'cancelled',
+      run: { status: 'cancelled', rootInvocation: { status: 'cancelled' } },
+    });
+    expect(cancelled.run.activeInterrupt).toBeUndefined();
+    expect(await execution.leaseNext('must-not-resume', 1_000, 5)).toBeUndefined();
   });
 
   it('leases one Run to only one Worker at a time and recovers after expiry', async () => {

@@ -5,6 +5,7 @@ export {
   type ModelAdapter,
   type ModelAdapterEvent,
   type ModelAdapterRequest,
+  type ModelAvailableTool,
   type ModelCall,
   type ModelCallId,
   type ModelEvent,
@@ -15,7 +16,9 @@ export {
   type ModelProfile,
   type ModelProfileId,
   type ModelProfileProvisioning,
+  type ModelRequestedTool,
   type ModelRouteRole,
   type ModelSelection,
+  type ModelTranscriptMessage,
   type ModelUsage,
 } from './types.js';

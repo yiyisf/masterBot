@@ -8,6 +8,19 @@ import {
   type AgentEngine,
 } from '@cmaster/execution';
 import {
+  PostgresApprovalModule,
+  Slice3BaselinePolicy,
+} from '@cmaster/governance';
+import {
+  CurrentTimeToolProvider,
+  HttpsFetchToolProvider,
+  PostgresToolCatalog,
+  PostgresToolRuntime,
+  TextStatisticsToolProvider,
+  WORKFLOW_VALIDATION_TOOL_GRANT_ID,
+  workflowValidationToolCatalog,
+} from '@cmaster/tools';
+import {
   modelProfileId,
   OpenAICompatibleModelAdapter,
   PostgresModelGateway,
@@ -20,8 +33,13 @@ import {
   principalId,
 } from '@cmaster/identity';
 import { buildApi } from './app.js';
+import { GovernedAgentToolRuntime } from './governed-agent-tools.js';
 import { loadServerConfig } from './config.js';
 import { PostgresConnection } from './postgres.js';
+import {
+  Slice3DevelopmentEntitlements,
+  ToolConfirmationCoordinator,
+} from './tool-confirmation-coordinator.js';
 import { PollingRunEventNotifier, PostgresRunEventNotifier } from './run-event-notifier.js';
 import { WorkerRuntime } from './worker.js';
 
@@ -51,6 +69,8 @@ const conversations = new PostgresConversationModule(database.pool);
 const execution = new PostgresExecutionModule(database.pool);
 
 let models: ModelGateway | undefined;
+let governedAgentTools: GovernedAgentToolRuntime | undefined;
+let toolConfirmationCoordinator: ToolConfirmationCoordinator | undefined;
 if (config.features.nextArchitecture) await identity.provision();
 if (config.modelRuntime) {
   // 临时开发装配：环境变量 Profile/明文 Key 将分别由 Models Admin 与 Credential Broker Slice 替换。
@@ -98,6 +118,28 @@ if (config.modelRuntime) {
 if (config.features.nextArchitecture) {
   await agents.provision(identity.resolveRequest().organizationId);
 }
+if (config.features.toolRuntime) {
+  const organizationId = identity.resolveRequest().organizationId;
+  const approvals = new PostgresApprovalModule(database.pool);
+  const catalog = new PostgresToolCatalog(database.pool);
+  const providers = [
+    new CurrentTimeToolProvider(),
+    new TextStatisticsToolProvider(),
+    new HttpsFetchToolProvider({ allowedHosts: config.toolRuntime.httpFetchAllowedHosts }),
+  ];
+  await catalog.provision(organizationId, workflowValidationToolCatalog());
+  const toolRuntime = new PostgresToolRuntime(
+    database.pool, new Slice3BaselinePolicy(), approvals, providers,
+  );
+  const entitlements = new Slice3DevelopmentEntitlements();
+  governedAgentTools = new GovernedAgentToolRuntime(
+    catalog, toolRuntime, identity, entitlements,
+    WORKFLOW_VALIDATION_TOOL_GRANT_ID, execution,
+  );
+  toolConfirmationCoordinator = new ToolConfirmationCoordinator(
+    execution, toolRuntime, entitlements,
+  );
+}
 
 const notifier = config.features.nextArchitecture && config.role !== 'worker'
   ? new PostgresRunEventNotifier(config.databaseUrl)
@@ -105,7 +147,7 @@ const notifier = config.features.nextArchitecture && config.role !== 'worker'
 if (notifier instanceof PostgresRunEventNotifier) await notifier.start();
 
 const engines: AgentEngine[] = [new EchoAgentEngine()];
-if (models) engines.push(new AiSdkAgentEngine(models));
+if (models) engines.push(new AiSdkAgentEngine(models, governedAgentTools));
 const runWorker = new RunWorker(execution, conversations, engines, {
   workerId: config.worker.id,
   leaseTtlMs: config.worker.leaseTtlMs,
@@ -120,6 +162,7 @@ const api = config.role === 'worker' ? undefined : buildApi({
   database,
   ...(config.features.nextArchitecture ? {
     runApi: { identity, agents, conversations, execution, notifier },
+    ...(toolConfirmationCoordinator ? { toolConfirmationCoordinator } : {}),
   } : {}),
 });
 

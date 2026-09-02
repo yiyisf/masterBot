@@ -1,0 +1,301 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>CMaster Bot Slice 3 — Governed Tool Runtime 设计</title>
+  <style>
+    :root { color-scheme: light dark; --bg:#f7f8fb; --panel:#fff; --text:#182230; --muted:#52606d; --line:#d7dee8; --brand:#3157d5; --safe:#16794b; --warn:#9a5b00; --danger:#b42318; --code:#eef2f7; }
+    @media (prefers-color-scheme: dark) { :root { --bg:#111722; --panel:#18202d; --text:#edf2f7; --muted:#aeb9c7; --line:#344154; --brand:#91a7ff; --safe:#70d6a3; --warn:#f5bd61; --danger:#ff8c85; --code:#222c3a; } }
+    * { box-sizing:border-box; }
+    body { margin:0; font:16px/1.65 system-ui,-apple-system,"Segoe UI",sans-serif; background:var(--bg); color:var(--text); }
+    header, main, footer { width:min(1160px, calc(100% - 32px)); margin:auto; }
+    header { padding:56px 0 28px; }
+    h1 { font-size:clamp(2rem,5vw,3.6rem); line-height:1.08; margin:0 0 16px; }
+    h2 { margin-top:42px; border-bottom:1px solid var(--line); padding-bottom:8px; }
+    h3 { margin-top:28px; }
+    a { color:var(--brand); }
+    .meta,.card,.decision,.flow,.notice { background:var(--panel); border:1px solid var(--line); border-radius:12px; padding:18px 20px; margin:16px 0; }
+    .meta { display:grid; grid-template-columns:repeat(auto-fit,minmax(180px,1fr)); gap:12px; }
+    .meta strong { display:block; font-size:.8rem; color:var(--muted); text-transform:uppercase; letter-spacing:.06em; }
+    .grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(280px,1fr)); gap:16px; }
+    .tag { display:inline-block; border:1px solid var(--line); border-radius:999px; padding:2px 9px; margin:2px; font-size:.82rem; }
+    .safe { color:var(--safe); } .warn { color:var(--warn); } .danger { color:var(--danger); }
+    code,pre { font-family:ui-monospace,SFMono-Regular,Consolas,monospace; }
+    code { background:var(--code); padding:.12em .35em; border-radius:5px; }
+    pre { background:var(--code); border:1px solid var(--line); border-radius:10px; padding:16px; overflow:auto; }
+    table { width:100%; border-collapse:collapse; margin:16px 0; display:block; overflow:auto; }
+    th,td { border:1px solid var(--line); padding:10px 12px; text-align:left; vertical-align:top; }
+    th { background:var(--code); }
+    ul.tight li,ol.tight li { margin:.25em 0; }
+    .decision { border-left:5px solid var(--brand); }
+    .notice { border-left:5px solid var(--warn); }
+    .flow ol { margin:0; padding-left:22px; }
+    .flow li { padding:5px 0; }
+    svg { width:100%; height:auto; background:var(--panel); border:1px solid var(--line); border-radius:12px; }
+    svg text { fill:var(--text); font-family:system-ui,sans-serif; }
+    svg .box { fill:var(--code); stroke:var(--line); stroke-width:2; }
+    svg .arrow { stroke:var(--brand); stroke-width:2; fill:none; marker-end:url(#arrow); }
+    footer { color:var(--muted); padding:48px 0; }
+    @media print { :root { color-scheme:light; } body { background:white; } .card,.decision,.flow,.notice { break-inside:avoid; } }
+  </style>
+</head>
+<body>
+<header>
+  <p><span class="tag">Accepted Design</span> <span class="tag">Slice 3</span> <span class="tag">Grill 对齐产物</span></p>
+  <h1>Governed Tool Runtime</h1>
+  <p>在既有 Run、Invocation、AI SDK Runtime 和 PostgreSQL 恢复语义上，建立统一、可审计、可确认、可恢复的 Tool 执行路径。</p>
+  <div class="meta">
+    <div><strong>分支</strong><code>refactor/tool-runtime</code></div>
+    <div><strong>日期</strong>2026-08-30</div>
+    <div><strong>基线</strong><code>ffde7d6</code></div>
+    <div><strong>Feature Flag</strong><code>CMASTER_TOOL_RUNTIME_ENABLED</code></div>
+  </div>
+</header>
+<main>
+<section>
+  <h2>1. 目标与边界</h2>
+  <div class="grid">
+    <article class="card"><h3>本 Slice 交付</h3><ul class="tight">
+      <li>Tool Catalog、Tool Runtime、Tool-call Ledger</li><li>固定 baseline Policy 与 Employee Confirmation</li><li>Credential Broker 最小 Seam</li><li>AI SDK 顺序 Tool Loop</li><li>Execution Checkpoint、Interrupt 与等待恢复</li><li>最小 Run 页面确认 UI</li><li>不可生产配置的 Provider Host 协议骨架</li>
+    </ul></article>
+    <article class="card"><h3>明确不交付</h3><ul class="tight">
+      <li>本地逐 Principal/逐 Tool RBAC</li><li>经理审批、四眼审批、Approval Center</li><li>Policy DSL、OPA/Cedar、Admin CRUD</li><li>Agent Skills Parser、Legacy Adapter、MCP</li><li>可配置外部 executable 或完整沙箱</li><li>企业 Vault、Credential 管理 UI</li><li>并行 Tool dispatch、子 Agent、Artifact</li>
+    </ul></article>
+  </div>
+  <div class="notice"><strong>首版原则：</strong>按已接受的数据模型、Module Interface 和 ADR 实现最小闭环。规范要求的授权、幂等、副作用恢复和安全不是“极端场景”；未规划的业务规则和管理系统不进入本 Slice。</div>
+</section>
+
+<section>
+  <h2>2. 领域模型</h2>
+  <table><thead><tr><th>术语</th><th>定义</th><th>关键区别</th></tr></thead><tbody>
+    <tr><td>Tool Capability</td><td>稳定 Tool identity 与 major contract。</td><td>Agent Grant 指向 Capability，而非实现 Revision。</td></tr>
+    <tr><td>Tool Revision</td><td>Capability 的不可变、已审查实现和 effect/recovery/risk 声明。</td><td>Invocation 解析并固定实际 Revision。</td></tr>
+    <tr><td>Model Tool Request</td><td>模型提出的候选 Tool 操作。</td><td>没有执行权限；不是 Tool Call。</td></tr>
+    <tr><td>Tool Call</td><td>Tool Runtime 校验、授权并持久接受的精确请求。</td><td>一个 Tool Call 可有多个 Dispatch Attempt。</td></tr>
+    <tr><td>Tool Outcome</td><td>success、denied、classified failure 或 uncertain 的归一化结果。</td><td>不暴露 Credential 或原始 Provider Error。</td></tr>
+    <tr><td>Approval Subject</td><td>输入、Tool Revision 和 authority context 固定的不可变对象。</td><td>变化即产生新 Subject。</td></tr>
+    <tr><td>Employee Confirmation</td><td>initiating Employee 对精确 Subject 的一次性确认或拒绝。</td><td>确认意图，不扩大权限。</td></tr>
+    <tr><td>Interrupt</td><td>等待外部响应的持久暂停。</td><td>跨 Browser 连接和 Worker Lease 存续。</td></tr>
+    <tr><td>Waiting Run</td><td>有未解决 Interrupt、当前无 Agent 执行的非终态 Run。</td><td>仍可取消。</td></tr>
+  </tbody></table>
+</section>
+
+<section>
+  <h2>3. Module 所有权</h2>
+  <svg viewBox="0 0 1050 410" role="img" aria-label="Tool Runtime Module ownership">
+    <defs><marker id="arrow" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto"><path d="M0,0 L0,6 L9,3 z" fill="currentColor"/></marker></defs>
+    <rect class="box" x="30" y="35" width="210" height="110" rx="12"/><text x="55" y="68" font-weight="700">Execution</text><text x="55" y="95">Run / Invocation</text><text x="55" y="120">Checkpoint / Interrupt</text>
+    <rect class="box" x="310" y="35" width="210" height="110" rx="12"/><text x="335" y="68" font-weight="700">Models</text><text x="335" y="95">ModelCall / usage</text><text x="335" y="120">Model protocol projection</text>
+    <rect class="box" x="590" y="35" width="210" height="110" rx="12"/><text x="615" y="68" font-weight="700">Tools</text><text x="615" y="95">Catalog / Runtime</text><text x="615" y="120">ToolCall / Outcome</text>
+    <rect class="box" x="310" y="250" width="210" height="110" rx="12"/><text x="335" y="283" font-weight="700">Governance</text><text x="335" y="310">Policy Decision</text><text x="335" y="335">Approval</text>
+    <rect class="box" x="830" y="250" width="190" height="110" rx="12"/><text x="855" y="283" font-weight="700">Tool Provider</text><text x="855" y="310">Built-in / child process</text><text x="855" y="335">Credential Lease consumer</text>
+    <path class="arrow" d="M240 90 H300"/><path class="arrow" d="M520 90 H580"/><path class="arrow" d="M695 145 V215 H520"/><path class="arrow" d="M520 305 H580 V145"/><path class="arrow" d="M800 110 H925 V240"/>
+  </svg>
+  <table><thead><tr><th>Module</th><th>拥有</th><th>不得拥有</th></tr></thead><tbody>
+    <tr><td><code>@cmaster/execution</code></td><td>Tool Loop orchestration、Checkpoint、Interrupt、Run events、等待/恢复</td><td>Tool Ledger、Policy 规则、Provider 实现</td></tr>
+    <tr><td><code>@cmaster/models</code></td><td>Model-facing messages/tools projection、ModelCall、Fallback、usage</td><td>真实 ToolCall、Tool 执行</td></tr>
+    <tr><td><code>@cmaster/tools</code></td><td>Capability、Revision、Catalog、Runtime、Ledger、Outcome、Provider Port</td><td>Run 状态、Approval resolution</td></tr>
+    <tr><td><code>@cmaster/governance</code></td><td>Policy Decision、Approval Subject、Employee Confirmation</td><td>Execution Checkpoint、企业 IAM 数据库</td></tr>
+    <tr><td><code>apps/server</code></td><td>Composition Root、HTTP Adapter、幂等 Application Coordinator</td><td>领域不变量、跨 Module SQL</td></tr>
+  </tbody></table>
+</section>
+
+<section>
+  <h2>4. 公开 Interface 目标形状</h2>
+  <pre><code>interface ToolCatalog {
+  list(context: ToolVisibilityContext): Promise&lt;ToolDescriptor[]&gt;;
+  resolve(capabilityId: ToolCapabilityId): Promise&lt;ToolDescriptor&gt;;
+}
+
+interface ToolRuntime {
+  list(context: ToolExecutionContext): Promise&lt;ToolDescriptor[]&gt;;
+  invoke(command: InvokeTool): Promise&lt;ToolOutcome&gt;;
+  resume(command: ResumeToolCall): Promise&lt;ToolOutcome&gt;;
+}
+
+interface PolicyModule {
+  evaluate(request: PolicyRequest): Promise&lt;PolicyDecision&gt;;
+}
+
+interface ApprovalModule {
+  request(command: RequestApproval): Promise&lt;Approval&gt;;
+  resolve(command: ResolveApproval): Promise&lt;Approval&gt;;
+}
+
+interface CredentialBroker {
+  issueLease(request: CredentialLeaseRequest): Promise&lt;CredentialLease&gt;;
+  revoke(leaseId: CredentialLeaseId): Promise&lt;void&gt;;
+}</code></pre>
+  <p>模型侧只暴露 <code>ModelAvailableTool</code>、<code>ModelRequestedTool</code> 与 <code>ModelToolOutcomeMessage</code>。AI SDK 类型在 Model Adapter 内终止。</p>
+</section>
+
+<section>
+  <h2>5. Tool Capability、Revision 与 Grant</h2>
+  <div class="decision"><strong>决定：</strong>Agent Revision 授予稳定 Capability major version；Invocation 开始时解析到 active Tool Revision，并固定到恢复结束。</div>
+  <ul>
+    <li>兼容实现修复不要求发布新 Agent Revision。</li>
+    <li>操作范围、Credential scope、数据访问、effect 或 contract major 扩大时创建新 Capability major，并重新授予。</li>
+    <li>Provider discovery metadata 不是 effect/recovery/risk 的权威来源。</li>
+    <li>最终模型可见集合为 Catalog active Revision、Agent Grant、Principal baseline entitlement、Invocation restriction 与 Policy 的交集。</li>
+  </ul>
+</section>
+
+<section>
+  <h2>6. Model Step 与顺序 Tool Loop</h2>
+  <div class="flow"><ol>
+    <li>Agent Engine 向 Model Gateway 提交 Provider-neutral transcript 与可见 Tool projection。</li>
+    <li>Model Gateway 建立并审计一个 ModelCall，流式收集文字和 Model Tool Request。</li>
+    <li>只有 Model Step 正常 finish 且 usage 持久化后，候选 Tool Request 才可交给 Tool Runtime。</li>
+    <li>多个 Tool Request 按模型返回顺序执行；同一时刻最多一个 Provider 调用。</li>
+    <li>Tool Outcome 写回 Provider-neutral transcript，再开始下一 Model Step。</li>
+    <li>最多 5 个 Model Step、8 个 ToolCall；超限为 <code>execution_limit_exceeded</code>。</li>
+  </ol></div>
+  <p>Model Step 失败时，候选 Tool Request 全部丢弃；部分文字按 generation/reset 撤回。Fallback 从该 Step 之前的同一 transcript 开始，不拼接 Primary/Fallback 请求或输出。</p>
+</section>
+
+<section>
+  <h2>7. Employee Confirmation</h2>
+  <div class="flow"><ol>
+    <li>Tool Runtime 验证输入、Capability/Revision、Agent Grant、Principal baseline entitlement 与 Policy。</li>
+    <li>Policy 返回 <code>allow_with_employee_confirmation</code>。</li>
+    <li>Governance 持久化 Approval；Tools 持久化等待中的 ToolCall。</li>
+    <li>Execution 写 Checkpoint、创建 <code>tool_confirmation</code> Interrupt，并把 Run 置为 <code>waiting</code>。</li>
+    <li>initiating Employee 可确认、拒绝或单独取消 Run。</li>
+    <li>确认后重新授权，再签发 Credential Lease 并 dispatch；拒绝则产生 <code>denied/employee_rejected</code> Outcome。</li>
+  </ol></div>
+  <ul>
+    <li>不支持他人审批、经理审批或审批 entitlement。</li>
+    <li>Confirmation 不自动过期，也不冻结授权。</li>
+    <li>Approval 与 Interrupt 分属 Governance/Execution，由 Server 幂等 Coordinator 串联，不跨表 JOIN/FK。</li>
+    <li>拒绝不是 Run failure 或 cancellation；Agent 可解释或选择替代方案。</li>
+  </ul>
+</section>
+
+<section>
+  <h2>8. 未知副作用与取消</h2>
+  <table><thead><tr><th>场景</th><th>第一版行为</th></tr></thead><tbody>
+    <tr><td>read-only / safe retry</td><td>按 Tool Revision recovery 声明和 Policy 决定重试。</td></tr>
+    <tr><td>idempotency key</td><td>同一 ToolCall 的 Dispatch Attempt 复用稳定 key。</td></tr>
+    <tr><td>reconciliation</td><td>优先查询外部状态，不直接重试。</td></tr>
+    <tr><td>未知非幂等结果</td><td><code>requires_review</code> + <code>tool_outcome_review</code> Interrupt。</td></tr>
+    <tr><td>Employee 处理 unknown</td><td>仅“带着不确定性继续”或取消 Run；不可手工改成成功/失败，不可直接重试原 ToolCall。</td></tr>
+    <tr><td>等待确认时取消</td><td>立即取消，Provider 不执行。</td></tr>
+    <tr><td>Provider in-flight 时取消</td><td>临时返回 409；Tool boundary 完成后恢复可取消。</td></tr>
+    <tr><td><code>output_ready</code> 后取消</td><td>继续沿用 Slice 1–2 的永久 too-late 语义。</td></tr>
+  </tbody></table>
+</section>
+
+<section>
+  <h2>9. Checkpoint 与恢复</h2>
+  <p>Checkpoint 由 Execution Module 在本 Slice 增量实现，不等待独立 Slice。安全点包括 ToolCall 完成后、创建 Interrupt 前，以及 Confirmation 解决后恢复模型前。</p>
+  <pre><code>Checkpoint {
+  schemaVersion
+  engineKind / engineVersion
+  modelStepNumber / toolCallCount
+  providerNeutralTranscript
+  completedToolCallIds
+  currentApprovalId / currentInterruptId
+  remainingModelToolRequests
+  outputGeneration
+}</code></pre>
+  <p>Tool input/output 的权威 payload 留在 Tools Module；Checkpoint 保存恢复所需 projection 与 ToolCall ID。恢复不得重新执行已完成 ToolCall，也不得重新请求模型生成已确认请求。</p>
+</section>
+
+<section>
+  <h2>10. 持久化与安全投影</h2>
+  <table><thead><tr><th>记录</th><th>所属</th><th>私有内容</th><th>可投影内容</th></tr></thead><tbody>
+    <tr><td>ToolCall</td><td>Tools</td><td>validated request payload、bounded outcome payload</td><td>Tool identity、status、safe summary、risk/effect</td></tr>
+    <tr><td>Approval</td><td>Governance</td><td>Subject hash、Policy context</td><td>safe subject summary、resolution</td></tr>
+    <tr><td>Checkpoint/Interrupt</td><td>Execution</td><td>Engine-neutral recovery state</td><td>wait reason、allowed responses</td></tr>
+    <tr><td>Run Event</td><td>Execution</td><td>无</td><td>安全生命周期事实</td></tr>
+  </tbody></table>
+  <ul>
+    <li>Credential、Authorization Header、Cookie、Provider 原始 Error 不进入 payload/event/log/trace。</li>
+    <li>精确 Tool payload 仅由 Tool Runtime、Provider Adapter 和恢复路径读取，并受 Schema/大小限制。</li>
+    <li>大型结果留给 Slice 4 Artifact；Slice 3 的 <code>http.fetch</code> 正文上限为 64 KiB。</li>
+  </ul>
+</section>
+
+<section>
+  <h2>11. 状态与 Contract</h2>
+  <p>Run 新增非终态 <code>waiting</code>；Invocation 新增 <code>interrupted</code>。具体等待原因由 active Interrupt 表达。</p>
+  <pre><code>activeInterrupt: {
+  id,
+  kind: "tool_confirmation" | "tool_outcome_review",
+  status: "pending",
+  safeSubjectSummary,
+  allowedResponses
+}</code></pre>
+  <p>Canonical events 包含 Tool lifecycle、<code>interrupt.requested/resolved</code>、<code>run.waiting/resumed</code>。SSE 继续使用 Run sequence；AI UI Presenter 只映射为 CMaster data parts。</p>
+</section>
+
+<section>
+  <h2>12. Baseline Policy 与 Principal Entitlement</h2>
+  <div class="decision"><strong>决定：</strong>CMaster 不建设本地逐 Principal/逐 Tool RBAC。Slice 3 只消费通用 <code>enterprise_assistant.use_governed_tools</code> entitlement；细粒度业务权限来自企业 IAM/Policy，目标系统继续最终授权。</div>
+  <p>Policy Adapter 固定、类型安全、deny-by-default，版本为 <code>slice3-baseline-v1</code>：</p>
+  <ul><li>缺 entitlement、Grant、active Revision：deny。</li><li><code>current_time</code>、<code>text_statistics</code>：allow。</li><li><code>http.fetch</code>：allow with Employee Confirmation。</li><li>未知组合：deny。</li></ul>
+</section>
+
+<section>
+  <h2>13. 过渡 Built-in Tools</h2>
+  <div class="notice"><strong>仅用于跑通流程：</strong>以下 Tool 不是最终产品能力。真实 Tool/Connector 覆盖同等验收后，必须按 <a href="https://github.com/yiyisf/masterBot/issues/103">#103</a> 删除替换。</div>
+  <table><thead><tr><th>Capability</th><th>用途</th><th>控制</th></tr></thead><tbody>
+    <tr><td><code>cmaster.utility.current_time</code></td><td>read-only happy path</td><td>无需确认</td></tr>
+    <tr><td><code>cmaster.utility.text_statistics</code></td><td>结构化 input/output</td><td>无需确认</td></tr>
+    <tr><td><code>cmaster.http.fetch</code></td><td>open-world + Confirmation</td><td>默认禁用；精确 HTTPS host allowlist；GET only；无 redirect/header/credential</td></tr>
+  </tbody></table>
+  <p>未知非幂等写入由 Fake Provider 在 PostgreSQL Integration Test 验证，不为测试创造生产写 Tool。</p>
+</section>
+
+<section>
+  <h2>14. Provider Host 与延后能力</h2>
+  <p>Slice 3 只定义 child-process request/response、request ID、timeout、cancel、进程退出和非法响应处理。Contract Test 使用仓库固定 Fake executable；生产 Composition Root 不允许配置任意 executable。</p>
+  <p>Agent Skills Parser、Legacy Adapter、MCP、安装验证、供应链安全、网络/文件系统/资源沙箱和 Provider 生命周期完整移入首里程碑后的 <strong>Agent Skills &amp; Isolated Provider Management</strong> Slice。</p>
+</section>
+
+<section>
+  <h2>15. 版本与 Feature Flag</h2>
+  <ul>
+    <li>同一个 Development Agent 新增 Revision v3；v1 Echo、v2 AI SDK text 保持不变。</li>
+    <li>新增 Tool-enabled Model Profile ID，明确 <code>toolCalling: true</code>；可指向相同底层模型。</li>
+    <li><code>CMASTER_TOOL_RUNTIME_ENABLED</code> 默认 false，并要求 Next Architecture + AI SDK Runtime。</li>
+    <li>Flag 关闭时不挂载 Tool/Confirmation 行为，原 Slice 2 路径不变。</li>
+  </ul>
+</section>
+
+<section>
+  <h2>16. 确认的测试 Seam</h2>
+  <ol>
+    <li><strong>Governance Interface：</strong>Policy、Approval、幂等及 PostgreSQL Adapter。</li>
+    <li><strong>Tool Runtime Interface：</strong>可见集合、Ledger-before-dispatch、Confirmation、Credential、Outcome 与 PostgreSQL Adapter。</li>
+    <li><strong>Agent Engine Interface：</strong>顺序 Tool Loop、limits、checkpoint/resume，使用 Fakes。</li>
+    <li><strong>Execution/Run Contract：</strong>waiting、Interrupt、取消、SSE replay 与 PostgreSQL Integration。</li>
+    <li><strong>Model Adapter Contract：</strong>AI SDK Tool 映射和本地 Fake OpenAI-compatible Provider。</li>
+    <li><strong>UI Projection：</strong>确认、拒绝、uncertain continuation、取消与刷新恢复。</li>
+  </ol>
+  <p>Provider Host 作为 Tool Provider Adapter fixture 测试；不测试私有 SQL、类内部方法、AI SDK internals 或过渡 Tool 实现细节。</p>
+</section>
+
+<section>
+  <h2>17. 验收</h2>
+  <ul class="tight">
+    <li>未授权 Tool 不因模型伪造、Agent 变化或恢复而执行。</li>
+    <li>任何 Provider I/O 前已有 ToolCall Ledger 和稳定 idempotency key。</li>
+    <li>Employee Confirmation 可跨刷新、SSE 断线和 Worker Lease 恢复。</li>
+    <li>已完成 ToolCall 不被恢复路径重复执行。</li>
+    <li>未知非幂等结果进入 requires_review，且 UI 不假定成功/失败。</li>
+    <li>Provider Host 崩溃不退出 API/Worker 主进程。</li>
+    <li>AI SDK、Credential、Tool payload 和原始 Error 不泄漏到 Domain/Public Event/Trace。</li>
+    <li>Feature Flag 关闭时 Slice 2 行为与 Contract 保持有效。</li>
+  </ul>
+</section>
+
+<section>
+  <h2>18. Grill 决策索引</h2>
+  <p>本设计记录了 26 个逐项确认的决策：Approval Subject、自确认、waiting、拒绝、uncertain review、Revision authority、Capability Grant、Principal entitlement、二次授权、过渡 Tools、顺序 Tool Loop、Provider Host、Skills 延后、Credential Broker、baseline Policy、HTTP allowlist、私有 payload、无自动过期、Approval/Interrupt 所有权、Execution Checkpoint、最小 UI、模型投影、完整 Model Step、取消安全边界、Agent/Profile 新版本及测试 Seam。</p>
+</section>
+</main>
+<footer>CMaster Bot · Slice 3 Governed Tool Runtime · 自包含设计文档</footer>
+</body>
+</html>

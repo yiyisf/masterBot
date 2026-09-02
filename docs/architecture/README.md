@@ -13,6 +13,7 @@
 - [旧文档状态](./legacy-document-status.md) — 历史资料的非规范性说明
 - [领域语言](../../CONTEXT.md) — 项目统一术语
 - [架构决策](../adr/) — 关键取舍及原因
+- [Slice 3 Governed Tool Runtime 设计](../design/slice-3-governed-tool-runtime.html) — Grill 对齐后的自包含实施设计
 
 ## 架构图
 

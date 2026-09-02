@@ -415,6 +415,158 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/runs/{runId}/tool-confirmations/{interruptId}/resolve": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Confirm or reject an active Tool call */
+        post: {
+            parameters: {
+                query?: never;
+                header: {
+                    "idempotency-key": string;
+                };
+                path: {
+                    runId: string;
+                    interruptId: string;
+                };
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": {
+                        /** @enum {string} */
+                        response: "confirm" | "reject";
+                    };
+                };
+            };
+            responses: {
+                /** @description Tool confirmation resolved or replayed */
+                200: {
+                    headers: {
+                        "Idempotency-Replayed": "true" | "false";
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ResolveToolConfirmationResponse"];
+                    };
+                };
+                /** @description Invalid request */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/problem+json": components["schemas"]["ProblemDetails"];
+                    };
+                };
+                /** @description Not found */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/problem+json": components["schemas"]["ProblemDetails"];
+                    };
+                };
+                /** @description Tool confirmation or idempotency conflict */
+                409: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/problem+json": components["schemas"]["ProblemDetails"];
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/runs/{runId}/interrupts/{interruptId}/resolve": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Resolve an active Run Interrupt */
+        post: {
+            parameters: {
+                query?: never;
+                header: {
+                    "idempotency-key": string;
+                };
+                path: {
+                    runId: string;
+                    interruptId: string;
+                };
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": {
+                        /** @enum {string} */
+                        response: "continue_with_uncertainty";
+                    };
+                };
+            };
+            responses: {
+                /** @description Interrupt resolved or replayed */
+                200: {
+                    headers: {
+                        "Idempotency-Replayed": "true" | "false";
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ResolveInterruptResponse"];
+                    };
+                };
+                /** @description Invalid request */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/problem+json": components["schemas"]["ProblemDetails"];
+                    };
+                };
+                /** @description Not found */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/problem+json": components["schemas"]["ProblemDetails"];
+                    };
+                };
+                /** @description Interrupt response or idempotency conflict */
+                409: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/problem+json": components["schemas"]["ProblemDetails"];
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/runs/{runId}/events": {
         parameters: {
             query?: never;
@@ -711,10 +863,10 @@ export interface components {
                 /** Format: uuid */
                 id: string;
                 /** @enum {string} */
-                status: "pending" | "running" | "succeeded" | "failed" | "cancelled";
+                status: "pending" | "running" | "interrupted" | "succeeded" | "failed" | "cancelled";
             };
             /** @enum {string} */
-            status: "accepted" | "queued" | "running" | "succeeded" | "failed" | "cancelled";
+            status: "accepted" | "queued" | "running" | "waiting" | "succeeded" | "failed" | "cancelled";
             cancellable: boolean;
             lastSequence: number;
             /** Format: uuid */
@@ -735,6 +887,22 @@ export interface components {
                 code: "engine_failed" | "model_failed" | "dispatch_attempts_exhausted" | "output_delivery_failed";
                 message: string;
                 retryable: boolean;
+            };
+            activeInterrupt?: {
+                /** Format: uuid */
+                id: string;
+                /** @enum {string} */
+                kind: "tool_confirmation" | "tool_outcome_review";
+                /** @enum {string} */
+                status: "pending";
+                subjectRef: string;
+                safeSubjectSummary: {
+                    title: string;
+                    details: {
+                        [key: string]: string;
+                    };
+                };
+                allowedResponses: ("confirm" | "reject" | "continue_with_uncertainty")[];
             };
             /** Format: date-time */
             createdAt: string;
@@ -799,10 +967,10 @@ export interface components {
                     /** Format: uuid */
                     id: string;
                     /** @enum {string} */
-                    status: "pending" | "running" | "succeeded" | "failed" | "cancelled";
+                    status: "pending" | "running" | "interrupted" | "succeeded" | "failed" | "cancelled";
                 };
                 /** @enum {string} */
-                status: "accepted" | "queued" | "running" | "succeeded" | "failed" | "cancelled";
+                status: "accepted" | "queued" | "running" | "waiting" | "succeeded" | "failed" | "cancelled";
                 cancellable: boolean;
                 lastSequence: number;
                 /** Format: uuid */
@@ -823,6 +991,180 @@ export interface components {
                     code: "engine_failed" | "model_failed" | "dispatch_attempts_exhausted" | "output_delivery_failed";
                     message: string;
                     retryable: boolean;
+                };
+                activeInterrupt?: {
+                    /** Format: uuid */
+                    id: string;
+                    /** @enum {string} */
+                    kind: "tool_confirmation" | "tool_outcome_review";
+                    /** @enum {string} */
+                    status: "pending";
+                    subjectRef: string;
+                    safeSubjectSummary: {
+                        title: string;
+                        details: {
+                            [key: string]: string;
+                        };
+                    };
+                    allowedResponses: ("confirm" | "reject" | "continue_with_uncertainty")[];
+                };
+                /** Format: date-time */
+                createdAt: string;
+                /** Format: date-time */
+                startedAt?: string;
+                /** Format: date-time */
+                completedAt?: string;
+            };
+        };
+        ResolveInterruptResponse: {
+            run: {
+                /** Format: uuid */
+                id: string;
+                /** Format: uuid */
+                organizationId: string;
+                /** Format: uuid */
+                initiatingPrincipalId: string;
+                /** Format: uuid */
+                conversationId: string;
+                trigger: {
+                    /** @enum {string} */
+                    type: "message";
+                    /** Format: uuid */
+                    messageId: string;
+                };
+                /** Format: uuid */
+                agentId: string;
+                /** Format: uuid */
+                agentRevisionId: string;
+                engine: {
+                    /** @enum {string} */
+                    kind: "echo" | "ai-sdk";
+                    /** @enum {string} */
+                    version: "1";
+                };
+                rootInvocation: {
+                    /** Format: uuid */
+                    id: string;
+                    /** @enum {string} */
+                    status: "pending" | "running" | "interrupted" | "succeeded" | "failed" | "cancelled";
+                };
+                /** @enum {string} */
+                status: "accepted" | "queued" | "running" | "waiting" | "succeeded" | "failed" | "cancelled";
+                cancellable: boolean;
+                lastSequence: number;
+                /** Format: uuid */
+                assistantMessageId?: string;
+                model?: {
+                    /** Format: uuid */
+                    profileId: string;
+                    displayName: string;
+                    fallbackUsed: boolean;
+                };
+                usage?: {
+                    inputTokens: number;
+                    outputTokens: number;
+                    totalTokens: number;
+                };
+                failure?: {
+                    /** @enum {string} */
+                    code: "engine_failed" | "model_failed" | "dispatch_attempts_exhausted" | "output_delivery_failed";
+                    message: string;
+                    retryable: boolean;
+                };
+                activeInterrupt?: {
+                    /** Format: uuid */
+                    id: string;
+                    /** @enum {string} */
+                    kind: "tool_confirmation" | "tool_outcome_review";
+                    /** @enum {string} */
+                    status: "pending";
+                    subjectRef: string;
+                    safeSubjectSummary: {
+                        title: string;
+                        details: {
+                            [key: string]: string;
+                        };
+                    };
+                    allowedResponses: ("confirm" | "reject" | "continue_with_uncertainty")[];
+                };
+                /** Format: date-time */
+                createdAt: string;
+                /** Format: date-time */
+                startedAt?: string;
+                /** Format: date-time */
+                completedAt?: string;
+            };
+        };
+        ResolveToolConfirmationResponse: {
+            run: {
+                /** Format: uuid */
+                id: string;
+                /** Format: uuid */
+                organizationId: string;
+                /** Format: uuid */
+                initiatingPrincipalId: string;
+                /** Format: uuid */
+                conversationId: string;
+                trigger: {
+                    /** @enum {string} */
+                    type: "message";
+                    /** Format: uuid */
+                    messageId: string;
+                };
+                /** Format: uuid */
+                agentId: string;
+                /** Format: uuid */
+                agentRevisionId: string;
+                engine: {
+                    /** @enum {string} */
+                    kind: "echo" | "ai-sdk";
+                    /** @enum {string} */
+                    version: "1";
+                };
+                rootInvocation: {
+                    /** Format: uuid */
+                    id: string;
+                    /** @enum {string} */
+                    status: "pending" | "running" | "interrupted" | "succeeded" | "failed" | "cancelled";
+                };
+                /** @enum {string} */
+                status: "accepted" | "queued" | "running" | "waiting" | "succeeded" | "failed" | "cancelled";
+                cancellable: boolean;
+                lastSequence: number;
+                /** Format: uuid */
+                assistantMessageId?: string;
+                model?: {
+                    /** Format: uuid */
+                    profileId: string;
+                    displayName: string;
+                    fallbackUsed: boolean;
+                };
+                usage?: {
+                    inputTokens: number;
+                    outputTokens: number;
+                    totalTokens: number;
+                };
+                failure?: {
+                    /** @enum {string} */
+                    code: "engine_failed" | "model_failed" | "dispatch_attempts_exhausted" | "output_delivery_failed";
+                    message: string;
+                    retryable: boolean;
+                };
+                activeInterrupt?: {
+                    /** Format: uuid */
+                    id: string;
+                    /** @enum {string} */
+                    kind: "tool_confirmation" | "tool_outcome_review";
+                    /** @enum {string} */
+                    status: "pending";
+                    subjectRef: string;
+                    safeSubjectSummary: {
+                        title: string;
+                        details: {
+                            [key: string]: string;
+                        };
+                    };
+                    allowedResponses: ("confirm" | "reject" | "continue_with_uncertainty")[];
                 };
                 /** Format: date-time */
                 createdAt: string;

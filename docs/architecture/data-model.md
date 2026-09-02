@@ -64,13 +64,13 @@ Run
 └── lastSequence / currentCheckpointId?
 ```
 
-首个 Walking Skeleton 的 Run 状态为：
+Slice 2 的 Run 状态为：
 
 ```text
 accepted | queued | running | succeeded | failed | cancelled
 ```
 
-`invocation.output_ready` 是当前 Run 的取消边界：取消事务先提交时后续输出被丢弃；输出先持久化时取消返回 `run_cancellation_too_late`，并继续幂等交付最终 Assistant Message。不提前引入 `cancelling` 或 `completing` 状态。
+Slice 3 增加非终态 `waiting`；等待原因由 active Interrupt 表达，Invocation 状态为 `interrupted`，等待期间不持有 Worker Lease。`invocation.output_ready` 是当前 Run 的取消边界：取消事务先提交时后续输出被丢弃；输出先持久化时取消返回 `run_cancellation_too_late`，并继续幂等交付最终 Assistant Message。Tool Provider in-flight 期间 cancellation 暂时返回 409，Tool boundary 完成后恢复可取消。不引入 `cancelling` 或 `completing` 状态。
 
 ### Invocation
 
@@ -85,17 +85,18 @@ Invocation 是一个 Agent 在 Run 内的参与。它固定 Agent Revision、Eng
 
 一个 Invocation 可产生多次 ModelCall 和 ToolCall。
 
-ToolCall 是恢复 Ledger，至少记录：
+模型输出的是无执行权限的 Model Tool Request；只有 Tool Runtime 校验、授权并持久接受后才成为 ToolCall。ToolCall 是恢复 Ledger，至少记录：
 
 ```text
-id / invocationId / toolId / toolVersion
-status / idempotencyKey / risk annotations
-requestHash / redacted summary
-externalOperationId? / outcome / uncertainty
-startedAt / completedAt
+id / invocationId / capabilityId / toolRevisionId
+status / idempotencyKey / effect / recovery / risk annotations
+requestHash / private bounded requestPayload / safe requestSummary
+dispatchAttempts / externalOperationId?
+private bounded outcomePayload / safe outcomeSummary / uncertainty
+approvalId? / startedAt / completedAt
 ```
 
-未知非幂等副作用使用 `requires_review`，不得自动假定成功或失败。
+一个 ToolCall 可以有多个 Dispatch Attempt，但 request、Tool Revision 和 idempotency key 不变。未知非幂等副作用使用 `requires_review`，不得自动假定成功或失败；Employee 只能带着不确定性继续或取消 Run，不能改写审计事实或直接重试原 ToolCall。
 
 ## 4. Event、Checkpoint 与一致性
 
@@ -113,7 +114,7 @@ Event 信封包含 `eventId/schemaVersion/type/timestamp/payload/causationId/cor
 
 ### Checkpoint
 
-Checkpoint 保存安全恢复所需 Working State、Engine Adapter/version、Context Manifest reference 和已完成副作用边界。恢复从最近 Checkpoint 开始应用后续 Event。
+Checkpoint 保存安全恢复所需 Working State、Engine Adapter/version、Context Manifest reference 和已完成副作用边界。Slice 3 在 Tool 完成、创建 Interrupt 前和 Confirmation 解决后的安全点保存 Provider-neutral transcript、已完成 ToolCall ID、剩余 Model Tool Request、执行计数和 output generation；恢复不得重新生成已确认请求或重复已完成 ToolCall。
 
 ### Outbox 与状态表
 
@@ -136,9 +137,9 @@ Organization 批准的 ModelProfile 描述 Provider reference、能力、成本�
 
 ModelCall 保存每次实际尝试的 Profile、route role、attempt number、是否产生输出、安全失败分类、usage 和 trace/span ID，不只保存“默认模型”。Models 拥有这些记录；Execution 只在 Run 保存最终解析的 Profile/display name、Fallback 标记和 usage 快照。为保持 Module 所有权，ModelCall 的 Run/Invocation ID 是相关标识而非跨 Module 外键。
 
-### PolicyRevision
+### PolicyRevision / Approval
 
-Decision 保存实际 Policy Revision 与 obligation。Run 固定关键 Revision 以支持审计；ToolRuntime 每次调用仍重新评估动态条件。
+Decision 保存实际 Policy Revision 与 obligation。Run 固定关键 Revision 以支持审计；ToolRuntime 每次调用仍重新评估动态条件。Slice 3 的 Approval 绑定不可变 ToolCall Subject，由 initiating Employee 一次性确认或拒绝；Confirmation 不冻结授权，恢复时重新检查 Principal Entitlement、Agent Grant、Invocation restriction 和 Policy 后才可签发 Credential Lease。Approval 属于 Governance，Execution Interrupt 只保存相关 Approval ID，不建立跨 Module FK。
 
 ### EvalSuite / EvalEvidence
 
@@ -152,10 +153,11 @@ Skill * ── * required Tool
 Connector 1 ── * contributed Tool
 ```
 
-- Tool ID 与 Contract 稳定，不包含 Provider 实现细节。
+- Tool Capability ID 与 major Contract 稳定，不包含 Provider 实现细节；不可变 Tool Revision 保存具体 Provider binding 与 effect/recovery/risk。
+- Agent Revision 的 Tool Grant 指向 Capability major；Invocation 解析并固定实际 Revision，兼容实现修复不要求重发 Agent Revision。
 - Skill Revision 保存标准 Agent Skills 内容、资源引用和 Tool requirement；Skill 不拥有 Tool 执行代码。
 - Connector 保存系统配置和 `credentialRef`，不保存领域可见明文 Secret。
-- Tool Grant 可独立版本化并被 Agent Revision 引用。
+- Slice 3 不建设本地逐 Principal/逐 Tool RBAC；Principal Entitlement 来自可信 Identity/Policy 输入。
 
 ## 7. Artifact
 

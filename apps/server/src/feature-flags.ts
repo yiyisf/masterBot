@@ -1,4 +1,4 @@
-export type FeatureFlag = 'nextArchitecture';
+export type FeatureFlag = 'nextArchitecture' | 'toolRuntime';
 
 export interface FeatureFlags {
   isEnabled(flag: FeatureFlag): boolean;

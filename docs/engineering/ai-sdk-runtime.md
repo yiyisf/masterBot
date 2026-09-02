@@ -5,7 +5,7 @@ Slice 2 在 Slice 1 的 Run Walking Skeleton 后接入真实模型，同时保�
 ## 交付范围
 
 - `@cmaster/models` 拥有 `model_profiles`、`model_calls`、Provider Adapter、usage、受控 Fallback 和 GenAI Trace。
-- `AiSdkAgentEngine` 只执行一次文本模型调用；Tool Loop、Context Builder 和历史消息留给后续 Slice。
+- Slice 2 基线中的 `AiSdkAgentEngine` 只执行一次文本模型调用；Slice 3 已按 `governed-tool-runtime.md` 增量加入受治理 Tool Loop，Context Builder 和历史消息仍不在本 Slice。
 - Agent Revision 固定 `engineKind/engineVersion/modelRequirement`；Feature Flag 只决定新的 Run 解析到 Echo 还是 AI SDK Revision。
 - Execution 把 Provider token 聚合为 `output_started/delta/reset/completed` Run Events；最终 Assistant Message 仍是完成输出的权威事实。
 - `/api/v1/runs/{runId}/ui-stream` 只把 canonical Run Events 表示为 AI SDK UI Message Stream，不执行模型、不写状态。

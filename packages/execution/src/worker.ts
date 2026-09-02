@@ -1,6 +1,6 @@
 import type { ConversationModule } from '@cmaster/conversations';
 import type { ModelFailure } from '@cmaster/models';
-import type { AgentEngine, EngineEvent } from './engine.js';
+import { ExecutionLimitExceededError, type AgentEngine, type EngineEvent } from './engine.js';
 import { PostgresExecutionModule, type RunLease } from './postgres.js';
 import {
   StaleLeaseError,
@@ -93,6 +93,7 @@ export class RunWorker {
     let pending = '';
     let outputStarted = false;
     let completed = false;
+    let interrupted = false;
     let terminalModelFailure: ModelFailure | undefined;
     let lastFlushAt = Date.now();
     const flushIntervalMs = this.config.outputFlushIntervalMs ?? 100;
@@ -125,7 +126,11 @@ export class RunWorker {
         organizationId: lease.organizationId,
         runId: lease.runId,
         invocationId: lease.invocationId,
+        agentRevisionId: lease.agentRevisionId,
         prompt: trigger.prompt,
+        outputGeneration: generation,
+        ...(lease.checkpoint ? { checkpoint: lease.checkpoint } : {}),
+        ...(lease.resumeResponse ? { resumeResponse: lease.resumeResponse } : {}),
       }, signal)) {
         if (event.type === 'text_delta') {
           output += event.text;
@@ -136,6 +141,21 @@ export class RunWorker {
           continue;
         }
         await flush();
+        if (event.type === 'checkpoint_reached') {
+          await this.execution.saveCheckpoint(lease, event.checkpoint);
+          continue;
+        }
+        if (event.type === 'interrupt_requested') {
+          await this.execution.requestInterrupt(lease, {
+            kind: event.kind,
+            subjectRef: event.subjectRef,
+            safeSubjectSummary: event.safeSubjectSummary,
+            allowedResponses: event.allowedResponses,
+            checkpoint: event.checkpoint,
+          });
+          interrupted = true;
+          break;
+        }
         await this.recordEngineEvent(lease, event, record, async (reason) => {
           output = '';
           pending = '';
@@ -148,6 +168,7 @@ export class RunWorker {
       }
       await flush();
 
+      if (interrupted) return undefined;
       if (terminalModelFailure) {
         const failure: RunFailure = {
           code: 'model_failed',
@@ -162,11 +183,17 @@ export class RunWorker {
       return output;
     } catch (error) {
       if (error instanceof StaleLeaseError) throw error;
-      const failure: RunFailure = {
-        code: 'engine_failed',
-        message: 'The Agent Engine could not complete the run.',
-        retryable: true,
-      };
+      const failure: RunFailure = error instanceof ExecutionLimitExceededError
+        ? {
+          code: 'execution_limit_exceeded',
+          message: 'The Agent execution limit was exceeded.',
+          retryable: false,
+        }
+        : {
+          code: 'engine_failed',
+          message: 'The Agent Engine could not complete the run.',
+          retryable: true,
+        };
       await this.execution.fail(lease, failure);
       return undefined;
     }
@@ -217,7 +244,19 @@ export class RunWorker {
           hadOutput: event.hadOutput,
         });
         break;
+      case 'tool_status':
+        await record({
+          type: 'tool_status',
+          status: event.status,
+          toolCallId: event.toolCallId,
+          toolName: event.toolName,
+          safeSummary: event.safeSummary,
+        });
+        break;
       case 'completed':
+        break;
+      case 'interrupt_requested':
+      case 'checkpoint_reached':
         break;
     }
   }
