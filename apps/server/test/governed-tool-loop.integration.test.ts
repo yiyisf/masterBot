@@ -215,13 +215,21 @@ describe('governed Tool Loop', () => {
     const interrupt = waiting.activeInterrupt;
     if (!interrupt) throw new Error('Tool confirmation Interrupt expected');
 
+    const confirmationCommandId = randomUUID();
     await runtime.coordinator.resolve(
       runtime.identity.resolveRequest(), runtime.runId, interrupt.id, {
-        commandId: randomUUID(),
+        commandId: confirmationCommandId,
         response: 'confirm',
         signal: new AbortController().signal,
       },
     );
+    await expect(runtime.coordinator.resolve(
+      runtime.identity.resolveRequest(), runtime.runId, interrupt.id, {
+        commandId: confirmationCommandId,
+        response: 'confirm',
+        signal: new AbortController().signal,
+      },
+    )).resolves.toMatchObject({ replayed: true });
     expect(runtime.providerCalls()).toBe(1);
     await runtime.worker.executeOne();
 
@@ -241,6 +249,11 @@ describe('governed Tool Loop', () => {
     expect(await runtime.tools.listCalls(
       runtime.identity.resolveRequest(), runtime.runId,
     )).toHaveLength(1);
+    expect((await runtime.execution.readEvents(
+      runtime.identity.resolveRequest(), runtime.runId, 0,
+    )).map((event) => event.type)).toEqual(expect.arrayContaining([
+      'tool.confirmation_required', 'tool.succeeded',
+    ]));
     const messages = await runtime.conversations.listMessages(
       runtime.identity.resolveRequest(), conversationId(runtime.conversationId), 0, 100,
     );
@@ -293,6 +306,9 @@ describe('governed Tool Loop', () => {
       role: 'tool',
       output: { status: 'uncertain', code: 'external_effect_unknown' },
     });
+    expect((await runtime.execution.readEvents(
+      runtime.identity.resolveRequest(), runtime.runId, 0,
+    )).map((event) => event.type)).toContain('tool.requires_review');
   });
 
   it('continues with a denied Tool Outcome when the initiating Employee rejects', async () => {
@@ -323,5 +339,8 @@ describe('governed Tool Loop', () => {
       role: 'tool',
       output: { status: 'denied', reason: 'employee_rejected' },
     });
+    expect((await runtime.execution.readEvents(
+      runtime.identity.resolveRequest(), runtime.runId, 0,
+    )).map((event) => event.type)).toContain('tool.denied');
   });
 });

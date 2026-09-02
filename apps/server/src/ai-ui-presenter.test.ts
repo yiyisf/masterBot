@@ -46,6 +46,22 @@ describe('AI SDK UI Presenter', () => {
     });
   });
 
+  it('maps safe Tool lifecycle facts to CMaster Tool data parts', () => {
+    expect(presentRunEvent(event(10, 'tool.confirmation_required', {
+      toolCallId: 'tool-call-1',
+      toolName: 'https_fetch',
+      safeSummary: { title: 'Fetch approved host', details: { host: 'docs.example.test' } },
+    }), { generation: 0 })).toMatchObject({
+      type: 'data-cmaster-tool',
+      data: {
+        eventType: 'tool.confirmation_required',
+        toolCallId: 'tool-call-1',
+        toolName: 'https_fetch',
+        sequence: 10,
+      },
+    });
+  });
+
   it('emits an explicit reset data part instead of concatenating fallback output', () => {
     const chunk = presentRunEvent(event(10, 'invocation.output_reset', {
       generation: 3, reason: 'fallback',

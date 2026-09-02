@@ -240,6 +240,15 @@ export class RunWorker {
           hadOutput: event.hadOutput,
         });
         break;
+      case 'tool_status':
+        await record({
+          type: 'tool_status',
+          status: event.status,
+          toolCallId: event.toolCallId,
+          toolName: event.toolName,
+          safeSummary: event.safeSummary,
+        });
+        break;
       case 'completed':
         break;
       case 'interrupt_requested':

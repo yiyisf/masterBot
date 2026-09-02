@@ -35,6 +35,14 @@ export function presentRunEvent(
   const generation = typeof data.generation === 'number' ? data.generation : state.generation;
   state.generation = generation;
 
+  if (event.type.startsWith('tool.')) {
+    return {
+      type: 'data-cmaster-tool',
+      id: event.eventId,
+      data: { eventType: event.type, ...data, sequence: event.sequence },
+    };
+  }
+
   switch (event.type) {
     case 'invocation.output_started':
       return { type: 'text-start', id: textPartId(event, generation) };

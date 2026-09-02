@@ -10,10 +10,12 @@ import {
   type CommandResult,
   type DispatchAttemptId,
   type ExecutionCheckpoint,
+  type ExecutionInterrupt,
   type ExecutionModule,
   type ExecutionProgressEvent,
   type ActiveInterrupt,
   type InterruptId,
+  type InterruptKind,
   type InterruptResponse,
   type InvocationId,
   type InvocationStatus,
@@ -333,6 +335,41 @@ export class PostgresExecutionModule implements ExecutionModule {
     const row = await selectRun(this.pool, identity.organizationId, runId);
     if (!row || row.initiating_principal_id !== identity.principalId) throw new RunNotFoundError();
     return mapRun(row);
+  }
+
+  async getInterrupt(
+    identity: RequestIdentity,
+    runId: RunId,
+    interruptId: InterruptId,
+  ): Promise<ExecutionInterrupt> {
+    const result = await this.pool.query<{
+      id: string;
+      kind: InterruptKind;
+      status: ExecutionInterrupt['status'];
+      subject_ref: string;
+      safe_subject_summary: ExecutionInterrupt['safeSubjectSummary'];
+      allowed_responses: InterruptResponse[];
+      resolution: InterruptResponse | 'run_cancelled' | null;
+    }>(
+      `SELECT x.id, x.kind, x.status, x.subject_ref, x.safe_subject_summary,
+              x.allowed_responses, x.resolution
+       FROM execution_interrupts x
+       JOIN runs r ON r.organization_id = x.organization_id AND r.id = x.run_id
+       WHERE x.organization_id = $1 AND x.run_id = $2 AND x.id = $3
+         AND r.initiating_principal_id = $4`,
+      [identity.organizationId, runId, interruptId, identity.principalId],
+    );
+    const row = result.rows[0];
+    if (!row) throw new RunNotFoundError();
+    return {
+      id: row.id as InterruptId,
+      kind: row.kind,
+      status: row.status,
+      subjectRef: row.subject_ref,
+      safeSubjectSummary: row.safe_subject_summary,
+      allowedResponses: row.allowed_responses,
+      ...(row.resolution === null ? {} : { resolution: row.resolution }),
+    };
   }
 
   async enterToolBoundary(identity: RequestIdentity, runId: RunId): Promise<void> {
@@ -859,6 +896,20 @@ export class PostgresExecutionModule implements ExecutionModule {
               failure: event.failure,
               hadOutput: event.hadOutput,
             }, lease.attemptId);
+            break;
+          case 'tool_status':
+            await appendEvent(
+              client,
+              lease.organizationId,
+              lease.runId,
+              `tool.${event.status}`,
+              {
+                toolCallId: event.toolCallId,
+                toolName: event.toolName,
+                safeSummary: event.safeSummary,
+              },
+              lease.attemptId,
+            );
             break;
           case 'output_reset':
             if (event.generation !== currentGeneration + 1) {

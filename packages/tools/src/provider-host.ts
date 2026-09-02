@@ -87,12 +87,13 @@ export class DevelopmentProviderHostFixture implements ToolProvider {
             value?: unknown;
             safeSummary?: SafeToolSummary;
           };
+          const safeSummary = response.safeSummary;
           if (response.protocolVersion !== 1 || response.kind !== 'success'
-            || !response.safeSummary) throw new Error('invalid protocol');
+            || !safeSummary) throw new Error('invalid protocol');
           finish(() => resolve({
             kind: 'success',
             value: response.value,
-            safeSummary: response.safeSummary!,
+            safeSummary,
           }));
         } catch {
           finish(() => reject(new Error('Provider Host fixture returned an invalid response')));

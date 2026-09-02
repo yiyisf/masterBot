@@ -78,7 +78,8 @@ export default function RunPage() {
         if (parsed.data.type === 'assistant_message.appended') {
           void loadMessages(initial.conversationId);
         }
-        if (parsed.data.type === 'interrupt.requested') {
+        if (parsed.data.type === 'interrupt.requested'
+          || parsed.data.type === 'interrupt.resolved') {
           void loadSnapshot(false);
         }
         if (['run.succeeded', 'run.failed', 'run.cancelled'].includes(parsed.data.type)) {

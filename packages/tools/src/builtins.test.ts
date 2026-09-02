@@ -81,5 +81,15 @@ describe('workflow-validation Built-in Tools', () => {
       ...baseRequest,
       input: { url: 'https://other.example.test/guide' },
     })).rejects.toThrow('not allowed');
+
+    const bounded = new HttpsFetchToolProvider({
+      allowedHosts: ['docs.example.test'],
+      maximumResponseBytes: 4,
+      fetch: async () => new Response('five!'),
+    });
+    await expect(bounded.execute({
+      ...baseRequest,
+      input: { url: 'https://docs.example.test/large' },
+    })).rejects.toThrow('too large');
   });
 });

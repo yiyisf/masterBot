@@ -36,7 +36,7 @@ export class ToolConfirmationCoordinator {
   constructor(
     private readonly execution: Pick<
       ExecutionModule,
-      'getRun' | 'resolveInterrupt' | 'enterToolBoundary' | 'leaveToolBoundary'
+      'getRun' | 'getInterrupt' | 'resolveInterrupt' | 'enterToolBoundary' | 'leaveToolBoundary'
     >,
     private readonly tools: Pick<ToolRuntime, 'resume'>,
     private readonly entitlements: PrincipalEntitlementSource,
@@ -48,28 +48,35 @@ export class ToolConfirmationCoordinator {
     interruptId: InterruptId,
     command: ResolveToolConfirmationCommand,
   ): Promise<ToolConfirmationResult> {
-    const run = await this.execution.getRun(identity, runId);
-    const interrupt = run.activeInterrupt;
+    const [run, interrupt] = await Promise.all([
+      this.execution.getRun(identity, runId),
+      this.execution.getInterrupt(identity, runId, interruptId),
+    ]);
     if (run.initiatingPrincipalId !== identity.principalId
-      || !interrupt
-      || interrupt.id !== interruptId
-      || interrupt.kind !== 'tool_confirmation') {
+      || interrupt.kind !== 'tool_confirmation'
+      || interrupt.status === 'cancelled') {
       throw new ToolConfirmationConflictError();
     }
 
-    await this.execution.enterToolBoundary(identity, runId);
+    const principalEntitlements = await this.entitlements.resolve(identity);
+    const resumeTool = (): Promise<ToolOutcome> => this.tools.resume({
+      identity,
+      toolCallId: interrupt.subjectRef as ToolCallId,
+      commandId: approvalCommandId(command.commandId),
+      response: command.response,
+      principalEntitlements,
+      signal: command.signal,
+    });
     let outcome: ToolOutcome;
-    try {
-      outcome = await this.tools.resume({
-        identity,
-        toolCallId: interrupt.subjectRef as ToolCallId,
-        commandId: approvalCommandId(command.commandId),
-        response: command.response,
-        principalEntitlements: await this.entitlements.resolve(identity),
-        signal: command.signal,
-      });
-    } finally {
-      await this.execution.leaveToolBoundary(identity, runId);
+    if (interrupt.status === 'pending') {
+      await this.execution.enterToolBoundary(identity, runId);
+      try {
+        outcome = await resumeTool();
+      } finally {
+        await this.execution.leaveToolBoundary(identity, runId);
+      }
+    } else {
+      outcome = await resumeTool();
     }
     const resolved = await this.execution.resolveInterrupt(identity, runId, interruptId, {
       commandId: runCommandId(command.commandId),

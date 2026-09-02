@@ -75,6 +75,7 @@ describe('ToolConfirmationCoordinator', () => {
     } satisfies Pick<ToolRuntime, 'resume'>;
     const execution = {
       getRun: vi.fn(async () => waiting),
+      getInterrupt: vi.fn(async () => activeInterrupt),
       enterToolBoundary: vi.fn(async () => { order.push('enter'); }),
       leaveToolBoundary: vi.fn(async () => { order.push('leave'); }),
       resolveInterrupt: vi.fn(async () => {
@@ -83,7 +84,7 @@ describe('ToolConfirmationCoordinator', () => {
       }),
     } satisfies Pick<
       ExecutionModule,
-      'getRun' | 'resolveInterrupt' | 'enterToolBoundary' | 'leaveToolBoundary'
+      'getRun' | 'getInterrupt' | 'resolveInterrupt' | 'enterToolBoundary' | 'leaveToolBoundary'
     >;
     const coordinator = new ToolConfirmationCoordinator(
       execution, tools, new Slice3DevelopmentEntitlements(),
@@ -111,6 +112,7 @@ describe('ToolConfirmationCoordinator', () => {
     const coordinator = new ToolConfirmationCoordinator(
       {
         getRun: vi.fn(async () => waiting),
+        getInterrupt: vi.fn(async () => ({ ...activeInterrupt, kind: 'tool_outcome_review' as const })),
         enterToolBoundary: vi.fn(),
         leaveToolBoundary: vi.fn(),
         resolveInterrupt: vi.fn(),

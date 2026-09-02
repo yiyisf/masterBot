@@ -30,7 +30,13 @@ export interface EngineInvocation {
 }
 
 export type AgentToolOutcome =
-  | { kind: 'completed'; toolCallId: string; modelOutput: unknown }
+  | {
+    kind: 'completed';
+    outcomeKind: 'success' | 'denied' | 'failed';
+    toolCallId: string;
+    modelOutput: unknown;
+    safeSummary: { title: string; details: Readonly<Record<string, string>> };
+  }
   | {
     kind: 'interrupt';
     interruptKind: InterruptKind;
@@ -59,6 +65,13 @@ export type EngineEvent =
   | { type: 'model_fallback_selected'; fromProfileId: ModelProfileId; toProfile: ModelSelection }
   | { type: 'model_completed'; profile: ModelSelection; usage: ModelUsage; fallbackUsed: boolean }
   | { type: 'model_failed'; profile: ModelSelection; failure: ModelFailure; hadOutput: boolean }
+  | {
+    type: 'tool_status';
+    status: 'succeeded' | 'denied' | 'failed' | 'confirmation_required' | 'requires_review';
+    toolCallId: string;
+    toolName: string;
+    safeSummary: { title: string; details: Readonly<Record<string, string>> };
+  }
   | {
     type: 'interrupt_requested';
     kind: InterruptKind;
@@ -102,7 +115,8 @@ export class AiSdkAgentEngine implements AgentEngine {
   ) {}
 
   async *execute(input: EngineInvocation, signal: AbortSignal): AsyncIterable<EngineEvent> {
-    const restored = input.checkpoint?.toolLoop;
+    const restoredCheckpoint = input.checkpoint;
+    const restored = restoredCheckpoint?.toolLoop;
     const transcript: ModelTranscriptMessage[] = restored
       ? [...restored.providerNeutralTranscript]
       : [{ role: 'user', text: input.prompt }];
@@ -113,9 +127,9 @@ export class AiSdkAgentEngine implements AgentEngine {
     const pending: Array<{
       request: ModelRequestedTool;
       recoverToolCallId?: string;
-    }> = restored
+    }> = restored && restoredCheckpoint
       ? [
-        { request: restored.pendingToolRequest, recoverToolCallId: input.checkpoint!.toolCallId },
+        { request: restored.pendingToolRequest, recoverToolCallId: restoredCheckpoint.toolCallId },
         ...restored.remainingModelToolRequests.map((request) => ({ request })),
       ]
       : [];
@@ -123,7 +137,8 @@ export class AiSdkAgentEngine implements AgentEngine {
     while (true) {
       while (pending.length > 0) {
         if (!this.tools) throw new ExecutionLimitExceededError('Model requested an unavailable Tool');
-        const current = pending.shift()!;
+        const current = pending.shift();
+        if (!current) throw new ExecutionLimitExceededError('Pending Tool request was unavailable');
         let outcome: AgentToolOutcome;
         if (current.recoverToolCallId) {
           outcome = await this.tools.recover(input, current.recoverToolCallId, current.request);
@@ -133,9 +148,23 @@ export class AiSdkAgentEngine implements AgentEngine {
           outcome = await this.tools.invoke(input, current.request, signal);
         }
 
-        if (outcome.kind === 'interrupt'
-          && !(outcome.interruptKind === 'tool_outcome_review'
-            && input.resumeResponse === 'continue_with_uncertainty')) {
+        const continuingUncertainOutcome = outcome.kind === 'interrupt'
+          && outcome.interruptKind === 'tool_outcome_review'
+          && input.resumeResponse === 'continue_with_uncertainty';
+        if (!continuingUncertainOutcome) {
+          yield {
+            type: 'tool_status',
+            status: outcome.kind === 'completed'
+              ? outcome.outcomeKind === 'success' ? 'succeeded' : outcome.outcomeKind
+              : outcome.interruptKind === 'tool_confirmation'
+                ? 'confirmation_required'
+                : 'requires_review',
+            toolCallId: outcome.toolCallId,
+            toolName: current.request.name,
+            safeSummary: outcome.safeSummary,
+          };
+        }
+        if (outcome.kind === 'interrupt' && !continuingUncertainOutcome) {
           const checkpoint: ExecutionCheckpoint = {
             schemaVersion: 1,
             engineKind: 'ai-sdk',

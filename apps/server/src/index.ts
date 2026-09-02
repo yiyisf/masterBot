@@ -17,8 +17,8 @@ import {
   PostgresToolCatalog,
   PostgresToolRuntime,
   TextStatisticsToolProvider,
-  toolGrantId,
-  toolRevisionId,
+  WORKFLOW_VALIDATION_TOOL_GRANT_ID,
+  workflowValidationToolCatalog,
 } from '@cmaster/tools';
 import {
   modelProfileId,
@@ -120,7 +120,6 @@ if (config.features.nextArchitecture) {
 }
 if (config.features.toolRuntime) {
   const organizationId = identity.resolveRequest().organizationId;
-  const grantId = toolGrantId('00000000-0000-4000-8000-000000000011');
   const approvals = new PostgresApprovalModule(database.pool);
   const catalog = new PostgresToolCatalog(database.pool);
   const providers = [
@@ -128,73 +127,14 @@ if (config.features.toolRuntime) {
     new TextStatisticsToolProvider(),
     new HttpsFetchToolProvider({ allowedHosts: config.toolRuntime.httpFetchAllowedHosts }),
   ];
-  await catalog.provision(organizationId, {
-    revisions: [
-      {
-        id: toolRevisionId('00000000-0000-4000-8000-000000000008'),
-        capabilityId: 'cmaster.utility.current_time:v1',
-        name: 'current_time',
-        description: 'Returns the current UTC time.',
-        inputSchema: { type: 'object', properties: {}, additionalProperties: false },
-        outputSchema: {
-          type: 'object', required: ['iso'], additionalProperties: false,
-          properties: { iso: { type: 'string' } },
-        },
-        effect: 'read_only', recovery: 'retry_same_call', risks: [],
-        providerKey: providers[0]!.key,
-      },
-      {
-        id: toolRevisionId('00000000-0000-4000-8000-000000000009'),
-        capabilityId: 'cmaster.utility.text_statistics:v1',
-        name: 'text_statistics',
-        description: 'Counts Unicode characters, words, and lines in text.',
-        inputSchema: {
-          type: 'object', required: ['text'], additionalProperties: false,
-          properties: { text: { type: 'string' } },
-        },
-        outputSchema: {
-          type: 'object', required: ['characters', 'words', 'lines'], additionalProperties: false,
-          properties: {
-            characters: { type: 'integer' }, words: { type: 'integer' }, lines: { type: 'integer' },
-          },
-        },
-        effect: 'read_only', recovery: 'retry_same_call', risks: ['handles_sensitive_data'],
-        providerKey: providers[1]!.key,
-      },
-      {
-        id: toolRevisionId('00000000-0000-4000-8000-000000000010'),
-        capabilityId: 'cmaster.http.fetch:v1',
-        name: 'https_fetch',
-        description: 'Fetches one explicitly allowed credential-free HTTPS URL.',
-        inputSchema: {
-          type: 'object', required: ['url'], additionalProperties: false,
-          properties: { url: { type: 'string', format: 'uri' } },
-        },
-        outputSchema: {
-          type: 'object', required: ['status', 'contentType', 'body'], additionalProperties: false,
-          properties: {
-            status: { type: 'integer' }, contentType: { type: 'string' }, body: { type: 'string' },
-          },
-        },
-        effect: 'read_only', recovery: 'retry_same_call', risks: ['open_world'],
-        providerKey: providers[2]!.key,
-      },
-    ],
-    grants: [{
-      id: grantId,
-      capabilityIds: [
-        'cmaster.utility.current_time:v1',
-        'cmaster.utility.text_statistics:v1',
-        'cmaster.http.fetch:v1',
-      ],
-    }],
-  });
+  await catalog.provision(organizationId, workflowValidationToolCatalog());
   const toolRuntime = new PostgresToolRuntime(
     database.pool, new Slice3BaselinePolicy(), approvals, providers,
   );
   const entitlements = new Slice3DevelopmentEntitlements();
   governedAgentTools = new GovernedAgentToolRuntime(
-    catalog, toolRuntime, identity, entitlements, grantId, execution,
+    catalog, toolRuntime, identity, entitlements,
+    WORKFLOW_VALIDATION_TOOL_GRANT_ID, execution,
   );
   toolConfirmationCoordinator = new ToolConfirmationCoordinator(
     execution, toolRuntime, entitlements,

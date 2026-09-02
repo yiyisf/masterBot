@@ -21,6 +21,7 @@ export {
   type ActiveInterrupt,
   type CancelRunResult,
   type ExecutionCheckpoint,
+  type ExecutionInterrupt,
   type DispatchAttemptId,
   type ExecutionModule,
   type ExecutionProgressEvent,

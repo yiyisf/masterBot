@@ -37,6 +37,11 @@ export type RunEventType =
   | 'model.output_discarded'
   | 'model.completed'
   | 'model.failed'
+  | 'tool.succeeded'
+  | 'tool.denied'
+  | 'tool.failed'
+  | 'tool.confirmation_required'
+  | 'tool.requires_review'
   | 'invocation.output_started'
   | 'invocation.output_delta'
   | 'invocation.output_reset'
@@ -55,13 +60,18 @@ export interface RunFailure {
   retryable: boolean;
 }
 
-export interface ActiveInterrupt {
+export interface ExecutionInterrupt {
   id: InterruptId;
   kind: InterruptKind;
-  status: 'pending';
+  status: 'pending' | 'resolved' | 'cancelled';
   subjectRef: string;
   safeSubjectSummary: { title: string; details: Readonly<Record<string, string>> };
   allowedResponses: readonly InterruptResponse[];
+  resolution?: InterruptResponse | 'run_cancelled';
+}
+
+export interface ActiveInterrupt extends Omit<ExecutionInterrupt, 'status' | 'resolution'> {
+  status: 'pending';
 }
 
 export interface ExecutionCheckpoint {
@@ -130,6 +140,13 @@ export type ExecutionProgressEvent =
   | { type: 'model_output_discarded'; profileId: ModelProfileId; reason: 'fallback' | 'failure' }
   | { type: 'model_completed'; profileId: ModelProfileId; usage: ModelUsage; fallbackUsed: boolean }
   | { type: 'model_failed'; profileId: ModelProfileId; failure: ModelFailure; hadOutput: boolean }
+  | {
+    type: 'tool_status';
+    status: 'succeeded' | 'denied' | 'failed' | 'confirmation_required' | 'requires_review';
+    toolCallId: string;
+    toolName: string;
+    safeSummary: ActiveInterrupt['safeSubjectSummary'];
+  }
   | { type: 'output_started'; generation: number }
   | { type: 'output_delta'; generation: number; text: string }
   | { type: 'output_reset'; generation: number; reason: 'fallback' | 'failure' | 'recovery' }
@@ -179,6 +196,11 @@ export interface ToolExecutionBoundary {
 export interface ExecutionModule extends ToolExecutionBoundary {
   acceptRun(identity: RequestIdentity, command: AcceptRunCommand): Promise<CommandResult<RunSnapshot>>;
   getRun(identity: RequestIdentity, runId: RunId): Promise<RunSnapshot>;
+  getInterrupt(
+    identity: RequestIdentity,
+    runId: RunId,
+    interruptId: InterruptId,
+  ): Promise<ExecutionInterrupt>;
   cancelRun(identity: RequestIdentity, runId: RunId, commandId: RunCommandId): Promise<CancelRunResult>;
   resolveInterrupt(
     identity: RequestIdentity,

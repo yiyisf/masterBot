@@ -249,8 +249,10 @@ describe('AI SDK Model Runtime', () => {
         invoked.push(request.requestId);
         return {
           kind: 'completed',
+          outcomeKind: 'success',
           toolCallId: 'tool-call-1',
           modelOutput: { iso: '2026-01-02T12:00:00Z' },
+          safeSummary: { title: 'Current time read', details: {} },
         };
       },
       async recover() {

@@ -130,18 +130,34 @@ function projectCall(call: ToolCall, descriptor: ToolDescriptor): AgentToolOutco
 function projectOutcome(outcome: ToolOutcome, descriptor: ToolDescriptor): AgentToolOutcome {
   switch (outcome.kind) {
     case 'success':
-      return { kind: 'completed', toolCallId: outcome.toolCallId, modelOutput: outcome.value };
+      return {
+        kind: 'completed',
+        outcomeKind: 'success',
+        toolCallId: outcome.toolCallId,
+        modelOutput: outcome.value,
+        safeSummary: outcome.safeSummary,
+      };
     case 'denied':
       return {
         kind: 'completed',
+        outcomeKind: 'denied',
         toolCallId: outcome.toolCallId,
         modelOutput: { status: 'denied', reason: outcome.reason },
+        safeSummary: {
+          title: `${descriptor.name} was denied`,
+          details: { status: outcome.reason },
+        },
       };
     case 'failed':
       return {
         kind: 'completed',
+        outcomeKind: 'failed',
         toolCallId: outcome.toolCallId,
         modelOutput: { status: 'failed', ...outcome.failure },
+        safeSummary: {
+          title: `${descriptor.name} failed`,
+          details: { code: outcome.failure.code },
+        },
       };
     case 'confirmation_required':
       return {
