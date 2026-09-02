@@ -5,6 +5,7 @@ import {
   dynamicTool,
   jsonSchema,
   streamText,
+  type ModelMessage,
 } from 'ai';
 import type {
   ModelAdapter,
@@ -12,6 +13,7 @@ import type {
   ModelAdapterRequest,
   ModelFailure,
   ModelFailureCode,
+  ModelTranscriptMessage,
   ModelUsage,
 } from './types.js';
 
@@ -68,6 +70,35 @@ function normalizedUsage(usage: Awaited<ReturnType<typeof streamText>['usage']>)
   };
 }
 
+function providerMessages(transcript: readonly ModelTranscriptMessage[]): ModelMessage[] {
+  return transcript.map((message): ModelMessage => {
+    if (message.role === 'user') return { role: 'user', content: message.text };
+    if (message.role === 'assistant') {
+      return {
+        role: 'assistant',
+        content: [
+          ...(message.text.length > 0 ? [{ type: 'text' as const, text: message.text }] : []),
+          ...message.toolRequests.map((request) => ({
+            type: 'tool-call' as const,
+            toolCallId: request.requestId,
+            toolName: request.name,
+            input: request.input,
+          })),
+        ],
+      };
+    }
+    return {
+      role: 'tool',
+      content: [{
+        type: 'tool-result',
+        toolCallId: message.requestId,
+        toolName: message.name,
+        output: { type: 'text', value: JSON.stringify(message.output) ?? 'null' },
+      }],
+    };
+  });
+}
+
 export class OpenAICompatibleModelAdapter implements ModelAdapter {
   readonly providerKind = 'openai-compatible' as const;
 
@@ -91,7 +122,9 @@ export class OpenAICompatibleModelAdapter implements ModelAdapter {
     const result = streamText({
       // OpenAI-compatible gateways 普遍实现 Chat Completions；避免默认切到仅 OpenAI 支持的 Responses API。
       model: provider.chat(request.profile.providerModelId),
-      prompt: request.prompt,
+      ...(request.transcript
+        ? { messages: providerMessages(request.transcript) }
+        : { prompt: request.prompt }),
       ...(tools ? { tools } : {}),
       abortSignal: request.signal,
       // 重试和 Fallback 必须由 Model Module 记录，禁止 SDK 在内部静默重试。

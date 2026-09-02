@@ -1,7 +1,9 @@
 export {
   AiSdkAgentEngine,
   EchoAgentEngine,
+  ExecutionLimitExceededError,
   type AgentEngine,
+  type AgentToolRuntime,
   type EngineEvent,
   type EngineInvocation,
 } from './engine.js';

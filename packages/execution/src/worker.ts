@@ -1,6 +1,6 @@
 import type { ConversationModule } from '@cmaster/conversations';
 import type { ModelFailure } from '@cmaster/models';
-import type { AgentEngine, EngineEvent } from './engine.js';
+import { ExecutionLimitExceededError, type AgentEngine, type EngineEvent } from './engine.js';
 import { PostgresExecutionModule, type RunLease } from './postgres.js';
 import {
   StaleLeaseError,
@@ -125,6 +125,7 @@ export class RunWorker {
         organizationId: lease.organizationId,
         runId: lease.runId,
         invocationId: lease.invocationId,
+        agentRevisionId: lease.agentRevisionId,
         prompt: trigger.prompt,
       }, signal)) {
         if (event.type === 'text_delta') {
@@ -162,11 +163,17 @@ export class RunWorker {
       return output;
     } catch (error) {
       if (error instanceof StaleLeaseError) throw error;
-      const failure: RunFailure = {
-        code: 'engine_failed',
-        message: 'The Agent Engine could not complete the run.',
-        retryable: true,
-      };
+      const failure: RunFailure = error instanceof ExecutionLimitExceededError
+        ? {
+          code: 'execution_limit_exceeded',
+          message: 'The Agent execution limit was exceeded.',
+          retryable: false,
+        }
+        : {
+          code: 'engine_failed',
+          message: 'The Agent Engine could not complete the run.',
+          retryable: true,
+        };
       await this.execution.fail(lease, failure);
       return undefined;
     }

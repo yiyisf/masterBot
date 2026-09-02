@@ -44,7 +44,7 @@ export type RunEventType =
   | 'run.failed';
 
 export interface RunFailure {
-  code: 'engine_failed' | 'model_failed' | 'dispatch_attempts_exhausted' | 'output_delivery_failed';
+  code: 'engine_failed' | 'model_failed' | 'execution_limit_exceeded' | 'dispatch_attempts_exhausted' | 'output_delivery_failed';
   message: string;
   retryable: boolean;
 }

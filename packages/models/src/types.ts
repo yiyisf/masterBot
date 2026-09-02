@@ -90,11 +90,17 @@ export interface ModelRequestedTool {
   input: unknown;
 }
 
+export type ModelTranscriptMessage =
+  | { role: 'user'; text: string }
+  | { role: 'assistant'; text: string; toolRequests: readonly ModelRequestedTool[] }
+  | { role: 'tool'; requestId: string; name: string; output: unknown };
+
 export interface ModelInvocationRequest {
   organizationId: OrganizationId;
   runId: string;
   invocationId: string;
   prompt: string;
+  transcript?: readonly ModelTranscriptMessage[];
   tools?: readonly ModelAvailableTool[];
   signal: AbortSignal;
 }
@@ -112,6 +118,7 @@ export interface ModelAdapterRequest {
   profile: ModelProfile;
   apiKey: string;
   prompt: string;
+  transcript?: readonly ModelTranscriptMessage[];
   tools?: readonly ModelAvailableTool[];
   signal: AbortSignal;
 }

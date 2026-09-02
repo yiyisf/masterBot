@@ -270,6 +270,7 @@ export class PostgresModelGateway implements ModelGateway {
           profile,
           apiKey,
           prompt: request.prompt,
+          ...(request.transcript ? { transcript: request.transcript } : {}),
           ...(request.tools ? { tools: request.tools } : {}),
           signal: request.signal,
         })) {

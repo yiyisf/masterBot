@@ -19,5 +19,6 @@ export {
   type ModelRequestedTool,
   type ModelRouteRole,
   type ModelSelection,
+  type ModelTranscriptMessage,
   type ModelUsage,
 } from './types.js';

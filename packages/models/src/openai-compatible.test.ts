@@ -97,7 +97,10 @@ describe('OpenAICompatibleModelAdapter error classification', () => {
   });
 
   it('projects dynamic Tool schemas and returns Provider tool calls without executing them', async () => {
-    let requestBody: { tools?: Array<{ function?: { name?: string } }> } | undefined;
+    let requestBody: {
+      tools?: Array<{ function?: { name?: string } }>;
+      messages?: Array<{ role?: string; tool_call_id?: string; content?: unknown }>;
+    } | undefined;
     const server = createServer((request, response) => {
       let body = '';
       request.setEncoding('utf8');
@@ -136,6 +139,20 @@ describe('OpenAICompatibleModelAdapter error classification', () => {
         profile: modelProfile(`http://127.0.0.1:${address.port}/v1`),
         apiKey: 'test-secret',
         prompt: 'what time is it?',
+        transcript: [
+          { role: 'user', text: 'what time is it?' },
+          {
+            role: 'assistant',
+            text: '',
+            toolRequests: [{ requestId: 'prior-call', name: 'current_time', input: {} }],
+          },
+          {
+            role: 'tool',
+            requestId: 'prior-call',
+            name: 'current_time',
+            output: { iso: '2026-01-02T12:00:00Z' },
+          },
+        ],
         tools: [{
           name: 'current_time',
           description: 'Returns the current time.',
@@ -146,6 +163,14 @@ describe('OpenAICompatibleModelAdapter error classification', () => {
       })) events.push(event);
 
       expect(requestBody?.tools?.[0]?.function?.name).toBe('current_time');
+      expect(requestBody?.messages?.map((message) => message.role)).toEqual([
+        'user', 'assistant', 'tool',
+      ]);
+      expect(requestBody?.messages?.[2]).toMatchObject({
+        role: 'tool',
+        tool_call_id: 'prior-call',
+        content: '{"iso":"2026-01-02T12:00:00Z"}',
+      });
       expect(events).toEqual([
         {
           type: 'tool_requested',

@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from 'node:crypto';
-import type { ResolvedAgentRevision } from '@cmaster/agents';
+import type { AgentRevisionId, ResolvedAgentRevision } from '@cmaster/agents';
 import type { ConversationId, MessageId } from '@cmaster/conversations';
 import type { OrganizationId, PrincipalId, RequestIdentity } from '@cmaster/identity';
 import type { ModelProfileId, ModelUsage } from '@cmaster/models';
@@ -85,6 +85,7 @@ export interface RunLease {
   conversationId: ConversationId;
   messageId: MessageId;
   invocationId: InvocationId;
+  agentRevisionId: AgentRevisionId;
   engineKind: 'echo' | 'ai-sdk';
   engineVersion: '1';
   leaseToken: string;
@@ -722,6 +723,7 @@ export class PostgresExecutionModule implements ExecutionModule {
         conversationId: run.conversation_id as ConversationId,
         messageId: run.trigger_ref as MessageId,
         invocationId: run.root_invocation_id as InvocationId,
+        agentRevisionId: run.agent_revision_id as AgentRevisionId,
         engineKind: run.resolved_engine_kind,
         engineVersion: run.resolved_engine_version,
         leaseToken,
@@ -799,10 +801,15 @@ export class PostgresExecutionModule implements ExecutionModule {
           case 'model_completed':
             await client.query(
               `UPDATE runs SET resolved_model_profile_id = $3,
-                 model_fallback_used = $4, model_usage = $5
+                 model_fallback_used = model_fallback_used OR $4,
+                 model_usage = jsonb_build_object(
+                   'inputTokens', COALESCE((model_usage->>'inputTokens')::integer, 0) + $5,
+                   'outputTokens', COALESCE((model_usage->>'outputTokens')::integer, 0) + $6,
+                   'totalTokens', COALESCE((model_usage->>'totalTokens')::integer, 0) + $7
+                 )
                WHERE organization_id = $1 AND id = $2`,
-              [lease.organizationId, lease.runId, event.profileId,
-                event.fallbackUsed, JSON.stringify(event.usage)],
+              [lease.organizationId, lease.runId, event.profileId, event.fallbackUsed,
+                event.usage.inputTokens, event.usage.outputTokens, event.usage.totalTokens],
             );
             await appendEvent(client, lease.organizationId, lease.runId, 'model.completed', {
               profileId: event.profileId,
