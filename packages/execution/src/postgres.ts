@@ -30,6 +30,8 @@ import {
   RunNotFoundError,
   type RunSnapshot,
   type RunStatus,
+  type ToolBoundaryLease,
+  type ToolBoundaryLeaseId,
   StaleLeaseError,
 } from './types.js';
 
@@ -68,7 +70,9 @@ interface RunRow {
   interrupt_allowed_responses: ActiveInterrupt['allowedResponses'] | null;
   latest_checkpoint_data: ExecutionCheckpoint | null;
   latest_interrupt_resolution: InterruptResponse | null;
-  tool_effect_in_flight: boolean;
+  tool_boundary_id: string | null;
+  tool_boundary_expires_at: Date | null;
+  tool_boundary_active: boolean;
 }
 
 interface EventRow {
@@ -176,6 +180,8 @@ function mapEvent(row: EventRow): RunEventEnvelope {
 const runSelect = `
   SELECT r.*, i.status AS invocation_status, i.prepared_output,
          i.output_generation, i.has_streamed_output,
+         (r.tool_boundary_id IS NOT NULL
+           AND r.tool_boundary_expires_at > clock_timestamp()) AS tool_boundary_active,
          active_interrupt.id AS interrupt_id,
          active_interrupt.kind AS interrupt_kind,
          active_interrupt.subject_ref AS interrupt_subject_ref,
@@ -372,24 +378,37 @@ export class PostgresExecutionModule implements ExecutionModule {
     };
   }
 
-  async enterToolBoundary(identity: RequestIdentity, runId: RunId): Promise<void> {
-    const entered = await this.pool.query(
-      `UPDATE runs SET tool_effect_in_flight = true
+  async enterToolBoundary(
+    identity: RequestIdentity,
+    runId: RunId,
+  ): Promise<ToolBoundaryLease> {
+    const id = randomUUID() as ToolBoundaryLeaseId;
+    const entered = await this.pool.query<{ tool_boundary_expires_at: Date }>(
+      `UPDATE runs
+       SET tool_boundary_id = $4,
+           tool_boundary_expires_at = clock_timestamp() + interval '35 seconds'
        WHERE organization_id = $1 AND id = $2 AND initiating_principal_id = $3
-         AND status IN ('running', 'waiting') AND tool_effect_in_flight = false`,
-      [identity.organizationId, runId, identity.principalId],
+         AND status IN ('running', 'waiting')
+         AND (tool_boundary_id IS NULL OR tool_boundary_expires_at <= clock_timestamp())
+       RETURNING tool_boundary_expires_at`,
+      [identity.organizationId, runId, identity.principalId, id],
     );
-    if (entered.rowCount !== 1) throw new StaleLeaseError();
+    const expiresAt = entered.rows[0]?.tool_boundary_expires_at;
+    if (!expiresAt) throw new StaleLeaseError();
+    return { id, expiresAt };
   }
 
-  async leaveToolBoundary(identity: RequestIdentity, runId: RunId): Promise<void> {
-    const left = await this.pool.query(
-      `UPDATE runs SET tool_effect_in_flight = false
+  async leaveToolBoundary(
+    identity: RequestIdentity,
+    runId: RunId,
+    lease: ToolBoundaryLease,
+  ): Promise<void> {
+    await this.pool.query(
+      `UPDATE runs SET tool_boundary_id = NULL, tool_boundary_expires_at = NULL
        WHERE organization_id = $1 AND id = $2 AND initiating_principal_id = $3
-         AND tool_effect_in_flight = true`,
-      [identity.organizationId, runId, identity.principalId],
+         AND tool_boundary_id = $4`,
+      [identity.organizationId, runId, identity.principalId, lease.id],
     );
-    if (left.rowCount !== 1) throw new StaleLeaseError();
   }
 
   async cancelRun(
@@ -438,7 +457,7 @@ export class PostgresExecutionModule implements ExecutionModule {
       const tooLate = row.prepared_output !== null || ['succeeded', 'failed'].includes(row.status);
       const kind: 'cancelled' | 'tool_effect_in_flight' | 'too_late' = tooLate
         ? 'too_late'
-        : row.tool_effect_in_flight
+        : row.tool_boundary_active
           ? 'tool_effect_in_flight'
           : 'cancelled';
       if (kind === 'cancelled' && row.status !== 'cancelled') {

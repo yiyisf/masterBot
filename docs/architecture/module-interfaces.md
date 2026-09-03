@@ -159,8 +159,8 @@ interface ToolRuntime {
 - 模型提出的候选操作是 Model Tool Request；只有 Runtime 校验、授权并持久接受后才成为 ToolCall。
 - `ToolOutcome` 是结构化值，Tool 失败不以未分类异常跨 Seam。
 - `invoke` 在外部调用前持久化 Ledger 和稳定 idempotency key；一个 ToolCall 可有多个 Dispatch Attempt。
-- Agent Revision 授予稳定 Tool Capability major version；Invocation 解析并固定实际 Tool Revision。
-- Policy、Employee Confirmation、Credential Lease、输入校验、超时、脱敏与审计由 Runtime 协调执行。
+- Tool Grant 显式绑定不可变 Agent Revision，并授予稳定 Tool Capability major version；Invocation 解析并固定实际 Tool Revision。
+- Policy、Employee Confirmation、Credential Lease、输入校验、超时、脱敏与审计由 Runtime 协调执行；每个 Dispatch Attempt 使用有限 Lease 和 fencing，恢复复用稳定 idempotency key。
 - Slice 3 只消费通用 governed-tool Principal Entitlement，不建设本地逐 Principal/逐 Tool RBAC。
 - Tool 安装/Provider 管理不暴露在执行 Interface；Agent Skills/Legacy Parser 与完整隔离 Provider 管理后置到独立 Slice。
 

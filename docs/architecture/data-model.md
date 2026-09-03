@@ -96,7 +96,7 @@ private bounded outcomePayload / safe outcomeSummary / uncertainty
 approvalId? / startedAt / completedAt
 ```
 
-一个 ToolCall 可以有多个 Dispatch Attempt，但 request、Tool Revision 和 idempotency key 不变。未知非幂等副作用使用 `requires_review`，不得自动假定成功或失败；Employee 只能带着不确定性继续或取消 Run，不能改写审计事实或直接重试原 ToolCall。
+一个 ToolCall 可以有多个带有限 Lease 的 Dispatch Attempt，但 request、Tool Revision 和 idempotency key 不变。Attempt Lease 到期后，`retry_same_call`/`idempotency_key` 可建立 fenced 重试 Attempt，`reconcile` 只能建立查询外部状态的 Attempt；迟到结果不能覆盖新 Attempt。未知非幂等或 reconciliation 无法确认的副作用使用 `requires_review`，不得自动假定成功或失败；Employee 只能带着不确定性继续或取消 Run，不能改写审计事实或直接重试原 ToolCall。
 
 ## 4. Event、Checkpoint 与一致性
 
@@ -154,7 +154,7 @@ Connector 1 ── * contributed Tool
 ```
 
 - Tool Capability ID 与 major Contract 稳定，不包含 Provider 实现细节；不可变 Tool Revision 保存具体 Provider binding 与 effect/recovery/risk。
-- Agent Revision 的 Tool Grant 指向 Capability major；Invocation 解析并固定实际 Revision，兼容实现修复不要求重发 Agent Revision。
+- Tool Grant 与不可变 Agent Revision 显式绑定并指向 Capability major；Invocation 解析并固定实际 Revision，兼容实现修复不要求重发 Agent Revision。
 - Skill Revision 保存标准 Agent Skills 内容、资源引用和 Tool requirement；Skill 不拥有 Tool 执行代码。
 - Connector 保存系统配置和 `credentialRef`，不保存领域可见明文 Secret。
 - Slice 3 不建设本地逐 Principal/逐 Tool RBAC；Principal Entitlement 来自可信 Identity/Policy 输入。

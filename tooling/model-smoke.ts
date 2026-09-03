@@ -24,7 +24,7 @@ const profile: ModelProfile = {
   baseUrl,
   providerModelId: modelId,
   credentialRef: 'env:CMASTER_PRIMARY_MODEL_API_KEY',
-  capabilities: { streamingText: true },
+  capabilities: { streamingText: true, toolCalling: false },
   dataHandlingTier: 'smoke',
   costTier: 'smoke',
 };

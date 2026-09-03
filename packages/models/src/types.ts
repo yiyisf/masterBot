@@ -40,7 +40,7 @@ export interface ModelProfile {
   baseUrl: string;
   providerModelId: string;
   credentialRef: string;
-  capabilities: { streamingText: true };
+  capabilities: { streamingText: true; toolCalling: boolean };
   dataHandlingTier: string;
   costTier: string;
 }
@@ -73,6 +73,7 @@ export interface ModelProfileProvisioning {
   baseUrl: string;
   providerModelId: string;
   credentialRef: string;
+  capabilities: { streamingText: true; toolCalling: boolean };
   dataHandlingTier: string;
   costTier: string;
 }

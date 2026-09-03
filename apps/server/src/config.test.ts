@@ -63,6 +63,35 @@ describe('loadServerConfig', () => {
     }, [])).toThrow('Tool Runtime requires AI SDK Runtime');
   });
 
+  it('selects immutable Tool-enabled Agent and Model revisions only when Tool Runtime is enabled', () => {
+    const base = {
+      DATABASE_URL: 'postgresql://localhost/cmaster',
+      NEXT_ARCHITECTURE_ENABLED: 'true',
+      CMASTER_AI_SDK_RUNTIME_ENABLED: 'true',
+      CMASTER_PRIMARY_MODEL_BASE_URL: 'https://models.example.test/v1',
+      CMASTER_PRIMARY_MODEL_ID: 'primary-model',
+      CMASTER_PRIMARY_MODEL_API_KEY: 'secret',
+    };
+    const textOnly = loadServerConfig(base, []);
+    expect(textOnly.developmentIdentity.activeAgentRevisionId)
+      .toBe('00000000-0000-4000-8000-000000000005');
+    expect(textOnly.modelRuntime?.primary).toMatchObject({
+      profileId: '00000000-0000-4000-8000-000000000006',
+      capabilities: { streamingText: true, toolCalling: false },
+    });
+
+    const toolsEnabled = loadServerConfig({
+      ...base,
+      CMASTER_TOOL_RUNTIME_ENABLED: 'true',
+    }, []);
+    expect(toolsEnabled.developmentIdentity.activeAgentRevisionId)
+      .toBe('00000000-0000-4000-8000-000000000012');
+    expect(toolsEnabled.modelRuntime?.primary).toMatchObject({
+      profileId: '00000000-0000-4000-8000-000000000013',
+      capabilities: { streamingText: true, toolCalling: true },
+    });
+  });
+
   it('parses an explicit hostname-only HTTPS fetch allowlist', () => {
     expect(loadServerConfig({
       DATABASE_URL: 'postgresql://localhost/cmaster',

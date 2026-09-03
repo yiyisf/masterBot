@@ -34,7 +34,7 @@ interface ProfileRow {
   base_url: string;
   provider_model_id: string;
   credential_ref: string;
-  capabilities: { streamingText?: unknown };
+  capabilities: { streamingText?: unknown; toolCalling?: unknown };
   data_handling_tier: string;
   cost_tier: string;
 }
@@ -76,7 +76,10 @@ function mapProfile(row: ProfileRow): ModelProfile {
     baseUrl: row.base_url,
     providerModelId: row.provider_model_id,
     credentialRef: row.credential_ref,
-    capabilities: { streamingText: true },
+    capabilities: {
+      streamingText: true,
+      toolCalling: row.capabilities.toolCalling === true,
+    },
     dataHandlingTier: row.data_handling_tier,
     costTier: row.cost_tier,
   };
@@ -120,7 +123,8 @@ function sameProvisionedProfile(row: ProfileRow, profile: ModelProfileProvisioni
     && row.credential_ref === profile.credentialRef
     && row.data_handling_tier === profile.dataHandlingTier
     && row.cost_tier === profile.costTier
-    && row.capabilities.streamingText === true;
+    && row.capabilities.streamingText === true
+    && (row.capabilities.toolCalling === true) === profile.capabilities.toolCalling;
 }
 
 function traceIds(span: ReturnType<Tracer['startSpan']>): { traceId?: string; spanId?: string } {
@@ -162,6 +166,12 @@ export class PostgresModelGateway implements ModelGateway {
     const client = await this.pool.connect();
     try {
       await client.query('BEGIN');
+      await client.query(
+        `UPDATE model_profiles SET status = 'inactive'
+         WHERE organization_id = $1 AND status = 'active'
+           AND NOT (id = ANY($2::uuid[]))`,
+        [organizationId, profiles.map((profile) => profile.id)],
+      );
       for (const profile of profiles) {
         if (!this.options.credentials.get(profile.credentialRef)) {
           throw new Error(`Credential is missing for Model Profile ${profile.id}`);
@@ -175,7 +185,7 @@ export class PostgresModelGateway implements ModelGateway {
            ON CONFLICT (id) DO NOTHING`,
           [profile.id, organizationId, profile.displayName, profile.routeRole,
             profile.baseUrl, profile.providerModelId, profile.credentialRef,
-            JSON.stringify({ streamingText: true }), profile.dataHandlingTier, profile.costTier],
+            JSON.stringify(profile.capabilities), profile.dataHandlingTier, profile.costTier],
         );
         const existing = await client.query<ProfileRow>(
           `SELECT * FROM model_profiles WHERE organization_id = $1 AND id = $2`,
@@ -185,6 +195,11 @@ export class PostgresModelGateway implements ModelGateway {
           // Profile ID 一旦被 Run/ModelCall 引用便代表固定配置；修改时必须使用新 ID。
           throw new Error(`Model Profile ${profile.id} conflicts with an existing immutable profile`);
         }
+        await client.query(
+          `UPDATE model_profiles SET status = 'active'
+           WHERE organization_id = $1 AND id = $2`,
+          [organizationId, profile.id],
+        );
       }
       await client.query('COMMIT');
     } catch (error) {
@@ -222,9 +237,17 @@ export class PostgresModelGateway implements ModelGateway {
       [request.organizationId],
     );
     const profiles = profileRows.rows.map(mapProfile);
-    const primary = profiles.find((profile) => profile.routeRole === 'primary');
+    const requiresToolCalling = (request.tools?.length ?? 0) > 0;
+    const supportsRequest = (profile: ModelProfile): boolean => (
+      !requiresToolCalling || profile.capabilities.toolCalling
+    );
+    const primary = profiles.find((profile) => (
+      profile.routeRole === 'primary' && supportsRequest(profile)
+    ));
     if (!primary) throw new Error('Primary Model Profile is not provisioned');
-    const fallback = profiles.find((profile) => profile.routeRole === 'fallback');
+    const fallback = profiles.find((profile) => (
+      profile.routeRole === 'fallback' && supportsRequest(profile)
+    ));
     const attempts = fallback ? [primary, fallback] : [primary];
 
     for (const [index, profile] of attempts.entries()) {

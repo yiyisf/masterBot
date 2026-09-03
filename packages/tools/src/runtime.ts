@@ -40,6 +40,10 @@ interface RuntimeRevisionRow {
   provider_key: string;
 }
 
+interface GrantedRuntimeRevisionRow extends RuntimeRevisionRow {
+  grant_id: string;
+}
+
 interface ProviderDispatchInput {
   identity: RequestIdentity;
   organizationId: OrganizationId;
@@ -50,7 +54,16 @@ interface ProviderDispatchInput {
   invocationId: string;
   requestPayload: unknown;
   idempotencyKey: string;
+  dispatchAttemptId: string;
+  operation: 'execute' | 'reconcile';
   signal: AbortSignal;
+}
+
+interface DispatchAttemptRow {
+  id: string;
+  attempt_number: number;
+  status: 'running' | 'succeeded' | 'failed' | 'uncertain';
+  lease_expires_at: Date;
 }
 
 interface ToolCallRow {
@@ -182,16 +195,19 @@ function mapCall(row: ToolCallRow): ToolCall {
 async function selectGrantedRevision(
   client: Pool | PoolClient,
   command: InvokeToolCommand,
-): Promise<RuntimeRevisionRow | undefined> {
-  const result = await client.query<RuntimeRevisionRow>(
-    `SELECT r.* FROM tool_grants g
+): Promise<GrantedRuntimeRevisionRow | undefined> {
+  const result = await client.query<GrantedRuntimeRevisionRow>(
+    `SELECT r.*, g.id AS grant_id
+     FROM agent_tool_grants b
+     JOIN tool_grants g
+       ON g.organization_id = b.organization_id AND g.id = b.grant_id
      JOIN tool_revisions r
        ON r.organization_id = g.organization_id
       AND r.capability_id = $3
       AND r.status = 'active'
-     WHERE g.organization_id = $1 AND g.id = $2
+     WHERE b.organization_id = $1 AND b.agent_revision_id = $2
        AND g.capability_ids ? $3`,
-    [command.identity.organizationId, command.grantId, command.capabilityId],
+    [command.identity.organizationId, command.agentRevisionId, command.capabilityId],
   );
   return result.rows[0];
 }
@@ -201,8 +217,13 @@ export class ToolInvocationConflictError extends Error {}
 export class ToolProviderUnavailableError extends Error {}
 export class ToolPersistenceError extends Error {}
 
+export interface PostgresToolRuntimeOptions {
+  providerTimeoutMs?: number;
+}
+
 export class PostgresToolRuntime implements ToolRuntime {
   private readonly providers: ReadonlyMap<string, ToolProvider>;
+  private readonly providerTimeoutMs: number;
 
   constructor(
     private readonly pool: Pool,
@@ -210,8 +231,13 @@ export class PostgresToolRuntime implements ToolRuntime {
     private readonly approvals: ApprovalModule,
     providers: readonly ToolProvider[],
     private readonly credentials: CredentialBroker = new DevelopmentCredentialBroker(),
+    options: PostgresToolRuntimeOptions = {},
   ) {
     this.providers = new Map(providers.map((provider) => [provider.key, provider]));
+    this.providerTimeoutMs = options.providerTimeoutMs ?? 30_000;
+    if (!Number.isFinite(this.providerTimeoutMs) || this.providerTimeoutMs <= 0) {
+      throw new Error('Tool Provider timeout must be positive');
+    }
   }
 
   async invoke(command: InvokeToolCommand): Promise<ToolOutcome> {
@@ -246,6 +272,7 @@ export class PostgresToolRuntime implements ToolRuntime {
     });
     const toolCallId = randomUUID() as ToolCallId;
     const idempotencyKey = randomUUID();
+    const dispatchAttemptId = randomUUID();
     const initialStatus = requiresConfirmation ? 'awaiting_confirmation' : 'running';
     const client = await this.pool.connect();
     try {
@@ -262,7 +289,10 @@ export class PostgresToolRuntime implements ToolRuntime {
       );
       const previous = existing.rows[0];
       if (previous) {
-        if (previous.request_hash !== requestHash) throw new ToolInvocationConflictError();
+        if (previous.request_hash !== requestHash
+          || previous.agent_revision_id !== command.agentRevisionId) {
+          throw new ToolInvocationConflictError();
+        }
         if (previous.status === 'awaiting_confirmation') {
           await client.query('COMMIT');
           if (previous.approval_id) {
@@ -287,9 +317,15 @@ export class PostgresToolRuntime implements ToolRuntime {
           });
         }
         const previousOutcome = mapCall(previous).outcome;
-        if (!previousOutcome) throw new ToolInvocationConflictError();
-        await client.query('COMMIT');
-        return previousOutcome;
+        if (previousOutcome) {
+          await client.query('COMMIT');
+          return previousOutcome;
+        }
+        if (previous.status === 'running') {
+          await client.query('COMMIT');
+          return this.recoverExpiredDispatch(command, previous, revision, provider);
+        }
+        throw new ToolInvocationConflictError();
       }
       await client.query(
         `INSERT INTO tool_calls (
@@ -303,7 +339,7 @@ export class PostgresToolRuntime implements ToolRuntime {
          )`,
         [toolCallId, command.identity.organizationId, command.identity.principalId,
           command.runId, command.invocationId, command.modelRequestId,
-          command.agentRevisionId, command.grantId, command.capabilityId,
+          command.agentRevisionId, revision.grant_id, command.capabilityId,
           revision.id, initialStatus, idempotencyKey, revision.effect,
           revision.recovery, JSON.stringify(revision.risks), requestHash,
           requestPayload, requestSummary],
@@ -311,9 +347,13 @@ export class PostgresToolRuntime implements ToolRuntime {
       if (!requiresConfirmation) {
         await client.query(
           `INSERT INTO tool_dispatch_attempts (
-             id, organization_id, tool_call_id, attempt_number, status
-           ) VALUES ($1, $2, $3, 1, 'running')`,
-          [randomUUID(), command.identity.organizationId, toolCallId],
+             id, organization_id, tool_call_id, attempt_number, status, lease_expires_at
+           ) VALUES (
+             $1, $2, $3, 1, 'running',
+             clock_timestamp() + ($4 * interval '1 millisecond')
+           )`,
+          [dispatchAttemptId, command.identity.organizationId, toolCallId,
+            this.providerTimeoutMs],
         );
       }
       await client.query('COMMIT');
@@ -345,8 +385,108 @@ export class PostgresToolRuntime implements ToolRuntime {
       invocationId: command.invocationId,
       requestPayload: command.input,
       idempotencyKey,
+      dispatchAttemptId,
+      operation: 'execute',
       signal: command.signal,
     });
+  }
+
+  private async recoverExpiredDispatch(
+    command: Pick<InvokeToolCommand, 'identity' | 'signal'>,
+    call: ToolCallRow,
+    revision: RuntimeRevisionRow,
+    provider: ToolProvider,
+  ): Promise<ToolOutcome> {
+    const client = await this.pool.connect();
+    try {
+      await client.query('BEGIN');
+      const attempts = await client.query<DispatchAttemptRow>(
+        `SELECT id, attempt_number, status, lease_expires_at
+         FROM tool_dispatch_attempts
+         WHERE organization_id = $1 AND tool_call_id = $2
+           AND status = 'running' AND lease_expires_at <= clock_timestamp()
+         ORDER BY attempt_number DESC LIMIT 1 FOR UPDATE`,
+        [command.identity.organizationId, call.id],
+      );
+      const attempt = attempts.rows[0];
+      if (!attempt) throw new ToolInvocationConflictError();
+      const safelyRetryable = call.recovery === 'idempotency_key'
+        || (call.recovery === 'retry_same_call' && call.effect !== 'non_idempotent_write');
+      const canReconcile = call.recovery === 'reconcile' && provider.reconcile !== undefined;
+      if (!safelyRetryable && !canReconcile) {
+        const failure = {
+          code: 'external_effect_unknown' as const,
+          message: 'The external effect is unknown.',
+          retryable: false as const,
+        };
+        const closed = await client.query(
+          `WITH closed_attempt AS (
+             UPDATE tool_dispatch_attempts
+             SET status = 'uncertain', failure = $4, completed_at = clock_timestamp()
+             WHERE organization_id = $1 AND id = $2 AND tool_call_id = $3
+               AND status = 'running'
+             RETURNING tool_call_id
+           )
+           UPDATE tool_calls SET status = 'requires_review', failure = $4,
+             completed_at = clock_timestamp()
+           WHERE organization_id = $1 AND id = $3 AND status = 'running'
+             AND EXISTS (SELECT 1 FROM closed_attempt WHERE tool_call_id = tool_calls.id)`,
+          [command.identity.organizationId, attempt.id, call.id, JSON.stringify(failure)],
+        );
+        if (closed.rowCount !== 1) throw new ToolPersistenceError('Expired Tool effect was superseded');
+        await client.query('COMMIT');
+        return {
+          kind: 'requires_review',
+          toolCallId: call.id as ToolCallId,
+          failure,
+        };
+      }
+
+      const dispatchAttemptId = randomUUID();
+      const recovered = await client.query(
+        `WITH closed_attempt AS (
+           UPDATE tool_dispatch_attempts
+           SET status = 'failed', failure = $5, completed_at = clock_timestamp()
+           WHERE organization_id = $1 AND id = $2 AND tool_call_id = $3
+             AND status = 'running'
+           RETURNING tool_call_id
+         )
+         INSERT INTO tool_dispatch_attempts (
+           id, organization_id, tool_call_id, attempt_number, status, lease_expires_at
+         )
+         SELECT $4, $1, tool_call_id, $6, 'running',
+           clock_timestamp() + ($7 * interval '1 millisecond')
+         FROM closed_attempt
+         RETURNING tool_call_id`,
+        [command.identity.organizationId, attempt.id, call.id, dispatchAttemptId,
+          JSON.stringify({
+            code: 'dispatch_interrupted',
+            message: 'The prior Tool dispatch lease expired.',
+            retryable: true,
+          }), attempt.attempt_number + 1, this.providerTimeoutMs],
+      );
+      if (recovered.rowCount !== 1) throw new ToolPersistenceError('Tool recovery was superseded');
+      await client.query('COMMIT');
+      return this.dispatch({
+        identity: command.identity,
+        organizationId: command.identity.organizationId,
+        toolCallId: call.id as ToolCallId,
+        revision,
+        provider,
+        runId: call.run_id,
+        invocationId: call.invocation_id,
+        requestPayload: call.request_payload,
+        idempotencyKey: call.idempotency_key,
+        dispatchAttemptId,
+        operation: canReconcile ? 'reconcile' : 'execute',
+        signal: command.signal,
+      });
+    } catch (error) {
+      await client.query('ROLLBACK');
+      throw error;
+    } finally {
+      client.release();
+    }
   }
 
   private async replayCompleted(command: InvokeToolCommand): Promise<ToolOutcome | undefined> {
@@ -360,6 +500,9 @@ export class PostgresToolRuntime implements ToolRuntime {
     const call = existing.rows[0];
     const outcome = call ? mapCall(call).outcome : undefined;
     if (!call || !outcome) return undefined;
+    if (call.agent_revision_id !== command.agentRevisionId) {
+      throw new ToolInvocationConflictError();
+    }
 
     const revisionResult = await this.pool.query<RuntimeRevisionRow>(
       `SELECT * FROM tool_revisions
@@ -395,7 +538,23 @@ export class PostgresToolRuntime implements ToolRuntime {
     let outcomePayload: string;
     let outcomeSummary: string;
     try {
-      result = await input.provider.execute({
+      if (credentialLease.expiresAt.getTime() <= Date.now()) {
+        throw new Error('Credential Lease expired before dispatch');
+      }
+      const timeout = AbortSignal.timeout(this.providerTimeoutMs);
+      const signal = AbortSignal.any([input.signal, timeout]);
+      const aborted = new Promise<never>((_resolve, reject) => {
+        if (signal.aborted) {
+          reject(new Error('Tool Provider dispatch aborted'));
+          return;
+        }
+        signal.addEventListener(
+          'abort',
+          () => reject(new Error('Tool Provider dispatch aborted')),
+          { once: true },
+        );
+      });
+      const providerRequest = {
         toolCallId: input.toolCallId,
         revision: descriptor(input.revision),
         runId: input.runId,
@@ -403,15 +562,25 @@ export class PostgresToolRuntime implements ToolRuntime {
         input: input.requestPayload,
         idempotencyKey: input.idempotencyKey,
         credentialLease,
-        signal: input.signal,
-      });
+        signal,
+      };
+      const providerOperation = input.operation === 'reconcile'
+        ? input.provider.reconcile?.(providerRequest)
+        : input.provider.execute(providerRequest);
+      if (!providerOperation) throw new Error('Tool Provider cannot reconcile this operation');
+      result = await Promise.race([providerOperation, aborted]);
       outcomePayload = validateOutput(input.revision.output_schema, result.value);
       outcomeSummary = validateSummary(result.safeSummary);
     } catch {
       return this.closeDispatchFailure(
         input,
-        input.revision.effect === 'non_idempotent_write',
+        input.revision.effect === 'non_idempotent_write'
+          && input.revision.recovery !== 'idempotency_key',
       );
+    } finally {
+      await this.credentials.revoke(credentialLease.id).catch(() => {
+        // Revocation audit failure cannot rewrite an already observed Provider effect.
+      });
     }
 
     let completed;
@@ -420,7 +589,8 @@ export class PostgresToolRuntime implements ToolRuntime {
         `WITH completed_attempt AS (
            UPDATE tool_dispatch_attempts
            SET status = 'succeeded', completed_at = clock_timestamp()
-           WHERE organization_id = $1 AND tool_call_id = $2 AND status = 'running'
+           WHERE organization_id = $1 AND id = $6 AND tool_call_id = $2
+             AND status = 'running'
            RETURNING tool_call_id
          )
          UPDATE tool_calls
@@ -431,7 +601,7 @@ export class PostgresToolRuntime implements ToolRuntime {
              SELECT 1 FROM completed_attempt WHERE tool_call_id = tool_calls.id
            )`,
         [input.organizationId, input.toolCallId, outcomePayload,
-          outcomeSummary, result.externalOperationId ?? null],
+          outcomeSummary, result.externalOperationId ?? null, input.dispatchAttemptId],
       );
     } catch {
       throw new ToolPersistenceError('Tool success could not be persisted');
@@ -456,7 +626,8 @@ export class PostgresToolRuntime implements ToolRuntime {
       `WITH completed_attempt AS (
          UPDATE tool_dispatch_attempts
          SET status = $3, failure = $4, completed_at = clock_timestamp()
-         WHERE organization_id = $1 AND tool_call_id = $2 AND status = 'running'
+         WHERE organization_id = $1 AND id = $6 AND tool_call_id = $2
+           AND status = 'running'
          RETURNING tool_call_id
        )
        UPDATE tool_calls
@@ -466,7 +637,8 @@ export class PostgresToolRuntime implements ToolRuntime {
            SELECT 1 FROM completed_attempt WHERE tool_call_id = tool_calls.id
          )`,
       [input.organizationId, input.toolCallId, uncertain ? 'uncertain' : 'failed',
-        JSON.stringify(failure), uncertain ? 'requires_review' : 'failed'],
+        JSON.stringify(failure), uncertain ? 'requires_review' : 'failed',
+        input.dispatchAttemptId],
     );
     if (failed.rowCount !== 1) throw new ToolPersistenceError('Tool failure could not be fenced');
     return uncertain
@@ -537,7 +709,9 @@ export class PostgresToolRuntime implements ToolRuntime {
     if (!call || !call.approval_id) throw new ToolInvocationConflictError();
     const existingOutcome = mapCall(call).outcome;
     if (existingOutcome) return existingOutcome;
-    if (call.status !== 'awaiting_confirmation') throw new ToolInvocationConflictError();
+    if (!['awaiting_confirmation', 'running'].includes(call.status)) {
+      throw new ToolInvocationConflictError();
+    }
 
     const approval = await this.approvals.resolve(
       command.identity,
@@ -560,11 +734,14 @@ export class PostgresToolRuntime implements ToolRuntime {
       `SELECT r.* FROM tool_revisions r
        JOIN tool_grants g
          ON g.organization_id = r.organization_id AND g.id = $2
+       JOIN agent_tool_grants b
+         ON b.organization_id = g.organization_id
+        AND b.agent_revision_id = $5 AND b.grant_id = g.id
        WHERE r.organization_id = $1 AND r.id = $3
          AND r.capability_id = $4 AND r.status = 'active'
          AND g.capability_ids ? r.capability_id`,
       [command.identity.organizationId, call.grant_id,
-        call.tool_revision_id, call.capability_id],
+        call.tool_revision_id, call.capability_id, call.agent_revision_id],
     );
     const revision = revisionResult.rows[0];
     const decision = await this.policy.evaluate({
@@ -589,6 +766,10 @@ export class PostgresToolRuntime implements ToolRuntime {
     }
     const provider = this.providers.get(revision.provider_key);
     if (!provider) throw new ToolProviderUnavailableError();
+    if (call.status === 'running') {
+      return this.recoverExpiredDispatch(command, call, revision, provider);
+    }
+    const dispatchAttemptId = randomUUID();
     const started = await this.pool.query(
       `WITH started_call AS (
          UPDATE tool_calls SET status = 'running'
@@ -596,10 +777,13 @@ export class PostgresToolRuntime implements ToolRuntime {
          RETURNING id
        )
        INSERT INTO tool_dispatch_attempts (
-         id, organization_id, tool_call_id, attempt_number, status
-       ) SELECT $3, $1, id, 1, 'running' FROM started_call
+         id, organization_id, tool_call_id, attempt_number, status, lease_expires_at
+       ) SELECT $3, $1, id, 1, 'running',
+           clock_timestamp() + ($4 * interval '1 millisecond')
+         FROM started_call
        RETURNING tool_call_id`,
-      [command.identity.organizationId, command.toolCallId, randomUUID()],
+      [command.identity.organizationId, command.toolCallId,
+        dispatchAttemptId, this.providerTimeoutMs],
     );
     if (started.rowCount !== 1) throw new ToolPersistenceError('Tool resume was superseded');
 
@@ -613,6 +797,8 @@ export class PostgresToolRuntime implements ToolRuntime {
       invocationId: call.invocation_id,
       requestPayload: call.request_payload,
       idempotencyKey: call.idempotency_key,
+      dispatchAttemptId,
+      operation: 'execute',
       signal: command.signal,
     });
   }

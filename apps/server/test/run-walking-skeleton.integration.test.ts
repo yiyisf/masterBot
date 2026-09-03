@@ -138,17 +138,44 @@ describe('Run Walking Skeleton', () => {
     await drainOutbox(runWorker);
     const lease = await execution.leaseNext(`boundary-lease-${randomUUID()}`, 1_000, 5);
     expect(lease?.runId).toBe(runId(accepted.run.id));
-    await execution.enterToolBoundary(identity.resolveRequest(), runId(accepted.run.id));
+    const boundary = await execution.enterToolBoundary(
+      identity.resolveRequest(), runId(accepted.run.id),
+    );
 
     await expect(execution.cancelRun(
       identity.resolveRequest(), runId(accepted.run.id), runCommandId(randomUUID()),
     )).resolves.toMatchObject({ kind: 'tool_effect_in_flight', run: { status: 'running' } });
 
-    await execution.leaveToolBoundary(identity.resolveRequest(), runId(accepted.run.id));
+    await execution.leaveToolBoundary(
+      identity.resolveRequest(), runId(accepted.run.id), boundary,
+    );
     await expect(execution.cancelRun(
       identity.resolveRequest(), runId(accepted.run.id), runCommandId(randomUUID()),
     )).resolves.toMatchObject({ kind: 'cancelled', run: { status: 'cancelled' } });
   });
+  it('allows cancellation after an abandoned Tool boundary lease expires', async () => {
+    const accepted = await acceptRunThroughHttp('expired tool boundary');
+    const runWorker = worker(`expired-boundary-${randomUUID()}`);
+    await drainOutbox(runWorker);
+    const lease = await execution.leaseNext(`expired-boundary-lease-${randomUUID()}`, 1_000, 5);
+    expect(lease?.runId).toBe(runId(accepted.run.id));
+    const boundary = await execution.enterToolBoundary(
+      identity.resolveRequest(), runId(accepted.run.id),
+    );
+    await pool.query(
+      `UPDATE runs SET tool_boundary_expires_at = clock_timestamp() - interval '1 second'
+       WHERE organization_id = $1 AND id = $2`,
+      [identity.resolveRequest().organizationId, accepted.run.id],
+    );
+
+    await expect(execution.cancelRun(
+      identity.resolveRequest(), runId(accepted.run.id), runCommandId(randomUUID()),
+    )).resolves.toMatchObject({ kind: 'cancelled', run: { status: 'cancelled' } });
+    await expect(execution.leaveToolBoundary(
+      identity.resolveRequest(), runId(accepted.run.id), boundary,
+    )).resolves.toBeUndefined();
+  });
+
   it('replays a Command with the same payload and rejects key reuse', async () => {
     const key = commandId(randomUUID());
     const first = await conversations.create(identity.resolveRequest(), { commandId: key, title: 'Stable' });

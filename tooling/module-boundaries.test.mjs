@@ -43,7 +43,8 @@ test('PostgreSQL adapters query only tables owned by their Module', async () => 
     models: new Set(['model_profiles', 'model_calls']),
     governance: new Set(['approvals']),
     tools: new Set([
-      'tool_capabilities', 'tool_revisions', 'tool_grants', 'tool_calls', 'tool_dispatch_attempts',
+      'tool_capabilities', 'tool_revisions', 'tool_grants', 'agent_tool_grants',
+      'tool_calls', 'tool_dispatch_attempts',
     ]),
   };
   const files = {

@@ -10,7 +10,6 @@ import type {
   ToolCall,
   ToolCatalog,
   ToolDescriptor,
-  ToolGrantId,
   ToolOutcome,
   ToolRuntime,
 } from '@cmaster/tools';
@@ -31,7 +30,6 @@ export class GovernedAgentToolRuntime implements AgentToolRuntime {
     private readonly runtime: Pick<ToolRuntime, 'invoke' | 'listCalls'>,
     private readonly identity: RequestIdentitySource,
     private readonly entitlements: PrincipalEntitlementSource,
-    private readonly grantId: ToolGrantId,
     private readonly execution: ToolExecutionBoundary,
   ) {}
 
@@ -39,7 +37,7 @@ export class GovernedAgentToolRuntime implements AgentToolRuntime {
     const identity = this.resolveIdentity(input);
     const descriptors = await this.catalog.list({
       organizationId: identity.organizationId,
-      grantId: this.grantId,
+      agentRevisionId: input.agentRevisionId,
     });
     assertUniqueModelNames(descriptors);
     return descriptors.map((descriptor) => ({
@@ -56,13 +54,12 @@ export class GovernedAgentToolRuntime implements AgentToolRuntime {
     signal: AbortSignal,
   ): Promise<AgentToolOutcome> {
     const identity = this.resolveIdentity(input);
-    const descriptor = await this.resolveDescriptor(identity, request.name);
-    await this.execution.enterToolBoundary(identity, input.runId);
+    const descriptor = await this.resolveDescriptor(identity, input.agentRevisionId, request.name);
+    const boundary = await this.execution.enterToolBoundary(identity, input.runId);
     try {
       const outcome = await this.runtime.invoke({
         identity,
         agentRevisionId: input.agentRevisionId,
-        grantId: this.grantId,
         principalEntitlements: await this.entitlements.resolve(identity),
         runId: input.runId,
         invocationId: input.invocationId,
@@ -73,7 +70,7 @@ export class GovernedAgentToolRuntime implements AgentToolRuntime {
       });
       return projectOutcome(outcome, descriptor);
     } finally {
-      await this.execution.leaveToolBoundary(identity, input.runId);
+      await this.execution.leaveToolBoundary(identity, input.runId, boundary);
     }
   }
 
@@ -86,7 +83,12 @@ export class GovernedAgentToolRuntime implements AgentToolRuntime {
     const call = (await this.runtime.listCalls(identity, input.runId))
       .find((candidate) => candidate.id === toolCallId);
     if (!call) throw new GovernedToolRecoveryError();
-    const descriptor = await this.resolveDescriptor(identity, call.capabilityId, 'capability');
+    const descriptor = await this.resolveDescriptor(
+      identity,
+      input.agentRevisionId,
+      call.capabilityId,
+      'capability',
+    );
     return projectCall(call, descriptor);
   }
 
@@ -98,12 +100,13 @@ export class GovernedAgentToolRuntime implements AgentToolRuntime {
 
   private async resolveDescriptor(
     identity: RequestIdentity,
+    agentRevisionId: EngineInvocation['agentRevisionId'],
     value: string,
     by: 'name' | 'capability' = 'name',
   ): Promise<ToolDescriptor> {
     const descriptors = await this.catalog.list({
       organizationId: identity.organizationId,
-      grantId: this.grantId,
+      agentRevisionId,
     });
     assertUniqueModelNames(descriptors);
     const descriptor = descriptors.find((candidate) => (

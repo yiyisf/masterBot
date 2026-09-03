@@ -1,3 +1,4 @@
+import { spawn } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { agentRevisionId } from '@cmaster/agents';
 import {
@@ -10,7 +11,9 @@ import {
 import {
   PostgresToolCatalog,
   PostgresToolRuntime,
+  ToolAuthorizationDeniedError,
   ToolInputValidationError,
+  ToolPersistenceError,
   toolGrantId,
   toolRevisionId,
   type CredentialBroker,
@@ -44,6 +47,8 @@ describe('PostgresToolCatalog', () => {
     const organization = identity.resolveRequest().organizationId;
     const catalog = new PostgresToolCatalog(pool);
     const grantId = toolGrantId(randomUUID());
+    const grantedAgentRevisionId = agentRevisionId(randomUUID());
+    const ungrantedAgentRevisionId = agentRevisionId(randomUUID());
     const currentTimeRevisionId = toolRevisionId(randomUUID());
 
     await catalog.provision(organization, {
@@ -76,10 +81,17 @@ describe('PostgresToolCatalog', () => {
           providerKey: 'built-in:text-statistics',
         },
       ],
-      grants: [{ id: grantId, capabilityIds: ['cmaster.utility.current_time:v1'] }],
+      grants: [{
+        id: grantId,
+        agentRevisionId: grantedAgentRevisionId,
+        capabilityIds: ['cmaster.utility.current_time:v1'],
+      }],
     });
 
-    const tools = await catalog.list({ organizationId: organization, grantId });
+    const tools = await catalog.list({
+      organizationId: organization,
+      agentRevisionId: grantedAgentRevisionId,
+    });
 
     expect(tools).toEqual([
       {
@@ -98,8 +110,16 @@ describe('PostgresToolCatalog', () => {
       },
     ]);
 
+    expect(await catalog.list({
+      organizationId: organization,
+      agentRevisionId: ungrantedAgentRevisionId,
+    })).toEqual([]);
+
     await catalog.deactivate(organization, currentTimeRevisionId);
-    expect(await catalog.list({ organizationId: organization, grantId })).toEqual([]);
+    expect(await catalog.list({
+      organizationId: organization,
+      agentRevisionId: grantedAgentRevisionId,
+    })).toEqual([]);
   });
 
   it('persists a running ToolCall and stable idempotency key before Provider I/O', async () => {
@@ -113,6 +133,7 @@ describe('PostgresToolCatalog', () => {
     const identity = identityModule.resolveRequest();
     const catalog = new PostgresToolCatalog(pool);
     const grantId = toolGrantId(randomUUID());
+    const grantedAgentRevisionId = agentRevisionId(randomUUID());
     const revisionId = toolRevisionId(randomUUID());
     await catalog.provision(identity.organizationId, {
       revisions: [{
@@ -130,12 +151,16 @@ describe('PostgresToolCatalog', () => {
         risks: [],
         providerKey: 'test:current-time',
       }],
-      grants: [{ id: grantId, capabilityIds: ['cmaster.utility.current_time:v1'] }],
+      grants: [{
+        id: grantId,
+        agentRevisionId: grantedAgentRevisionId,
+        capabilityIds: ['cmaster.utility.current_time:v1'],
+      }],
     });
 
     let runtime: PostgresToolRuntime;
     let providerCalls = 0;
-    let providerMode: 'success' | 'failure' | 'invalid' | 'oversized' = 'success';
+    let providerMode: 'success' | 'failure' | 'invalid' | 'oversized' | 'timeout' = 'success';
     const provider: ToolProvider = {
       key: 'test:current-time',
       summarize() {
@@ -147,6 +172,7 @@ describe('PostgresToolCatalog', () => {
         expect(calls.find((call) => call.id === request.toolCallId))
           .toMatchObject({ status: 'running', idempotencyKey: request.idempotencyKey });
         if (providerMode === 'failure') throw new Error('raw provider secret');
+        if (providerMode === 'timeout') return new Promise<never>(() => undefined);
         return {
           kind: 'success',
           value: providerMode === 'oversized'
@@ -158,17 +184,35 @@ describe('PostgresToolCatalog', () => {
         };
       },
     };
+    let issueExpiredCredential = false;
+    let credentialRevocations = 0;
+    const credentials: CredentialBroker = {
+      async issue(command) {
+        return {
+          id: randomUUID() as never,
+          organizationId: command.identity.organizationId,
+          principalId: command.identity.principalId,
+          toolCallId: command.toolCallId,
+          invocationId: command.invocationId,
+          allowedOperations: command.allowedOperations,
+          expiresAt: new Date(Date.now() + (issueExpiredCredential ? -1 : 60_000)),
+          values: {},
+        };
+      },
+      async revoke() { credentialRevocations += 1; },
+    };
     runtime = new PostgresToolRuntime(
       pool,
       new Slice3BaselinePolicy(),
       new PostgresApprovalModule(pool),
       [provider],
+      credentials,
+      { providerTimeoutMs: 100 },
     );
     const runId = randomUUID();
     const baseCommand = {
       identity,
-      agentRevisionId: agentRevisionId(randomUUID()),
-      grantId,
+      agentRevisionId: grantedAgentRevisionId,
       principalEntitlements: ['enterprise_assistant.use_governed_tools'],
       runId,
       invocationId: randomUUID(),
@@ -182,6 +226,12 @@ describe('PostgresToolCatalog', () => {
       kind: 'success',
       value: { iso: '2026-08-30T00:00:00.000Z' },
     });
+    await expect(runtime.invoke({
+      ...baseCommand,
+      agentRevisionId: agentRevisionId(randomUUID()),
+      modelRequestId: 'model-tool-request-ungranted-agent',
+    })).rejects.toBeInstanceOf(ToolAuthorizationDeniedError);
+    expect(providerCalls).toBe(1);
     await expect(runtime.invoke({
       ...baseCommand,
       modelRequestId: 'model-tool-request-invalid',
@@ -214,13 +264,252 @@ describe('PostgresToolCatalog', () => {
         retryable: true,
       },
     });
+    providerMode = 'timeout';
+    const timedOut = await runtime.invoke({
+      ...baseCommand,
+      modelRequestId: 'model-tool-request-timeout',
+    });
+    expect(timedOut).toMatchObject({ kind: 'failed', failure: { code: 'provider_failed' } });
     expect((await runtime.listCalls(identity, runId)).map((call) => call.status))
-      .toEqual(['succeeded', 'failed', 'failed', 'failed']);
+      .toEqual(['succeeded', 'failed', 'failed', 'failed', 'failed']);
+    expect(credentialRevocations).toBe(5);
+
+    issueExpiredCredential = true;
+    const expiredCredential = await runtime.invoke({
+      ...baseCommand,
+      modelRequestId: 'model-tool-request-expired-credential',
+    });
+    expect(expiredCredential).toMatchObject({
+      kind: 'failed', failure: { code: 'provider_failed' },
+    });
+    expect(providerCalls).toBe(5);
+    expect(credentialRevocations).toBe(6);
 
     await catalog.deactivate(identity.organizationId, revisionId);
     expect(await runtime.invoke({ ...baseCommand, modelRequestId: 'model-tool-request-1' }))
       .toEqual(outcome);
-    expect(providerCalls).toBe(4);
+    expect(providerCalls).toBe(5);
+  });
+
+  it('recovers an expired safe Dispatch Attempt and fences its late result', async () => {
+    const identityModule = new PostgresDevelopmentIdentity(pool, {
+      organizationId: organizationId(randomUUID()),
+      organizationName: `Tool Dispatch Recovery ${randomUUID()}`,
+      principalId: principalId(randomUUID()),
+      principalDisplayName: 'Tool Recovery Employee',
+    });
+    await identityModule.provision();
+    const identity = identityModule.resolveRequest();
+    const agentRevision = agentRevisionId(randomUUID());
+    const catalog = new PostgresToolCatalog(pool);
+    await catalog.provision(identity.organizationId, {
+      revisions: [{
+        id: toolRevisionId(randomUUID()),
+        capabilityId: 'cmaster.utility.current_time:v1',
+        name: 'Current time',
+        description: 'Returns the current time.',
+        inputSchema: { type: 'object', properties: {}, additionalProperties: false },
+        outputSchema: {
+          type: 'object', required: ['iso'], additionalProperties: false,
+          properties: { iso: { type: 'string' } },
+        },
+        effect: 'read_only',
+        recovery: 'retry_same_call',
+        risks: [],
+        providerKey: 'test:recover-time',
+      }],
+      grants: [{
+        id: toolGrantId(randomUUID()),
+        agentRevisionId: agentRevision,
+        capabilityIds: ['cmaster.utility.current_time:v1'],
+      }],
+    });
+
+    let providerCalls = 0;
+    const idempotencyKeys: string[] = [];
+    let releaseFirst: ((value: {
+      kind: 'success';
+      value: { iso: string };
+      safeSummary: { title: string; details: Record<string, string> };
+    }) => void) | undefined;
+    let markEntered: (() => void) | undefined;
+    const entered = new Promise<void>((resolve) => { markEntered = resolve; });
+    const provider: ToolProvider = {
+      key: 'test:recover-time',
+      summarize: () => ({ title: 'Read current time', details: {} }),
+      execute(request) {
+        providerCalls += 1;
+        idempotencyKeys.push(request.idempotencyKey);
+        if (providerCalls === 1) {
+          markEntered?.();
+          return new Promise((resolve) => { releaseFirst = resolve; });
+        }
+        return Promise.resolve({
+          kind: 'success',
+          value: { iso: '2026-09-03T00:00:00.000Z' },
+          safeSummary: { title: 'Current time returned', details: {} },
+        });
+      },
+    };
+    const runtime = new PostgresToolRuntime(
+      pool, new Slice3BaselinePolicy(), new PostgresApprovalModule(pool), [provider],
+    );
+    const command = {
+      identity,
+      agentRevisionId: agentRevision,
+      principalEntitlements: ['enterprise_assistant.use_governed_tools'],
+      runId: randomUUID(),
+      invocationId: randomUUID(),
+      modelRequestId: 'stable-model-request',
+      capabilityId: 'cmaster.utility.current_time:v1',
+      input: {},
+      signal: new AbortController().signal,
+    } as const;
+
+    const staleAttempt = runtime.invoke(command);
+    await entered;
+    await pool.query(
+      `UPDATE tool_dispatch_attempts SET lease_expires_at = clock_timestamp() - interval '1 second'
+       WHERE organization_id = $1 AND tool_call_id IN (
+         SELECT id FROM tool_calls WHERE organization_id = $1 AND run_id = $2
+       )`,
+      [identity.organizationId, command.runId],
+    );
+
+    await expect(runtime.invoke(command)).resolves.toMatchObject({ kind: 'success' });
+    expect(providerCalls).toBe(2);
+    expect(idempotencyKeys[1]).toBe(idempotencyKeys[0]);
+    releaseFirst?.({
+      kind: 'success',
+      value: { iso: '2026-09-03T00:00:01.000Z' },
+      safeSummary: { title: 'Late current time', details: {} },
+    });
+    await expect(staleAttempt).rejects.toBeInstanceOf(ToolPersistenceError);
+    expect((await runtime.listCalls(identity, command.runId))[0]?.outcome)
+      .toMatchObject({ kind: 'success', value: { iso: '2026-09-03T00:00:00.000Z' } });
+  });
+
+  it('reconciles the same ToolCall after its Provider process exits mid-dispatch', async () => {
+    const identityModule = new PostgresDevelopmentIdentity(pool, {
+      organizationId: organizationId(randomUUID()),
+      organizationName: `Tool Process Recovery ${randomUUID()}`,
+      principalId: principalId(randomUUID()),
+      principalDisplayName: 'Tool Process Recovery Employee',
+    });
+    await identityModule.provision();
+    const identity = identityModule.resolveRequest();
+    const agentRevision = agentRevisionId(randomUUID());
+    const catalog = new PostgresToolCatalog(pool);
+    await catalog.provision(identity.organizationId, {
+      revisions: [{
+        id: toolRevisionId(randomUUID()),
+        capabilityId: 'cmaster.utility.current_time:v1',
+        name: 'Current time',
+        description: 'Returns the current time.',
+        inputSchema: { type: 'object', properties: {}, additionalProperties: false },
+        outputSchema: {
+          type: 'object', required: ['iso'], additionalProperties: false,
+          properties: { iso: { type: 'string' } },
+        },
+        effect: 'read_only',
+        recovery: 'reconcile',
+        risks: [],
+        providerKey: 'test:process-crash-time',
+      }],
+      grants: [{
+        id: toolGrantId(randomUUID()),
+        agentRevisionId: agentRevision,
+        capabilityIds: ['cmaster.utility.current_time:v1'],
+      }],
+    });
+    const command = {
+      identity,
+      agentRevisionId: agentRevision,
+      principalEntitlements: ['enterprise_assistant.use_governed_tools'],
+      runId: randomUUID(),
+      invocationId: randomUUID(),
+      modelRequestId: 'process-crash-model-request',
+      capabilityId: 'cmaster.utility.current_time:v1',
+      input: {},
+      signal: new AbortController().signal,
+    } as const;
+    const child = spawn(process.execPath, [
+      '--import', 'tsx', '--conditions=development',
+      new URL('./fixtures/tool-dispatch-crash.ts', import.meta.url).pathname,
+    ], {
+      cwd: process.cwd(),
+      env: {
+        ...process.env,
+        DATABASE_URL: databaseUrl,
+        TEST_ORGANIZATION_ID: identity.organizationId,
+        TEST_PRINCIPAL_ID: identity.principalId,
+        TEST_AGENT_REVISION_ID: agentRevision,
+        TEST_RUN_ID: command.runId,
+        TEST_INVOCATION_ID: command.invocationId,
+        TEST_MODEL_REQUEST_ID: command.modelRequestId,
+      },
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+    let childError = '';
+    child.stderr.setEncoding('utf8');
+    child.stderr.on('data', (chunk: string) => { childError += chunk; });
+    const exitCode = await new Promise<number | null>((resolve, reject) => {
+      child.once('error', reject);
+      child.once('exit', resolve);
+    });
+    expect(exitCode, childError).toBe(86);
+
+    const persisted = await pool.query<{ idempotency_key: string }>(
+      `SELECT c.idempotency_key
+       FROM tool_calls c
+       JOIN tool_dispatch_attempts a
+         ON a.organization_id = c.organization_id AND a.tool_call_id = c.id
+       WHERE c.organization_id = $1 AND c.run_id = $2
+         AND c.status = 'running' AND a.status = 'running'`,
+      [identity.organizationId, command.runId],
+    );
+    const originalKey = persisted.rows[0]?.idempotency_key;
+    expect(originalKey).toBeDefined();
+    await pool.query(
+      `UPDATE tool_dispatch_attempts SET lease_expires_at = clock_timestamp() - interval '1 second'
+       WHERE organization_id = $1 AND status = 'running'`,
+      [identity.organizationId],
+    );
+    let recoveredKey: string | undefined;
+    let repeatedDispatches = 0;
+    const recoveryProvider: ToolProvider = {
+      key: 'test:process-crash-time',
+      summarize: () => ({ title: 'Read current time', details: {} }),
+      async execute() {
+        repeatedDispatches += 1;
+        throw new Error('the original effect must not be dispatched during reconciliation');
+      },
+      async reconcile(request) {
+        recoveredKey = request.idempotencyKey;
+        return {
+          kind: 'success',
+          value: { iso: '2026-09-04T00:00:00.000Z' },
+          safeSummary: { title: 'Current time reconciled', details: {} },
+        };
+      },
+    };
+    const recoveredRuntime = new PostgresToolRuntime(
+      pool, new Slice3BaselinePolicy(), new PostgresApprovalModule(pool), [recoveryProvider],
+    );
+    await expect(recoveredRuntime.invoke(command)).resolves.toMatchObject({ kind: 'success' });
+    expect(repeatedDispatches).toBe(0);
+    expect(recoveredKey).toBe(originalKey);
+    const attempts = await pool.query<{ attempt_number: number; status: string }>(
+      `SELECT attempt_number, status FROM tool_dispatch_attempts
+       WHERE organization_id = $1 AND tool_call_id IN (
+         SELECT id FROM tool_calls WHERE organization_id = $1 AND run_id = $2
+       ) ORDER BY attempt_number`,
+      [identity.organizationId, command.runId],
+    );
+    expect(attempts.rows).toEqual([
+      { attempt_number: 1, status: 'failed' },
+      { attempt_number: 2, status: 'succeeded' },
+    ]);
   });
 
   it('persists Employee Confirmation before an open-world Provider can execute', async () => {
@@ -234,6 +523,7 @@ describe('PostgresToolCatalog', () => {
     const identity = identityModule.resolveRequest();
     const catalog = new PostgresToolCatalog(pool);
     const grantId = toolGrantId(randomUUID());
+    const grantedAgentRevisionId = agentRevisionId(randomUUID());
     const httpRevisionId = toolRevisionId(randomUUID());
     await catalog.provision(identity.organizationId, {
       revisions: [{
@@ -264,6 +554,7 @@ describe('PostgresToolCatalog', () => {
       }],
       grants: [{
         id: grantId,
+        agentRevisionId: grantedAgentRevisionId,
         capabilityIds: ['cmaster.http.fetch:v1', 'test.non_idempotent.write:v1'],
       }],
     });
@@ -288,13 +579,23 @@ describe('PostgresToolCatalog', () => {
         };
       },
     };
+    let uncertainProviderMode: 'throw' | 'hang' = 'throw';
+    let markUncertainEntered: (() => void) | undefined;
+    let releaseUncertain: ((result: {
+      kind: 'success'; value: Record<string, never>;
+      safeSummary: { title: string; details: Record<string, string> };
+    }) => void) | undefined;
     const uncertainProvider: ToolProvider = {
       key: 'test:uncertain-write',
       summarize() {
         return { title: 'Perform test write', details: {} };
       },
-      async execute() {
-        throw new Error('connection lost after dispatch');
+      execute() {
+        if (uncertainProviderMode === 'throw') {
+          return Promise.reject(new Error('connection lost after dispatch'));
+        }
+        markUncertainEntered?.();
+        return new Promise((resolve) => { releaseUncertain = resolve; });
       },
     };
     const baseline = new Slice3BaselinePolicy();
@@ -328,6 +629,7 @@ describe('PostgresToolCatalog', () => {
       },
     };
     let credentialLeases = 0;
+    let credentialRevocations = 0;
     const credentials: CredentialBroker = {
       async issue(leaseCommand) {
         credentialLeases += 1;
@@ -342,6 +644,7 @@ describe('PostgresToolCatalog', () => {
           values: {},
         };
       },
+      async revoke() { credentialRevocations += 1; },
     };
     const runtime = new PostgresToolRuntime(
       pool,
@@ -354,8 +657,7 @@ describe('PostgresToolCatalog', () => {
 
     const command = {
       identity,
-      agentRevisionId: agentRevisionId(randomUUID()),
-      grantId,
+      agentRevisionId: grantedAgentRevisionId,
       principalEntitlements: ['enterprise_assistant.use_governed_tools'],
       runId,
       invocationId: randomUUID(),
@@ -391,6 +693,7 @@ describe('PostgresToolCatalog', () => {
     expect(resumed).toMatchObject({ kind: 'success', value: { text: 'approved content' } });
     expect(providerCalls).toBe(1);
     expect(credentialLeases).toBe(1);
+    expect(credentialRevocations).toBe(1);
     expect((await runtime.listCalls(identity, runId))[0]?.status).toBe('succeeded');
 
     confirmedProviderMode = 'oversized';
@@ -449,6 +752,43 @@ describe('PostgresToolCatalog', () => {
       failure: { code: 'external_effect_unknown', retryable: false },
     });
 
+    uncertainProviderMode = 'hang';
+    const waitingForCrashedWrite = await runtime.invoke({
+      ...command,
+      modelRequestId: 'model-tool-request-crashed-write',
+      capabilityId: 'test.non_idempotent.write:v1',
+      input: {},
+    });
+    const uncertainEntered = new Promise<void>((resolve) => { markUncertainEntered = resolve; });
+    const recoveryCommandId = approvalCommandId(randomUUID());
+    const interruptedResume = runtime.resume({
+      identity,
+      toolCallId: waitingForCrashedWrite.toolCallId,
+      commandId: recoveryCommandId,
+      response: 'confirm',
+      principalEntitlements: command.principalEntitlements,
+      signal: new AbortController().signal,
+    });
+    await uncertainEntered;
+    await pool.query(
+      `UPDATE tool_dispatch_attempts SET lease_expires_at = clock_timestamp() - interval '1 second'
+       WHERE organization_id = $1 AND tool_call_id = $2`,
+      [identity.organizationId, waitingForCrashedWrite.toolCallId],
+    );
+    await expect(runtime.resume({
+      identity,
+      toolCallId: waitingForCrashedWrite.toolCallId,
+      commandId: recoveryCommandId,
+      response: 'confirm',
+      principalEntitlements: command.principalEntitlements,
+      signal: new AbortController().signal,
+    })).resolves.toMatchObject({ kind: 'requires_review' });
+    releaseUncertain?.({
+      kind: 'success', value: {},
+      safeSummary: { title: 'Late uncertain write', details: {} },
+    });
+    await expect(interruptedResume).rejects.toBeInstanceOf(ToolPersistenceError);
+
     const waitingForRevokedRevision = await runtime.invoke({
       ...command,
       modelRequestId: 'model-tool-request-revoked',
@@ -469,5 +809,7 @@ describe('PostgresToolCatalog', () => {
       reason: 'authorization_revoked',
     });
     expect(providerCalls).toBe(2);
+    expect(credentialLeases).toBe(4);
+    expect(credentialRevocations).toBe(4);
   });
 });

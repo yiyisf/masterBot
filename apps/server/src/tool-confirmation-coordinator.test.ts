@@ -76,7 +76,10 @@ describe('ToolConfirmationCoordinator', () => {
     const execution = {
       getRun: vi.fn(async () => waiting),
       getInterrupt: vi.fn(async () => activeInterrupt),
-      enterToolBoundary: vi.fn(async () => { order.push('enter'); }),
+      enterToolBoundary: vi.fn(async () => {
+        order.push('enter');
+        return { id: 'boundary' as never, expiresAt: new Date(Date.now() + 1_000) };
+      }),
       leaveToolBoundary: vi.fn(async () => { order.push('leave'); }),
       resolveInterrupt: vi.fn(async () => {
         order.push('interrupt');
@@ -113,7 +116,10 @@ describe('ToolConfirmationCoordinator', () => {
       {
         getRun: vi.fn(async () => waiting),
         getInterrupt: vi.fn(async () => ({ ...activeInterrupt, kind: 'tool_outcome_review' as const })),
-        enterToolBoundary: vi.fn(),
+        enterToolBoundary: vi.fn(async () => ({
+          id: 'boundary' as never,
+          expiresAt: new Date(Date.now() + 1_000),
+        })),
         leaveToolBoundary: vi.fn(),
         resolveInterrupt: vi.fn(),
       },

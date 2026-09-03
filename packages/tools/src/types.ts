@@ -32,6 +32,7 @@ export interface ToolRevisionProvisioning extends Omit<ToolDescriptor, 'revision
 
 export interface ToolGrantProvisioning {
   id: ToolGrantId;
+  agentRevisionId: AgentRevisionId;
   capabilityIds: readonly string[];
 }
 
@@ -65,8 +66,13 @@ export interface IssueCredentialLeaseCommand {
   allowedOperations: readonly string[];
 }
 
+/**
+ * 仅在授权后签发 operation-scoped Credential Lease，并在 Dispatch Attempt 后撤销。
+ * 实现不得持久化或暴露 Credential value。
+ */
 export interface CredentialBroker {
   issue(command: IssueCredentialLeaseCommand): Promise<CredentialLease>;
+  revoke(leaseId: CredentialLeaseId): Promise<void>;
 }
 
 export interface ToolProviderRequest {
@@ -95,12 +101,16 @@ export interface ToolProvider {
   readonly key: string;
   summarize(input: unknown): SafeToolSummary;
   execute(request: ToolProviderRequest): Promise<ToolProviderResult>;
+  /**
+   * 查询稳定 idempotency key 对应的外部状态，不重发原副作用。无法确认时应拒绝，
+   * Runtime 会把 ToolCall 转为 requires_review。
+   */
+  reconcile?(request: ToolProviderRequest): Promise<ToolProviderResult>;
 }
 
 export interface InvokeToolCommand {
   identity: RequestIdentity;
   agentRevisionId: AgentRevisionId;
-  grantId: ToolGrantId;
   principalEntitlements: readonly string[];
   runId: string;
   invocationId: string;
@@ -176,12 +186,13 @@ export interface ToolRuntime {
 
 export interface ListGrantedTools {
   organizationId: OrganizationId;
-  grantId: ToolGrantId;
+  agentRevisionId: AgentRevisionId;
 }
 
 /**
  * Owns immutable Tool Capability/Revision metadata and Agent Tool Grants.
- * list returns only active Revisions in the requested Organization and grant, ordered by Capability ID.
+ * list resolves the immutable Grant bound to the Agent Revision and returns only its active
+ * Tool Revisions in Capability ID order. A Revision without a binding sees no Tools.
  */
 export interface ToolCatalog {
   provision(organizationId: OrganizationId, input: ToolCatalogProvisioning): Promise<void>;

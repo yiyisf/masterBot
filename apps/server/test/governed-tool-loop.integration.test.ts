@@ -92,11 +92,16 @@ async function fixture(options: { unknownEffect?: boolean } = {}) {
     agentId: agentId(randomUUID()),
     echoRevisionId: agentRevisionId(randomUUID()),
     aiSdkRevisionId: agentRevisionId(randomUUID()),
+    toolRevisionId: agentRevisionId(randomUUID()),
     activeEngineKind: 'ai-sdk',
+    toolsEnabled: true,
     name: `Tool Agent ${randomUUID()}`,
   });
   await agent.provision(identity.resolveRequest().organizationId);
   const revision = await agent.resolveDefault(identity.resolveRequest().organizationId);
+  if (revision.engineKind !== 'ai-sdk' || revision.modelRequirement.toolCalling !== true) {
+    throw new Error('Tool-enabled Agent Revision expected');
+  }
 
   const adapter = new ConfirmationModelAdapter();
   const models = new PostgresModelGateway(pool, adapter, {
@@ -109,6 +114,7 @@ async function fixture(options: { unknownEffect?: boolean } = {}) {
     baseUrl: 'https://models.example.test/v1',
     providerModelId: 'tool-model',
     credentialRef: 'env:test',
+    capabilities: { streamingText: true, toolCalling: true },
     dataHandlingTier: 'test',
     costTier: 'test',
   }]);
@@ -134,7 +140,11 @@ async function fixture(options: { unknownEffect?: boolean } = {}) {
       risks: ['open_world'],
       providerKey: 'test:https-fetch',
     }],
-    grants: [{ id: grantId, capabilityIds: ['cmaster.http.fetch:v1'] }],
+    grants: [{
+      id: grantId,
+      agentRevisionId: revision.agentRevisionId,
+      capabilityIds: ['cmaster.http.fetch:v1'],
+    }],
   });
   let providerCalls = 0;
   const provider: ToolProvider = {
@@ -158,7 +168,7 @@ async function fixture(options: { unknownEffect?: boolean } = {}) {
   const entitlements = new Slice3DevelopmentEntitlements();
   const execution = new PostgresExecutionModule(pool);
   const agentTools = new GovernedAgentToolRuntime(
-    catalog, tools, identity, entitlements, grantId, execution,
+    catalog, tools, identity, entitlements, execution,
   );
   const conversations = new PostgresConversationModule(pool);
   const created = await conversations.create(identity.resolveRequest(), {
