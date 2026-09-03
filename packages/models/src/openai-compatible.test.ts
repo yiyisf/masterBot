@@ -26,7 +26,7 @@ function modelProfile(baseUrl: string): ModelProfile {
     baseUrl,
     providerModelId: 'test-model',
     credentialRef: 'env:test',
-    capabilities: { streamingText: true },
+    capabilities: { streamingText: true, toolCalling: true },
     dataHandlingTier: 'test',
     costTier: 'test',
   };

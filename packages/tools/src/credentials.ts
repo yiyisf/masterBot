@@ -24,4 +24,8 @@ export class DevelopmentCredentialBroker implements CredentialBroker {
       values: {},
     };
   }
+
+  async revoke(): Promise<void> {
+    // Development Built-ins receive no values; the method preserves the production lease lifecycle seam.
+  }
 }

@@ -18,14 +18,14 @@ Feature Flag 默认关闭。当前只装配三个由 #103 跟踪替换的 workfl
 
 - Model Gateway 只在 ModelCall 成功、usage 已持久化后发布 Model Tool Request。
 - Agent Engine 按模型返回顺序执行，最多 5 个 Model Step、8 个 ToolCall。
-- Catalog active Revision、Agent Grant、Principal entitlement 和固定 Policy 共同决定可见及可执行集合；模型虚构名称不会进入 Tool Runtime。
-- ToolCall/Dispatch Attempt Ledger 和稳定 idempotency key 在 Provider I/O 前持久化。
+- Catalog active Revision、绑定到当前不可变 Agent Revision 的 Tool Grant、Principal entitlement 和固定 Policy 共同决定可见及可执行集合；模型虚构名称不会进入 Tool Runtime。
+- ToolCall/Dispatch Attempt Ledger 和稳定 idempotency key 在 Provider I/O 前持久化。Dispatch Attempt 带 PostgreSQL 时钟定义的有限 Lease；`retry_same_call`/`idempotency_key` 安全恢复复用 key，`reconcile` 只查询外部状态，所有路径 fencing 迟到结果；无法确认或 `manual_review` 进入 review。
 - Employee Confirmation 产生持久 Approval、Checkpoint 和 `tool_confirmation` Interrupt。确认后二次授权并签发短期 Credential Lease；拒绝作为 denied Tool Outcome 返回模型。
 - 未知非幂等效果产生 `tool_outcome_review`；继续不会重试原 ToolCall。
 - Checkpoint 恢复复用已持久化 ToolCall，不重新生成已确认请求。Tool input/output 的权威记录仍在 Tools Module。
-- Provider 调用期间，Run cancellation 临时返回 `tool_effect_in_flight` 409；Tool boundary 结束后恢复可取消。
+- Provider 调用期间，Run cancellation 临时返回 `tool_effect_in_flight` 409；Tool boundary 使用可过期 fenced Lease，正常结束或崩溃过期后恢复可取消。Tool Runtime 统一施加 Provider timeout。
 
-Credential Lease 仅存在于 Server/Provider Adapter 内存，不写数据库、Run Event、日志或 Browser Contract。Development Broker 为无凭据 Built-in Tool 签发空值、短期、operation-scoped Lease；企业 Vault Adapter 不属于本 Slice。
+Credential Lease 仅存在于 Server/Provider Adapter 内存，不写数据库、Run Event、日志或 Browser Contract。Development Broker 为无凭据 Built-in Tool 签发空值、短期、operation-scoped Lease；Runtime 在调用前检查过期并在每次 Attempt 后撤销。企业 Vault Adapter 不属于本 Slice。
 
 ## Provider Host fixture
 

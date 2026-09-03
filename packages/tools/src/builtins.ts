@@ -1,3 +1,4 @@
+import type { AgentRevisionId } from '@cmaster/agents';
 import {
   toolGrantId,
   toolRevisionId,
@@ -153,7 +154,9 @@ export const WORKFLOW_VALIDATION_TOOL_GRANT_ID = toolGrantId(
 );
 
 /** Temporary workflow-validation Catalog tracked for replacement by #103. */
-export function workflowValidationToolCatalog(): ToolCatalogProvisioning {
+export function workflowValidationToolCatalog(
+  agentRevisionId: AgentRevisionId,
+): ToolCatalogProvisioning {
   return {
     revisions: [
       {
@@ -208,6 +211,7 @@ export function workflowValidationToolCatalog(): ToolCatalogProvisioning {
     ],
     grants: [{
       id: WORKFLOW_VALIDATION_TOOL_GRANT_ID,
+      agentRevisionId,
       capabilityIds: [
         'cmaster.utility.current_time:v1',
         'cmaster.utility.text_statistics:v1',

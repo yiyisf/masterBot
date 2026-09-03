@@ -16,6 +16,7 @@ export type RunEventId = Brand<string, 'RunEventId'>;
 export type DispatchAttemptId = Brand<string, 'DispatchAttemptId'>;
 export type RunCommandId = Brand<string, 'RunCommandId'>;
 export type InterruptId = Brand<string, 'InterruptId'>;
+export type ToolBoundaryLeaseId = Brand<string, 'ToolBoundaryLeaseId'>;
 
 export type RunStatus = 'accepted' | 'queued' | 'running' | 'waiting' | 'succeeded' | 'failed' | 'cancelled';
 export type InvocationStatus = 'pending' | 'running' | 'interrupted' | 'succeeded' | 'failed' | 'cancelled';
@@ -181,9 +182,22 @@ export type CancelRunResult =
   | { kind: 'tool_effect_in_flight'; run: RunSnapshot; replayed: boolean }
   | { kind: 'too_late'; run: RunSnapshot; replayed: boolean };
 
+export interface ToolBoundaryLease {
+  id: ToolBoundaryLeaseId;
+  expiresAt: Date;
+}
+
+/**
+ * 串行化 Run cancellation 与 Provider I/O。进程丢失后 Lease 可过期；只有当前持有者可清除
+ * boundary，过期持有者不能覆盖后继者。
+ */
 export interface ToolExecutionBoundary {
-  enterToolBoundary(identity: RequestIdentity, runId: RunId): Promise<void>;
-  leaveToolBoundary(identity: RequestIdentity, runId: RunId): Promise<void>;
+  enterToolBoundary(identity: RequestIdentity, runId: RunId): Promise<ToolBoundaryLease>;
+  leaveToolBoundary(
+    identity: RequestIdentity,
+    runId: RunId,
+    lease: ToolBoundaryLease,
+  ): Promise<void>;
 }
 
 /**

@@ -5,6 +5,7 @@ export interface RunProjection {
   cancellable: boolean;
   lastAppliedSequence: number;
   events: RunEventContract[];
+  activeInterrupt: RunSnapshotContract['activeInterrupt'] | undefined;
   hasGap: boolean;
 }
 
@@ -14,6 +15,7 @@ export function projectionFromSnapshot(snapshot: RunSnapshotContract): RunProjec
     cancellable: snapshot.cancellable,
     lastAppliedSequence: snapshot.lastSequence,
     events: [],
+    activeInterrupt: snapshot.activeInterrupt,
     hasGap: false,
   };
 }
@@ -25,6 +27,8 @@ export function applyRunEvent(state: RunProjection, event: RunEventContract): Ru
   let status = state.status;
   if (event.type === 'run.queued') status = 'queued';
   if (event.type === 'run.started' || event.type === 'run.recovery_started') status = 'running';
+  if (event.type === 'run.waiting') status = 'waiting';
+  if (event.type === 'run.resumed') status = 'queued';
   if (event.type === 'run.succeeded') status = 'succeeded';
   if (event.type === 'run.failed') status = 'failed';
   if (event.type === 'run.cancelled') status = 'cancelled';
@@ -35,6 +39,7 @@ export function applyRunEvent(state: RunProjection, event: RunEventContract): Ru
       && !['invocation.output_ready', 'run.succeeded', 'run.failed', 'run.cancelled'].includes(event.type),
     lastAppliedSequence: event.sequence,
     events: [...state.events, event],
+    activeInterrupt: event.type === 'interrupt.resolved' ? undefined : state.activeInterrupt,
     hasGap: false,
   };
 }

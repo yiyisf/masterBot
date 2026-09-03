@@ -17,7 +17,6 @@ import {
   PostgresToolCatalog,
   PostgresToolRuntime,
   TextStatisticsToolProvider,
-  WORKFLOW_VALIDATION_TOOL_GRANT_ID,
   workflowValidationToolCatalog,
 } from '@cmaster/tools';
 import {
@@ -61,8 +60,10 @@ const agents = new PostgresAgentModule(database.pool, {
   echoRevisionId: agentRevisionId(config.developmentIdentity.echoAgentRevisionId),
   ...(config.features.aiSdkRuntime ? {
     aiSdkRevisionId: agentRevisionId(config.developmentIdentity.aiSdkAgentRevisionId),
+    toolRevisionId: agentRevisionId(config.developmentIdentity.toolAgentRevisionId),
   } : {}),
   activeEngineKind: config.features.aiSdkRuntime ? 'ai-sdk' : 'echo',
+  toolsEnabled: config.features.toolRuntime,
   name: 'Development Agent',
 });
 const conversations = new PostgresConversationModule(database.pool);
@@ -101,6 +102,7 @@ if (config.modelRuntime) {
       credentialRef: config.modelRuntime.primary.credentialRef,
       dataHandlingTier: 'development',
       costTier: 'standard',
+      capabilities: config.modelRuntime.primary.capabilities,
     },
     ...(config.modelRuntime.fallback ? [{
       id: modelProfileId(config.modelRuntime.fallback.profileId),
@@ -111,6 +113,7 @@ if (config.modelRuntime) {
       credentialRef: config.modelRuntime.fallback.credentialRef,
       dataHandlingTier: 'development',
       costTier: 'standard',
+      capabilities: config.modelRuntime.fallback.capabilities,
     }] : []),
   ];
   await models.provision(identity.resolveRequest().organizationId, profiles);
@@ -127,14 +130,16 @@ if (config.features.toolRuntime) {
     new TextStatisticsToolProvider(),
     new HttpsFetchToolProvider({ allowedHosts: config.toolRuntime.httpFetchAllowedHosts }),
   ];
-  await catalog.provision(organizationId, workflowValidationToolCatalog());
+  await catalog.provision(
+    organizationId,
+    workflowValidationToolCatalog(agentRevisionId(config.developmentIdentity.activeAgentRevisionId)),
+  );
   const toolRuntime = new PostgresToolRuntime(
     database.pool, new Slice3BaselinePolicy(), approvals, providers,
   );
   const entitlements = new Slice3DevelopmentEntitlements();
   governedAgentTools = new GovernedAgentToolRuntime(
-    catalog, toolRuntime, identity, entitlements,
-    WORKFLOW_VALIDATION_TOOL_GRANT_ID, execution,
+    catalog, toolRuntime, identity, entitlements, execution,
   );
   toolConfirmationCoordinator = new ToolConfirmationCoordinator(
     execution, toolRuntime, entitlements,

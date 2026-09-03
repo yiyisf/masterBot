@@ -69,11 +69,11 @@ export class ToolConfirmationCoordinator {
     });
     let outcome: ToolOutcome;
     if (interrupt.status === 'pending') {
-      await this.execution.enterToolBoundary(identity, runId);
+      const boundary = await this.execution.enterToolBoundary(identity, runId);
       try {
         outcome = await resumeTool();
       } finally {
-        await this.execution.leaveToolBoundary(identity, runId);
+        await this.execution.leaveToolBoundary(identity, runId, boundary);
       }
     } else {
       outcome = await resumeTool();

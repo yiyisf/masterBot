@@ -3,7 +3,6 @@ import type { EngineInvocation } from '@cmaster/execution';
 import type { OrganizationId, PrincipalId, RequestIdentity } from '@cmaster/identity';
 import type { InvocationId, RunId } from '@cmaster/execution';
 import {
-  toolGrantId,
   toolRevisionId,
   type ToolCall,
   type ToolDescriptor,
@@ -52,8 +51,12 @@ function fixture(outcome: ToolOutcome) {
     },
     { resolveRequest() { return identity; } },
     { async resolve() { return ['enterprise_assistant.use_governed_tools']; } },
-    toolGrantId('00000000-0000-4000-8000-000000000007'),
-    { async enterToolBoundary() {}, async leaveToolBoundary() {} },
+    {
+      async enterToolBoundary() {
+        return { id: 'boundary' as never, expiresAt: new Date(Date.now() + 1_000) };
+      },
+      async leaveToolBoundary() {},
+    },
   );
   return { runtime, invokeCount: () => invokes };
 }
@@ -114,8 +117,12 @@ describe('GovernedAgentToolRuntime', () => {
       { async invoke() { throw new Error('not expected'); }, async listCalls() { return [call]; } },
       { resolveRequest() { return identity; } },
       { async resolve() { return []; } },
-      toolGrantId('00000000-0000-4000-8000-000000000007'),
-      { async enterToolBoundary() {}, async leaveToolBoundary() {} },
+      {
+        async enterToolBoundary() {
+          return { id: 'boundary' as never, expiresAt: new Date(Date.now() + 1_000) };
+        },
+        async leaveToolBoundary() {},
+      },
     );
 
     await expect(runtime.recover(

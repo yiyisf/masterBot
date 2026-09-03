@@ -103,6 +103,22 @@ export class PostgresToolCatalog implements ToolCatalog {
         if (stored.rows[0]?.config_hash !== configHash) {
           throw new ToolProvisioningConflictError(`Tool Grant ${grant.id} is immutable`);
         }
+        await client.query(
+          `INSERT INTO agent_tool_grants (organization_id, agent_revision_id, grant_id)
+           VALUES ($1, $2, $3)
+           ON CONFLICT (organization_id, agent_revision_id) DO NOTHING`,
+          [organizationId, grant.agentRevisionId, grant.id],
+        );
+        const binding = await client.query<{ grant_id: string }>(
+          `SELECT grant_id FROM agent_tool_grants
+           WHERE organization_id = $1 AND agent_revision_id = $2`,
+          [organizationId, grant.agentRevisionId],
+        );
+        if (binding.rows[0]?.grant_id !== grant.id) {
+          throw new ToolProvisioningConflictError(
+            `Agent Revision ${grant.agentRevisionId} Tool Grant is immutable`,
+          );
+        }
       }
       await client.query('COMMIT');
     } catch (error) {
@@ -128,15 +144,17 @@ export class PostgresToolCatalog implements ToolCatalog {
   async list(query: ListGrantedTools): Promise<ToolDescriptor[]> {
     const result = await this.pool.query<ToolRevisionRow>(
       `SELECT r.*
-       FROM tool_grants g
+       FROM agent_tool_grants b
+       JOIN tool_grants g
+         ON g.organization_id = b.organization_id AND g.id = b.grant_id
        CROSS JOIN LATERAL jsonb_array_elements_text(g.capability_ids) granted(capability_id)
        JOIN tool_revisions r
          ON r.organization_id = g.organization_id
         AND r.capability_id = granted.capability_id
         AND r.status = 'active'
-       WHERE g.organization_id = $1 AND g.id = $2
+       WHERE b.organization_id = $1 AND b.agent_revision_id = $2
        ORDER BY r.capability_id`,
-      [query.organizationId, query.grantId],
+      [query.organizationId, query.agentRevisionId],
     );
     return result.rows.map(mapDescriptor);
   }

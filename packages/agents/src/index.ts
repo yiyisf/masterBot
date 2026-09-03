@@ -17,14 +17,16 @@ export type ResolvedAgentRevision =
     agentRevisionId: AgentRevisionId;
     engineKind: 'ai-sdk';
     engineVersion: '1';
-    modelRequirement: { streamingText: true };
+    modelRequirement: { streamingText: true; toolCalling?: true };
   };
 
 export interface DevelopmentAgentConfig {
   agentId: AgentId;
   echoRevisionId: AgentRevisionId;
   aiSdkRevisionId?: AgentRevisionId;
+  toolRevisionId?: AgentRevisionId;
   activeEngineKind: 'echo' | 'ai-sdk';
+  toolsEnabled?: boolean;
   name: string;
 }
 
@@ -43,7 +45,7 @@ interface RevisionRow {
   revision_id: string;
   engine_kind: string;
   engine_version: string;
-  model_requirement: { streamingText?: unknown } | null;
+  model_requirement: { streamingText?: unknown; toolCalling?: unknown } | null;
 }
 
 export class PostgresAgentModule implements AgentModule {
@@ -56,9 +58,14 @@ export class PostgresAgentModule implements AgentModule {
     if (this.config.activeEngineKind === 'ai-sdk' && !this.config.aiSdkRevisionId) {
       throw new Error('AI SDK Agent Revision is required when the AI SDK Engine is active');
     }
-    const activeRevisionId = this.config.activeEngineKind === 'ai-sdk'
-      ? this.config.aiSdkRevisionId!
-      : this.config.echoRevisionId;
+    if (this.config.toolsEnabled && !this.config.toolRevisionId) {
+      throw new Error('Tool-enabled Agent Revision is required when Tool Runtime is active');
+    }
+    const activeRevisionId = this.config.toolsEnabled
+      ? this.config.toolRevisionId!
+      : this.config.activeEngineKind === 'ai-sdk'
+        ? this.config.aiSdkRevisionId!
+        : this.config.echoRevisionId;
     const client = await this.pool.connect();
     try {
       await client.query('BEGIN');
@@ -88,7 +95,31 @@ export class PostgresAgentModule implements AgentModule {
             JSON.stringify({ streamingText: true })],
         );
       }
-      // 临时开发激活策略：Slice 2 由 Feature Flag 选择 Revision；正式发布/回滚流程留待 Agent Admin Slice。
+      if (this.config.toolRevisionId) {
+        await client.query(
+          `INSERT INTO agent_revisions (
+             id, organization_id, agent_id, revision_number,
+             engine_kind, engine_version, status, model_requirement
+           ) VALUES ($1, $2, $3, 3, 'ai-sdk', '1', 'published', $4)
+           ON CONFLICT (id) DO NOTHING`,
+          [this.config.toolRevisionId, organizationId, this.config.agentId,
+            JSON.stringify({ streamingText: true, toolCalling: true })],
+        );
+        const stored = await client.query<RevisionRow>(
+          `SELECT r.id AS revision_id, r.engine_kind, r.engine_version, r.model_requirement
+           FROM agent_revisions r
+           WHERE r.organization_id = $1 AND r.agent_id = $2
+             AND r.id = $3 AND r.revision_number = 3 AND r.status = 'published'`,
+          [organizationId, this.config.agentId, this.config.toolRevisionId],
+        );
+        const revision = stored.rows[0];
+        if (revision?.engine_kind !== 'ai-sdk' || revision.engine_version !== '1'
+          || revision.model_requirement?.streamingText !== true
+          || revision.model_requirement.toolCalling !== true) {
+          throw new Error(`Tool-enabled Agent Revision ${this.config.toolRevisionId} conflicts with immutable configuration`);
+        }
+      }
+      // 临时开发激活策略：Feature Flag 选择不可变 Revision；正式发布/回滚流程留待 Agent Admin Slice。
       await client.query(
         `UPDATE agents SET active_revision_id = $3
          WHERE organization_id = $1 AND id = $2`,
@@ -132,7 +163,10 @@ export class PostgresAgentModule implements AgentModule {
         agentRevisionId: row.revision_id as AgentRevisionId,
         engineKind: 'ai-sdk',
         engineVersion: '1',
-        modelRequirement: { streamingText: true },
+        modelRequirement: {
+          streamingText: true,
+          ...(row.model_requirement.toolCalling === true ? { toolCalling: true as const } : {}),
+        },
       };
     }
     throw new Error('Development Agent Revision is incompatible');

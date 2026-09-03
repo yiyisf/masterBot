@@ -135,6 +135,7 @@ async function fixture(
       baseUrl: 'https://primary.example.test/v1',
       providerModelId: 'primary-model',
       credentialRef: 'env:primary',
+      capabilities: { streamingText: true, toolCalling: true },
       dataHandlingTier: 'test',
       costTier: 'test',
     },
@@ -145,6 +146,7 @@ async function fixture(
       baseUrl: 'https://fallback.example.test/v1',
       providerModelId: 'fallback-model',
       credentialRef: 'env:fallback',
+      capabilities: { streamingText: true, toolCalling: true },
       dataHandlingTier: 'test',
       costTier: 'test',
     },
@@ -231,6 +233,50 @@ describe('AI SDK Model Runtime', () => {
       runtime.identity.resolveRequest(), runtime.runId, runCommandId(randomUUID()),
     );
     await runtime.provider.shutdown();
+  });
+
+  it('does not route Tool requests to a text-only Model Profile', async () => {
+    const identityModule = new PostgresDevelopmentIdentity(pool, {
+      organizationId: organizationId(randomUUID()),
+      organizationName: `Text-only Model ${randomUUID()}`,
+      principalId: principalId(randomUUID()),
+      principalDisplayName: 'Model Capability Employee',
+    });
+    await identityModule.provision();
+    const identity = identityModule.resolveRequest();
+    const adapter = new ScriptedModelAdapter('tool-request');
+    const models = new PostgresModelGateway(pool, adapter, {
+      credentials: new Map([['env:primary', 'primary-secret']]),
+    });
+    await models.provision(identity.organizationId, [{
+      id: modelProfileId(randomUUID()),
+      displayName: 'Text-only Model',
+      routeRole: 'primary',
+      baseUrl: 'https://text-only.example.test/v1',
+      providerModelId: 'text-only-model',
+      credentialRef: 'env:primary',
+      capabilities: { streamingText: true, toolCalling: false },
+      dataHandlingTier: 'test',
+      costTier: 'test',
+    }]);
+    const consume = async (): Promise<void> => {
+      for await (const event of models.stream({
+        organizationId: identity.organizationId,
+        runId: randomUUID(),
+        invocationId: randomUUID(),
+        prompt: 'use current time',
+        tools: [{
+          name: 'current_time', description: 'Returns time.',
+          inputSchema: { type: 'object' }, outputSchema: { type: 'object' },
+        }],
+        signal: new AbortController().signal,
+      })) {
+        // The capability check must fail before a Provider event is observable.
+        void event;
+      }
+    };
+    await expect(consume()).rejects.toThrow('Primary Model Profile is not provisioned');
+    expect(adapter.primaryCalls).toBe(0);
   });
 
   it('completes a sequential Tool Loop and accumulates usage across Model Steps', async () => {

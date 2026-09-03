@@ -30,12 +30,15 @@ const environmentSchema = z.object({
   CMASTER_DEV_AGENT_ID: z.uuid().default('00000000-0000-4000-8000-000000000003'),
   CMASTER_DEV_AGENT_REVISION_ID: z.uuid().default('00000000-0000-4000-8000-000000000004'),
   CMASTER_DEV_AI_AGENT_REVISION_ID: z.uuid().default('00000000-0000-4000-8000-000000000005'),
+  CMASTER_DEV_TOOL_AGENT_REVISION_ID: z.uuid().default('00000000-0000-4000-8000-000000000012'),
   CMASTER_PRIMARY_MODEL_PROFILE_ID: z.uuid().default('00000000-0000-4000-8000-000000000006'),
+  CMASTER_TOOL_MODEL_PROFILE_ID: z.uuid().default('00000000-0000-4000-8000-000000000013'),
   CMASTER_PRIMARY_MODEL_DISPLAY_NAME: z.string().min(1).default('Development Primary Model'),
   CMASTER_PRIMARY_MODEL_BASE_URL: optionalModelBaseUrl,
   CMASTER_PRIMARY_MODEL_ID: optionalNonEmptyString,
   CMASTER_PRIMARY_MODEL_API_KEY: optionalNonEmptyString,
   CMASTER_FALLBACK_MODEL_PROFILE_ID: z.uuid().default('00000000-0000-4000-8000-000000000007'),
+  CMASTER_TOOL_FALLBACK_MODEL_PROFILE_ID: z.uuid().default('00000000-0000-4000-8000-000000000014'),
   CMASTER_FALLBACK_MODEL_DISPLAY_NAME: z.string().min(1).default('Development Fallback Model'),
   CMASTER_FALLBACK_MODEL_BASE_URL: optionalModelBaseUrl,
   CMASTER_FALLBACK_MODEL_ID: optionalNonEmptyString,
@@ -66,6 +69,8 @@ export interface ServerConfig {
     agentId: string;
     echoAgentRevisionId: string;
     aiSdkAgentRevisionId: string;
+    toolAgentRevisionId: string;
+    activeAgentRevisionId: string;
   };
   toolRuntime: {
     httpFetchAllowedHosts: readonly string[];
@@ -78,6 +83,7 @@ export interface ServerConfig {
       modelId: string;
       apiKey: string;
       credentialRef: 'env:CMASTER_PRIMARY_MODEL_API_KEY';
+      capabilities: { streamingText: true; toolCalling: boolean };
     };
     fallback?: {
       profileId: string;
@@ -86,6 +92,7 @@ export interface ServerConfig {
       modelId: string;
       apiKey: string;
       credentialRef: 'env:CMASTER_FALLBACK_MODEL_API_KEY';
+      capabilities: { streamingText: true; toolCalling: boolean };
     };
   };
   worker: {
@@ -176,25 +183,41 @@ export function loadServerConfig(
       agentId: parsed.CMASTER_DEV_AGENT_ID,
       echoAgentRevisionId: parsed.CMASTER_DEV_AGENT_REVISION_ID,
       aiSdkAgentRevisionId: parsed.CMASTER_DEV_AI_AGENT_REVISION_ID,
+      toolAgentRevisionId: parsed.CMASTER_DEV_TOOL_AGENT_REVISION_ID,
+      activeAgentRevisionId: parsed.CMASTER_TOOL_RUNTIME_ENABLED
+        ? parsed.CMASTER_DEV_TOOL_AGENT_REVISION_ID
+        : parsed.CMASTER_DEV_AI_AGENT_REVISION_ID,
     },
     ...(parsed.CMASTER_AI_SDK_RUNTIME_ENABLED ? {
       modelRuntime: {
         primary: {
-          profileId: parsed.CMASTER_PRIMARY_MODEL_PROFILE_ID,
+          profileId: parsed.CMASTER_TOOL_RUNTIME_ENABLED
+            ? parsed.CMASTER_TOOL_MODEL_PROFILE_ID
+            : parsed.CMASTER_PRIMARY_MODEL_PROFILE_ID,
           displayName: parsed.CMASTER_PRIMARY_MODEL_DISPLAY_NAME,
           baseUrl: parsed.CMASTER_PRIMARY_MODEL_BASE_URL!,
           modelId: parsed.CMASTER_PRIMARY_MODEL_ID!,
           apiKey: parsed.CMASTER_PRIMARY_MODEL_API_KEY!,
           credentialRef: 'env:CMASTER_PRIMARY_MODEL_API_KEY' as const,
+          capabilities: {
+            streamingText: true as const,
+            toolCalling: parsed.CMASTER_TOOL_RUNTIME_ENABLED,
+          },
         },
         ...(hasFallback ? {
           fallback: {
-            profileId: parsed.CMASTER_FALLBACK_MODEL_PROFILE_ID,
+            profileId: parsed.CMASTER_TOOL_RUNTIME_ENABLED
+              ? parsed.CMASTER_TOOL_FALLBACK_MODEL_PROFILE_ID
+              : parsed.CMASTER_FALLBACK_MODEL_PROFILE_ID,
             displayName: parsed.CMASTER_FALLBACK_MODEL_DISPLAY_NAME,
             baseUrl: parsed.CMASTER_FALLBACK_MODEL_BASE_URL!,
             modelId: parsed.CMASTER_FALLBACK_MODEL_ID!,
             apiKey: parsed.CMASTER_FALLBACK_MODEL_API_KEY!,
             credentialRef: 'env:CMASTER_FALLBACK_MODEL_API_KEY' as const,
+            capabilities: {
+              streamingText: true as const,
+              toolCalling: parsed.CMASTER_TOOL_RUNTIME_ENABLED,
+            },
           },
         } : {}),
       },
