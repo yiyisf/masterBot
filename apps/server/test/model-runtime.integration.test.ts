@@ -105,11 +105,12 @@ async function fixture(
     principalDisplayName: 'Model Runtime Employee',
   });
   await identity.provision();
+  const aiSdkRevisionId = agentRevisionId(randomUUID());
   const agent = new PostgresAgentModule(pool, {
     agentId: agentId(randomUUID()),
     echoRevisionId: agentRevisionId(randomUUID()),
-    aiSdkRevisionId: agentRevisionId(randomUUID()),
-    activeEngineKind: 'ai-sdk',
+    aiSdkRevisionId,
+    activeRevisionId: aiSdkRevisionId,
     name: `AI Agent ${randomUUID()}`,
   });
   await agent.provision(identity.resolveRequest().organizationId);
@@ -136,17 +137,18 @@ async function fixture(
       providerModelId: 'primary-model',
       credentialRef: 'env:primary',
       capabilities: { streamingText: true, toolCalling: true },
+      contextLimits: { contextWindowTokens: 131_072, maxOutputTokens: 16_384 },
       dataHandlingTier: 'test',
       costTier: 'test',
     },
-    {
-      id: fallbackProfileId,
+    {      id: fallbackProfileId,
       displayName: 'Fallback Test Model',
       routeRole: 'fallback',
       baseUrl: 'https://fallback.example.test/v1',
       providerModelId: 'fallback-model',
       credentialRef: 'env:fallback',
       capabilities: { streamingText: true, toolCalling: true },
+      contextLimits: { contextWindowTokens: 65_536, maxOutputTokens: 8_192 },
       dataHandlingTier: 'test',
       costTier: 'test',
     },

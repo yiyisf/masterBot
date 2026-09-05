@@ -111,7 +111,7 @@ export class AiSdkAgentEngine implements AgentEngine {
   readonly version = '1' as const;
 
   constructor(
-    private readonly models: ModelGateway,
+    private readonly models: Pick<ModelGateway, 'stream'>,
     private readonly tools?: AgentToolRuntime,
   ) {}
 

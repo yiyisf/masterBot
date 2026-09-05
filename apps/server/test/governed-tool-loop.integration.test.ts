@@ -88,13 +88,13 @@ async function fixture(options: { unknownEffect?: boolean } = {}) {
     principalDisplayName: 'Tool Loop Employee',
   });
   await identity.provision();
+  const toolAgentRevisionId = agentRevisionId(randomUUID());
   const agent = new PostgresAgentModule(pool, {
     agentId: agentId(randomUUID()),
     echoRevisionId: agentRevisionId(randomUUID()),
     aiSdkRevisionId: agentRevisionId(randomUUID()),
-    toolRevisionId: agentRevisionId(randomUUID()),
-    activeEngineKind: 'ai-sdk',
-    toolsEnabled: true,
+    toolRevisionId: toolAgentRevisionId,
+    activeRevisionId: toolAgentRevisionId,
     name: `Tool Agent ${randomUUID()}`,
   });
   await agent.provision(identity.resolveRequest().organizationId);

@@ -21,6 +21,7 @@ export function buildApi(dependencies: ApiDependencies): FastifyInstance {
   const featureFlags = dependencies.featureFlags ?? new EnvironmentFeatureFlags({
     nextArchitecture: dependencies.config.features.nextArchitecture,
     toolRuntime: dependencies.config.features.toolRuntime,
+    contextArtifacts: dependencies.config.features.contextArtifacts,
   });
 
   if (featureFlags.isEnabled('toolRuntime') && !dependencies.toolConfirmationCoordinator) {

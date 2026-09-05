@@ -126,6 +126,9 @@ export class OpenAICompatibleModelAdapter implements ModelAdapter {
         ? { messages: providerMessages(request.transcript) }
         : { prompt: request.prompt }),
       ...(tools ? { tools } : {}),
+      ...(request.profile.contextLimits
+        ? { maxOutputTokens: request.profile.contextLimits.maxOutputTokens }
+        : {}),
       abortSignal: request.signal,
       // 重试和 Fallback 必须由 Model Module 记录，禁止 SDK 在内部静默重试。
       maxRetries: 0,

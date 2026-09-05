@@ -31,6 +31,15 @@ export interface ModelUsage {
   totalTokens: number;
 }
 
+/**
+ * Model Module-owned immutable Profile limits. Both positive token counts must be
+ * declared together and the Context Window must exceed the enforced maximum output.
+ */
+export interface ModelContextLimits {
+  readonly contextWindowTokens: number;
+  readonly maxOutputTokens: number;
+}
+
 export interface ModelProfile {
   id: ModelProfileId;
   organizationId: OrganizationId;
@@ -41,6 +50,7 @@ export interface ModelProfile {
   providerModelId: string;
   credentialRef: string;
   capabilities: { streamingText: true; toolCalling: boolean };
+  contextLimits?: ModelContextLimits;
   dataHandlingTier: string;
   costTier: string;
 }
@@ -48,6 +58,28 @@ export interface ModelProfile {
 export interface ModelSelection {
   id: ModelProfileId;
   displayName: string;
+}
+
+/**
+ * Organization-scoped request for active model capacity. Tool requirements filter
+ * ineligible Profiles; resolution fails if no eligible Primary exists.
+ */
+export interface ResolveModelContextBudget {
+  organizationId: OrganizationId;
+  requiresToolCalling: boolean;
+}
+
+/**
+ * Model Module result naming the eligible immutable Profiles and their strictest
+ * capacity. The query is bounded to one Primary and one optional Fallback Profile.
+ */
+export interface ModelContextBudget {
+  primaryProfileId: ModelProfileId;
+  fallbackProfileId?: ModelProfileId;
+  /** Smallest Context Window across the eligible active Profiles. */
+  strictestContextWindowTokens: number;
+  /** Largest output reserve enforced across the eligible active Profiles. */
+  maximumOutputTokens: number;
 }
 
 export interface ModelCall {
@@ -74,6 +106,7 @@ export interface ModelProfileProvisioning {
   providerModelId: string;
   credentialRef: string;
   capabilities: { streamingText: true; toolCalling: boolean };
+  contextLimits?: ModelContextLimits;
   dataHandlingTier: string;
   costTier: string;
 }
@@ -142,11 +175,13 @@ export interface ModelAdapter {
 /**
  * Model Module 的深 Interface：选择 Profile、记录 ModelCall、执行 Provider、归一化 usage 与受控 Fallback。
  * 调用返回严格有序的事件流；同一次调用最多 Primary 与一个 Fallback，且每次 Provider I/O 前已持久化 ModelCall。
- * provision 幂等但拒绝缺失 Credential、同 ID 配置冲突和越权 Fallback；stream 的 Provider/数据库失败以安全事件或异常结束。
- * Profile 查询使用 Organization/route 索引；listCalls 使用 (Organization, Run) 索引，结果受 Invocation attempt 上限约束。
+ * provision 幂等但拒绝缺失 Credential、同 ID 配置冲突、无效 Context limits 和越权 Fallback；stream 的 Provider/数据库失败以安全事件或异常结束。
+ * resolveContextBudget 读取当前 active、满足 Tool 要求的 Primary/可选 Fallback，要求它们均声明 limits，并返回最严格 Context Window 与最大输出预留；Context Module 再施加 Policy 与安全余量。
+ * Profile 查询使用 Organization/route 索引且结果最多两个；listCalls 使用 (Organization, Run) 索引，结果受 Invocation attempt 上限约束。
  */
 export interface ModelGateway {
   provision(organizationId: OrganizationId, profiles: readonly ModelProfileProvisioning[]): Promise<void>;
+  resolveContextBudget(request: ResolveModelContextBudget): Promise<ModelContextBudget>;
   stream(request: ModelInvocationRequest): AsyncIterable<ModelEvent>;
   listCalls(organizationId: OrganizationId, runId: string): Promise<ModelCall[]>;
 }

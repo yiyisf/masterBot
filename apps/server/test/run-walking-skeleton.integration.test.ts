@@ -39,10 +39,11 @@ const identityConfig = {
   principalId: principalId(randomUUID()),
   principalDisplayName: 'Integration Employee',
 };
+const echoRevisionId = agentRevisionId(randomUUID());
 const agentConfig = {
   agentId: agentId(randomUUID()),
-  echoRevisionId: agentRevisionId(randomUUID()),
-  activeEngineKind: 'echo' as const,
+  echoRevisionId,
+  activeRevisionId: echoRevisionId,
   name: `Echo ${suffix}`,
 };
 const identity = new PostgresDevelopmentIdentity(pool, identityConfig);

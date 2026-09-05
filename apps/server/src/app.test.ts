@@ -46,7 +46,9 @@ describe('next API skeleton', () => {
     expect(() => buildApi({
       config,
       database: database(true),
-      featureFlags: new InMemoryFeatureFlags({ nextArchitecture: true, toolRuntime: true }),
+      featureFlags: new InMemoryFeatureFlags({
+        nextArchitecture: true, toolRuntime: true, contextArtifacts: false,
+      }),
     })).toThrow('Tool Runtime requires a Tool Confirmation Coordinator');
   });
 
@@ -54,7 +56,9 @@ describe('next API skeleton', () => {
     const disabled = buildApi({
       config,
       database: database(true),
-      featureFlags: new InMemoryFeatureFlags({ nextArchitecture: false, toolRuntime: false }),
+      featureFlags: new InMemoryFeatureFlags({
+        nextArchitecture: false, toolRuntime: false, contextArtifacts: false,
+      }),
     });
     expect((await disabled.inject({ method: 'GET', url: '/api/v1/system/status' })).statusCode).toBe(404);
     await disabled.close();
@@ -62,7 +66,9 @@ describe('next API skeleton', () => {
     const enabled = buildApi({
       config,
       database: database(true),
-      featureFlags: new InMemoryFeatureFlags({ nextArchitecture: true, toolRuntime: false }),
+      featureFlags: new InMemoryFeatureFlags({
+        nextArchitecture: true, toolRuntime: false, contextArtifacts: false,
+      }),
     });
     const response = await enabled.inject({ method: 'GET', url: '/api/v1/system/status' });
     expect(response.statusCode).toBe(200);

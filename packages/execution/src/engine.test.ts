@@ -28,11 +28,8 @@ const selection: ModelSelection = {
   displayName: 'Test Model',
 };
 
-class ToolLoopModelGateway implements ModelGateway {
+class ToolLoopModelGateway implements Pick<ModelGateway, 'stream'> {
   readonly requests: ModelInvocationRequest[] = [];
-
-  async provision(): Promise<void> {}
-  async listCalls(): Promise<[]> { return []; }
 
   async *stream(request: ModelInvocationRequest) {
     this.requests.push(request);
@@ -62,12 +59,10 @@ class ToolLoopModelGateway implements ModelGateway {
   }
 }
 
-class RepeatingToolModelGateway implements ModelGateway {
+class RepeatingToolModelGateway implements Pick<ModelGateway, 'stream'> {
   calls = 0;
 
   constructor(private readonly requestsPerStep: number) {}
-  async provision(): Promise<void> {}
-  async listCalls(): Promise<[]> { return []; }
 
   async *stream() {
     this.calls += 1;

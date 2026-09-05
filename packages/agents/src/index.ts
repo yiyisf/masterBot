@@ -1,6 +1,7 @@
+import type { ContextPolicyRevision } from '@cmaster/context';
 import type { OrganizationId } from '@cmaster/identity';
 import type { Brand } from '@cmaster/kernel';
-import type { Pool } from 'pg';
+import type { Pool, PoolClient } from 'pg';
 
 export type AgentId = Brand<string, 'AgentId'>;
 export type AgentRevisionId = Brand<string, 'AgentRevisionId'>;
@@ -18,6 +19,7 @@ export type ResolvedAgentRevision =
     engineKind: 'ai-sdk';
     engineVersion: '1';
     modelRequirement: { streamingText: true; toolCalling?: true };
+    contextPolicyRevision?: ContextPolicyRevision;
   };
 
 export interface DevelopmentAgentConfig {
@@ -25,8 +27,9 @@ export interface DevelopmentAgentConfig {
   echoRevisionId: AgentRevisionId;
   aiSdkRevisionId?: AgentRevisionId;
   toolRevisionId?: AgentRevisionId;
-  activeEngineKind: 'echo' | 'ai-sdk';
-  toolsEnabled?: boolean;
+  contextArtifactRevisionId?: AgentRevisionId;
+  contextPolicyRevision?: ContextPolicyRevision;
+  activeRevisionId: AgentRevisionId;
   name: string;
 }
 
@@ -46,6 +49,47 @@ interface RevisionRow {
   engine_kind: string;
   engine_version: string;
   model_requirement: { streamingText?: unknown; toolCalling?: unknown } | null;
+  context_policy_revision: string | null;
+}
+
+interface GovernedRevisionConfiguration {
+  revisionId: AgentRevisionId;
+  revisionNumber: 3 | 4;
+  contextPolicyRevision: ContextPolicyRevision | null;
+  description: 'Tool-enabled' | 'Context-enabled';
+}
+
+async function provisionGovernedRevision(
+  client: PoolClient,
+  organizationId: OrganizationId,
+  agentIdValue: AgentId,
+  configuration: GovernedRevisionConfiguration,
+): Promise<void> {
+  await client.query(
+    `INSERT INTO agent_revisions (
+       id, organization_id, agent_id, revision_number,
+       engine_kind, engine_version, status, model_requirement, context_policy_revision
+     ) VALUES ($1, $2, $3, $4, 'ai-sdk', '1', 'published', $5, $6)
+     ON CONFLICT (id) DO NOTHING`,
+    [configuration.revisionId, organizationId, agentIdValue, configuration.revisionNumber,
+      JSON.stringify({ streamingText: true, toolCalling: true }),
+      configuration.contextPolicyRevision],
+  );
+  const stored = await client.query<RevisionRow>(
+    `SELECT r.id AS revision_id, r.engine_kind, r.engine_version,
+            r.model_requirement, r.context_policy_revision
+     FROM agent_revisions r
+     WHERE r.organization_id = $1 AND r.agent_id = $2
+       AND r.id = $3 AND r.revision_number = $4 AND r.status = 'published'`,
+    [organizationId, agentIdValue, configuration.revisionId, configuration.revisionNumber],
+  );
+  const revision = stored.rows[0];
+  if (revision?.engine_kind !== 'ai-sdk' || revision.engine_version !== '1'
+    || revision.model_requirement?.streamingText !== true
+    || revision.model_requirement.toolCalling !== true
+    || revision.context_policy_revision !== configuration.contextPolicyRevision) {
+    throw new Error(`${configuration.description} Agent Revision ${configuration.revisionId} conflicts with immutable configuration`);
+  }
 }
 
 export class PostgresAgentModule implements AgentModule {
@@ -55,17 +99,21 @@ export class PostgresAgentModule implements AgentModule {
   ) {}
 
   async provision(organizationId: OrganizationId): Promise<void> {
-    if (this.config.activeEngineKind === 'ai-sdk' && !this.config.aiSdkRevisionId) {
-      throw new Error('AI SDK Agent Revision is required when the AI SDK Engine is active');
+    const hasContextRevision = this.config.contextArtifactRevisionId !== undefined;
+    const hasContextPolicy = this.config.contextPolicyRevision !== undefined;
+    if (hasContextRevision !== hasContextPolicy) {
+      throw new Error('Context-enabled Agent Revision and Context Policy must be configured together');
     }
-    if (this.config.toolsEnabled && !this.config.toolRevisionId) {
-      throw new Error('Tool-enabled Agent Revision is required when Tool Runtime is active');
+    const configuredRevisionIds = [
+      this.config.echoRevisionId,
+      this.config.aiSdkRevisionId,
+      this.config.toolRevisionId,
+      this.config.contextArtifactRevisionId,
+    ];
+    if (!configuredRevisionIds.includes(this.config.activeRevisionId)) {
+      throw new Error('Active Development Agent Revision must be provisioned');
     }
-    const activeRevisionId = this.config.toolsEnabled
-      ? this.config.toolRevisionId!
-      : this.config.activeEngineKind === 'ai-sdk'
-        ? this.config.aiSdkRevisionId!
-        : this.config.echoRevisionId;
+    const activeRevisionId = this.config.activeRevisionId;
     const client = await this.pool.connect();
     try {
       await client.query('BEGIN');
@@ -96,28 +144,20 @@ export class PostgresAgentModule implements AgentModule {
         );
       }
       if (this.config.toolRevisionId) {
-        await client.query(
-          `INSERT INTO agent_revisions (
-             id, organization_id, agent_id, revision_number,
-             engine_kind, engine_version, status, model_requirement
-           ) VALUES ($1, $2, $3, 3, 'ai-sdk', '1', 'published', $4)
-           ON CONFLICT (id) DO NOTHING`,
-          [this.config.toolRevisionId, organizationId, this.config.agentId,
-            JSON.stringify({ streamingText: true, toolCalling: true })],
-        );
-        const stored = await client.query<RevisionRow>(
-          `SELECT r.id AS revision_id, r.engine_kind, r.engine_version, r.model_requirement
-           FROM agent_revisions r
-           WHERE r.organization_id = $1 AND r.agent_id = $2
-             AND r.id = $3 AND r.revision_number = 3 AND r.status = 'published'`,
-          [organizationId, this.config.agentId, this.config.toolRevisionId],
-        );
-        const revision = stored.rows[0];
-        if (revision?.engine_kind !== 'ai-sdk' || revision.engine_version !== '1'
-          || revision.model_requirement?.streamingText !== true
-          || revision.model_requirement.toolCalling !== true) {
-          throw new Error(`Tool-enabled Agent Revision ${this.config.toolRevisionId} conflicts with immutable configuration`);
-        }
+        await provisionGovernedRevision(client, organizationId, this.config.agentId, {
+          revisionId: this.config.toolRevisionId,
+          revisionNumber: 3,
+          contextPolicyRevision: null,
+          description: 'Tool-enabled',
+        });
+      }
+      if (this.config.contextArtifactRevisionId && this.config.contextPolicyRevision) {
+        await provisionGovernedRevision(client, organizationId, this.config.agentId, {
+          revisionId: this.config.contextArtifactRevisionId,
+          revisionNumber: 4,
+          contextPolicyRevision: this.config.contextPolicyRevision,
+          description: 'Context-enabled',
+        });
       }
       // 临时开发激活策略：Feature Flag 选择不可变 Revision；正式发布/回滚流程留待 Agent Admin Slice。
       await client.query(
@@ -137,7 +177,7 @@ export class PostgresAgentModule implements AgentModule {
   async resolveDefault(organizationId: OrganizationId): Promise<ResolvedAgentRevision> {
     const result = await this.pool.query<RevisionRow>(
       `SELECT a.id AS agent_id, r.id AS revision_id, r.engine_kind,
-              r.engine_version, r.model_requirement
+              r.engine_version, r.model_requirement, r.context_policy_revision
        FROM agents a
        JOIN agent_revisions r
          ON r.organization_id = a.organization_id
@@ -167,6 +207,9 @@ export class PostgresAgentModule implements AgentModule {
           streamingText: true,
           ...(row.model_requirement.toolCalling === true ? { toolCalling: true as const } : {}),
         },
+        ...(row.context_policy_revision === null
+          ? {}
+          : { contextPolicyRevision: row.context_policy_revision as ContextPolicyRevision }),
       };
     }
     throw new Error('Development Agent Revision is incompatible');

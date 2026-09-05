@@ -1,4 +1,4 @@
-import { agentId, agentRevisionId, PostgresAgentModule } from '@cmaster/agents';
+import { agentRevisionId, PostgresAgentModule } from '@cmaster/agents';
 import { PostgresConversationModule } from '@cmaster/conversations';
 import {
   AiSdkAgentEngine,
@@ -33,7 +33,7 @@ import {
 } from '@cmaster/identity';
 import { buildApi } from './app.js';
 import { GovernedAgentToolRuntime } from './governed-agent-tools.js';
-import { loadServerConfig } from './config.js';
+import { loadServerConfig, resolveDevelopmentAgentConfig } from './config.js';
 import { PostgresConnection } from './postgres.js';
 import {
   Slice3DevelopmentEntitlements,
@@ -55,17 +55,10 @@ const identity = new PostgresDevelopmentIdentity(database.pool, {
   principalId: principalId(config.developmentIdentity.principalId),
   principalDisplayName: config.developmentIdentity.principalDisplayName,
 });
-const agents = new PostgresAgentModule(database.pool, {
-  agentId: agentId(config.developmentIdentity.agentId),
-  echoRevisionId: agentRevisionId(config.developmentIdentity.echoAgentRevisionId),
-  ...(config.features.aiSdkRuntime ? {
-    aiSdkRevisionId: agentRevisionId(config.developmentIdentity.aiSdkAgentRevisionId),
-    toolRevisionId: agentRevisionId(config.developmentIdentity.toolAgentRevisionId),
-  } : {}),
-  activeEngineKind: config.features.aiSdkRuntime ? 'ai-sdk' : 'echo',
-  toolsEnabled: config.features.toolRuntime,
-  name: 'Development Agent',
-});
+const agents = new PostgresAgentModule(
+  database.pool,
+  resolveDevelopmentAgentConfig(config),
+);
 const conversations = new PostgresConversationModule(database.pool);
 const execution = new PostgresExecutionModule(database.pool);
 
@@ -103,6 +96,9 @@ if (config.modelRuntime) {
       dataHandlingTier: 'development',
       costTier: 'standard',
       capabilities: config.modelRuntime.primary.capabilities,
+      ...(config.modelRuntime.primary.contextLimits
+        ? { contextLimits: config.modelRuntime.primary.contextLimits }
+        : {}),
     },
     ...(config.modelRuntime.fallback ? [{
       id: modelProfileId(config.modelRuntime.fallback.profileId),
@@ -114,6 +110,9 @@ if (config.modelRuntime) {
       dataHandlingTier: 'development',
       costTier: 'standard',
       capabilities: config.modelRuntime.fallback.capabilities,
+      ...(config.modelRuntime.fallback.contextLimits
+        ? { contextLimits: config.modelRuntime.fallback.contextLimits }
+        : {}),
     }] : []),
   ];
   await models.provision(identity.resolveRequest().organizationId, profiles);

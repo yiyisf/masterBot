@@ -196,7 +196,7 @@ npm run contracts:generate
 npm run contracts:check
 ```
 
-完整配置和启动顺序见 [`docs/engineering/workspace-foundation.md`](./docs/engineering/workspace-foundation.md)、[`docs/engineering/run-walking-skeleton.md`](./docs/engineering/run-walking-skeleton.md) 与 [`docs/engineering/ai-sdk-runtime.md`](./docs/engineering/ai-sdk-runtime.md)。
+完整配置和启动顺序见 [`docs/engineering/workspace-foundation.md`](./docs/engineering/workspace-foundation.md)、[`docs/engineering/run-walking-skeleton.md`](./docs/engineering/run-walking-skeleton.md) 与 [`docs/engineering/ai-sdk-runtime.md`](./docs/engineering/ai-sdk-runtime.md)、[`docs/engineering/governed-tool-runtime.md`](./docs/engineering/governed-tool-runtime.md) 与 [`docs/engineering/context-artifacts.md`](./docs/engineering/context-artifacts.md)。
 
 ### 冻结的 Legacy 验证命令
 
