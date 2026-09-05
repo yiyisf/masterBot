@@ -1,4 +1,5 @@
 import type { AgentRevisionId } from '@cmaster/agents';
+import type { InvocationContext } from '@cmaster/context';
 import type { OrganizationId } from '@cmaster/identity';
 import type {
   ModelAvailableTool,
@@ -24,6 +25,7 @@ export interface EngineInvocation {
   invocationId: InvocationId;
   agentRevisionId: AgentRevisionId;
   prompt: string;
+  invocationContext?: InvocationContext;
   outputGeneration?: number;
   checkpoint?: ExecutionCheckpoint;
   resumeResponse?: InterruptResponse;
@@ -117,10 +119,22 @@ export class AiSdkAgentEngine implements AgentEngine {
 
   async *execute(input: EngineInvocation, signal: AbortSignal): AsyncIterable<EngineEvent> {
     const restoredCheckpoint = input.checkpoint;
+    if (input.invocationContext && restoredCheckpoint?.contextManifestId
+      && input.invocationContext.manifestId !== restoredCheckpoint.contextManifestId) {
+      throw new Error('Checkpoint Context Manifest does not match the Invocation Context');
+    }
     const restored = restoredCheckpoint?.toolLoop;
-    const transcript: ModelTranscriptMessage[] = restored
-      ? [...restored.providerNeutralTranscript]
+    const baseTranscript: ModelTranscriptMessage[] = input.invocationContext
+      ? input.invocationContext.messages.map((message) => message.role === 'user'
+        ? { role: 'user', text: message.text }
+        : { role: 'assistant', text: message.text, toolRequests: [] })
       : [{ role: 'user', text: input.prompt }];
+    const transcript: ModelTranscriptMessage[] = restored
+      ? [...baseTranscript, ...restored.providerNeutralTranscript]
+      : [...baseTranscript];
+    const checkpointTranscript = (): readonly ModelTranscriptMessage[] => (
+      input.invocationContext ? transcript.slice(baseTranscript.length) : transcript
+    );
     const availableTools = this.tools ? await this.tools.list(input) : undefined;
     let modelStepNumber = restored?.modelStepNumber ?? 0;
     let toolCallCount = restored?.toolCallCount ?? 0;
@@ -139,6 +153,29 @@ export class AiSdkAgentEngine implements AgentEngine {
         ...restored.remainingModelToolRequests.map((request) => ({ request })),
       ]
       : [];
+    const createCheckpoint = (
+      toolCallId: string,
+      outcome: ExecutionCheckpoint['outcome'],
+      pendingToolRequest?: ModelRequestedTool,
+    ): ExecutionCheckpoint => ({
+      schemaVersion: 1,
+      engineKind: 'ai-sdk',
+      engineVersion: '1',
+      ...(input.invocationContext
+        ? { contextManifestId: input.invocationContext.manifestId }
+        : {}),
+      toolCallId,
+      outcome,
+      toolLoop: {
+        modelStepNumber,
+        toolCallCount,
+        providerNeutralTranscript: checkpointTranscript(),
+        completedToolCallIds,
+        ...(pendingToolRequest ? { pendingToolRequest } : {}),
+        remainingModelToolRequests: pending.map((item) => item.request),
+        outputGeneration: input.outputGeneration ?? 0,
+      },
+    });
 
     while (true) {
       while (pending.length > 0) {
@@ -174,24 +211,13 @@ export class AiSdkAgentEngine implements AgentEngine {
           };
         }
         if (outcome.kind === 'interrupt' && !continuingUncertainOutcome) {
-          const checkpoint: ExecutionCheckpoint = {
-            schemaVersion: 1,
-            engineKind: 'ai-sdk',
-            engineVersion: '1',
-            toolCallId: outcome.toolCallId,
-            outcome: outcome.interruptKind === 'tool_confirmation'
+          const checkpoint = createCheckpoint(
+            outcome.toolCallId,
+            outcome.interruptKind === 'tool_confirmation'
               ? 'confirmation_required'
               : 'requires_review',
-            toolLoop: {
-              modelStepNumber,
-              toolCallCount,
-              providerNeutralTranscript: transcript,
-              completedToolCallIds,
-              pendingToolRequest: current.request,
-              remainingModelToolRequests: pending.map((item) => item.request),
-              outputGeneration: input.outputGeneration ?? 0,
-            },
-          };
+            current.request,
+          );
           yield {
             type: 'interrupt_requested',
             kind: outcome.interruptKind,
@@ -221,21 +247,7 @@ export class AiSdkAgentEngine implements AgentEngine {
         completedToolCallIds.push(outcome.toolCallId);
         yield {
           type: 'checkpoint_reached',
-          checkpoint: {
-            schemaVersion: 1,
-            engineKind: 'ai-sdk',
-            engineVersion: '1',
-            toolCallId: outcome.toolCallId,
-            outcome: 'completed',
-            toolLoop: {
-              modelStepNumber,
-              toolCallCount,
-              providerNeutralTranscript: transcript,
-              completedToolCallIds,
-              remainingModelToolRequests: pending.map((item) => item.request),
-              outputGeneration: input.outputGeneration ?? 0,
-            },
-          },
+          checkpoint: createCheckpoint(outcome.toolCallId, 'completed'),
         };
       }
 

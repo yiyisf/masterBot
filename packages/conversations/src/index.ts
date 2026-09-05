@@ -43,6 +43,21 @@ export interface MessageTrigger {
   prompt: string;
 }
 
+/** Immutable ordered history bounded by the verified Employee Trigger Message. */
+export interface ConversationHistory {
+  readonly conversationId: ConversationId;
+  readonly triggerMessageId: MessageId;
+  readonly triggerSequence: number;
+  readonly messages: readonly Message[];
+}
+
+/** Trusted, Organization-scoped Context read; missing or mismatched Trigger throws. */
+export interface ReadConversationHistory {
+  readonly organizationId: OrganizationId;
+  readonly conversationId: ConversationId;
+  readonly triggerMessageId: MessageId;
+}
+
 export interface CommandResult<Value> {
   value: Value;
   replayed: boolean;
@@ -58,6 +73,8 @@ export class IdempotencyConflictError extends Error {}
  * IdempotencyConflictError. Missing or cross-Organization resources throw the corresponding
  * not-found error. Appends serialize on the Conversation and assign a strictly increasing sequence.
  * Message listing uses the (conversationId, sequence) index and is linear in the requested limit.
+ * Controlled history reads verify the Employee Trigger in the same Organization/Conversation and
+ * return ascending immutable Messages only through its sequence; selection and budgeting stay in Context.
  */
 export interface ConversationModule {
   create(
@@ -83,6 +100,7 @@ export interface ConversationModule {
     afterSequence: number,
     limit: number,
   ): Promise<Message[]>;
+  readHistoryThrough(query: ReadConversationHistory): Promise<ConversationHistory>;
   getMessageTrigger(organizationId: OrganizationId, messageId: MessageId): Promise<MessageTrigger>;
 }
 
@@ -330,6 +348,29 @@ export class PostgresConversationModule implements ConversationModule {
       [identity.organizationId, conversationId, afterSequence, limit],
     );
     return result.rows.map(mapMessage);
+  }
+
+  async readHistoryThrough(query: ReadConversationHistory): Promise<ConversationHistory> {
+    const triggerResult = await this.pool.query<MessageRow>(
+      `SELECT * FROM messages
+       WHERE organization_id = $1 AND conversation_id = $2 AND id = $3
+         AND author_type = 'employee'`,
+      [query.organizationId, query.conversationId, query.triggerMessageId],
+    );
+    const trigger = triggerResult.rows[0];
+    if (!trigger) throw new MessageNotFoundError();
+    const history = await this.pool.query<MessageRow>(
+      `SELECT * FROM messages
+       WHERE organization_id = $1 AND conversation_id = $2 AND sequence <= $3
+       ORDER BY sequence ASC`,
+      [query.organizationId, query.conversationId, trigger.sequence],
+    );
+    return {
+      conversationId: query.conversationId,
+      triggerMessageId: query.triggerMessageId,
+      triggerSequence: trigger.sequence,
+      messages: history.rows.map(mapMessage),
+    };
   }
 
   async getMessageTrigger(organizationId: OrganizationId, messageId: MessageId): Promise<MessageTrigger> {

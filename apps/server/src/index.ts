@@ -1,6 +1,11 @@
 import { agentRevisionId, PostgresAgentModule } from '@cmaster/agents';
 import { PostgresConversationModule } from '@cmaster/conversations';
 import {
+  estimateConservativeUtf8Tokens,
+  PostgresContextBuilder,
+  slice4BaselineFixedOverheadTokens,
+} from '@cmaster/context';
+import {
   AiSdkAgentEngine,
   EchoAgentEngine,
   PostgresExecutionModule,
@@ -152,11 +157,28 @@ if (notifier instanceof PostgresRunEventNotifier) await notifier.start();
 
 const engines: AgentEngine[] = [new EchoAgentEngine()];
 if (models) engines.push(new AiSdkAgentEngine(models, governedAgentTools));
+const contextRuntime = config.features.contextArtifacts && models && governedAgentTools
+  ? {
+    agentRevisionId: agentRevisionId(config.developmentIdentity.contextArtifactAgentRevisionId),
+    builder: new PostgresContextBuilder(database.pool, conversations),
+    models,
+    resolveFixedOverheadTokens: async (input: Parameters<GovernedAgentToolRuntime['list']>[0]) => (
+      slice4BaselineFixedOverheadTokens
+      + estimateConservativeUtf8Tokens(
+        JSON.stringify(await governedAgentTools.list(input)),
+        8,
+      )
+    ),
+  }
+  : undefined;
+if (config.features.contextArtifacts && !contextRuntime) {
+  throw new Error('Context and Artifacts require a configured Model Runtime');
+}
 const runWorker = new RunWorker(execution, conversations, engines, {
   workerId: config.worker.id,
   leaseTtlMs: config.worker.leaseTtlMs,
   maxAttempts: config.worker.maxAttempts,
-});
+}, contextRuntime);
 const worker = new WorkerRuntime(database, config.features.nextArchitecture ? runWorker : undefined, {
   pollIntervalMs: config.worker.pollIntervalMs,
   concurrency: config.worker.concurrency,

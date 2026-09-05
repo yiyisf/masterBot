@@ -1,10 +1,15 @@
 import { describe, expect, it } from 'vitest';
 import {
   deriveEffectiveContextInputLimit,
+  estimateConservativeUtf8Tokens,
   slice4BaselineContextPolicy,
 } from './index.js';
 
 describe('Slice 4 baseline Context Policy', () => {
+  it('conservatively estimates UTF-8 material with explicit structural framing', () => {
+    expect(estimateConservativeUtf8Tokens('A界', 8)).toBe(12);
+  });
+
   it('applies the strictest Policy limit and model capacity before reserving safety margin', () => {
     expect(deriveEffectiveContextInputLimit(
       slice4BaselineContextPolicy,

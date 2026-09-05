@@ -1,5 +1,6 @@
 import type { AgentId, AgentRevisionId, ResolvedAgentRevision } from '@cmaster/agents';
 import type { ConversationId, MessageId } from '@cmaster/conversations';
+import type { ContextManifestId, ContextPolicyRevision } from '@cmaster/context';
 import type { OrganizationId, PrincipalId, RequestIdentity } from '@cmaster/identity';
 import type { Brand } from '@cmaster/kernel';
 import type {
@@ -29,6 +30,7 @@ export type RunEventType =
   | 'run.started'
   | 'invocation.started'
   | 'run.recovery_started'
+  | 'invocation.context_built'
   | 'interrupt.requested'
   | 'interrupt.resolved'
   | 'run.waiting'
@@ -56,7 +58,7 @@ export type RunEventType =
   | 'run.failed';
 
 export interface RunFailure {
-  code: 'engine_failed' | 'model_failed' | 'execution_limit_exceeded' | 'dispatch_attempts_exhausted' | 'output_delivery_failed';
+  code: 'engine_failed' | 'model_failed' | 'context_input_too_large' | 'context_build_failed' | 'execution_limit_exceeded' | 'dispatch_attempts_exhausted' | 'output_delivery_failed';
   message: string;
   retryable: boolean;
 }
@@ -78,6 +80,7 @@ export interface ActiveInterrupt extends Omit<ExecutionInterrupt, 'status' | 're
 export interface ExecutionCheckpoint {
   schemaVersion: 1;
   engineKind: 'echo' | 'ai-sdk';
+  contextManifestId?: ContextManifestId;
   engineVersion: '1';
   toolCallId: string;
   outcome: 'completed' | 'confirmation_required' | 'requires_review';
@@ -90,6 +93,16 @@ export interface ExecutionCheckpoint {
     remainingModelToolRequests: readonly ModelRequestedTool[];
     outputGeneration: number;
   };
+}
+
+/** Safe canonical-event projection; source bodies and hashes are deliberately absent. */
+export interface ContextBuiltMetadata {
+  manifestId: ContextManifestId;
+  invocationId: InvocationId;
+  itemCount: number;
+  summarized: boolean;
+  estimatedInputTokens: number;
+  contextPolicyRevision: ContextPolicyRevision;
 }
 
 export interface RequestInterruptCommand {

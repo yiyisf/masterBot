@@ -6,6 +6,7 @@
     { "path": "../identity" },
     { "path": "../agents" },
     { "path": "../conversations" },
+    { "path": "../context" },
     { "path": "../models" }
   ],
   "include": ["src/**/*.ts"],

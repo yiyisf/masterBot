@@ -884,7 +884,7 @@ export interface components {
             };
             failure?: {
                 /** @enum {string} */
-                code: "engine_failed" | "model_failed" | "dispatch_attempts_exhausted" | "output_delivery_failed";
+                code: "engine_failed" | "model_failed" | "context_input_too_large" | "context_build_failed" | "dispatch_attempts_exhausted" | "output_delivery_failed";
                 message: string;
                 retryable: boolean;
             };
@@ -988,7 +988,7 @@ export interface components {
                 };
                 failure?: {
                     /** @enum {string} */
-                    code: "engine_failed" | "model_failed" | "dispatch_attempts_exhausted" | "output_delivery_failed";
+                    code: "engine_failed" | "model_failed" | "context_input_too_large" | "context_build_failed" | "dispatch_attempts_exhausted" | "output_delivery_failed";
                     message: string;
                     retryable: boolean;
                 };
@@ -1067,7 +1067,7 @@ export interface components {
                 };
                 failure?: {
                     /** @enum {string} */
-                    code: "engine_failed" | "model_failed" | "dispatch_attempts_exhausted" | "output_delivery_failed";
+                    code: "engine_failed" | "model_failed" | "context_input_too_large" | "context_build_failed" | "dispatch_attempts_exhausted" | "output_delivery_failed";
                     message: string;
                     retryable: boolean;
                 };
@@ -1146,7 +1146,7 @@ export interface components {
                 };
                 failure?: {
                     /** @enum {string} */
-                    code: "engine_failed" | "model_failed" | "dispatch_attempts_exhausted" | "output_delivery_failed";
+                    code: "engine_failed" | "model_failed" | "context_input_too_large" | "context_build_failed" | "dispatch_attempts_exhausted" | "output_delivery_failed";
                     message: string;
                     retryable: boolean;
                 };

@@ -16,6 +16,7 @@
   "dependencies": {
     "@cmaster/agents": "0.0.0",
     "@cmaster/conversations": "0.0.0",
+    "@cmaster/context": "0.0.0",
     "@cmaster/identity": "0.0.0",
     "@cmaster/kernel": "0.0.0",
     "@cmaster/models": "0.0.0",

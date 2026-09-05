@@ -1,12 +1,33 @@
 import type { ConversationModule } from '@cmaster/conversations';
-import type { ModelFailure } from '@cmaster/models';
-import { ExecutionLimitExceededError, type AgentEngine, type EngineEvent } from './engine.js';
+import {
+  ContextCompressionRequiredError,
+  ContextInputTooLargeError,
+  ContextSourceIntegrityError,
+  contextInvocationId,
+  type ContextBuilder,
+  type InvocationContext,
+} from '@cmaster/context';
+import type { ModelFailure, ModelGateway } from '@cmaster/models';
+import {
+  ExecutionLimitExceededError,
+  type AgentEngine,
+  type EngineEvent,
+  type EngineInvocation,
+} from './engine.js';
 import { PostgresExecutionModule, type RunLease } from './postgres.js';
 import {
   StaleLeaseError,
   type ExecutionProgressEvent,
   type RunFailure,
 } from './types.js';
+
+/** Optional Harness composition enabled only for the pinned Context-capable Agent Revision. */
+export interface ContextExecutionRuntime {
+  agentRevisionId: RunLease['agentRevisionId'];
+  builder: ContextBuilder;
+  models: Pick<ModelGateway, 'resolveContextBudget'>;
+  resolveFixedOverheadTokens(input: EngineInvocation): Promise<number>;
+}
 
 export interface RunWorkerConfig {
   workerId: string;
@@ -24,6 +45,7 @@ export class RunWorker {
     private readonly conversations: ConversationModule,
     engines: readonly AgentEngine[],
     private readonly config: RunWorkerConfig,
+    private readonly contextRuntime?: ContextExecutionRuntime,
   ) {
     this.engines = new Map(engines.map((engine) => [`${engine.kind}:${engine.version}`, engine]));
   }
@@ -78,6 +100,59 @@ export class RunWorker {
       lease.organizationId,
       lease.messageId,
     );
+    let invocationContext: InvocationContext | undefined;
+    if (this.contextRuntime?.agentRevisionId === lease.agentRevisionId) {
+      try {
+        if (lease.contextManifestId) {
+          invocationContext = await this.contextRuntime.builder.materialize({
+            organizationId: lease.organizationId,
+            manifestId: lease.contextManifestId,
+          });
+        } else {
+          const modelBudget = await this.contextRuntime.models.resolveContextBudget({
+            organizationId: lease.organizationId,
+            requiresToolCalling: true,
+          });
+          const fixedOverheadTokens = await this.contextRuntime.resolveFixedOverheadTokens({
+            organizationId: lease.organizationId,
+            runId: lease.runId,
+            invocationId: lease.invocationId,
+            agentRevisionId: lease.agentRevisionId,
+            prompt: trigger.prompt,
+          });
+          const built = await this.contextRuntime.builder.build({
+            organizationId: lease.organizationId,
+            invocationId: contextInvocationId(lease.invocationId),
+            conversationId: lease.conversationId,
+            triggerMessageId: lease.messageId,
+            modelBudget,
+            fixedOverheadTokens,
+          });
+          await this.execution.attachContextManifest(lease, {
+            manifestId: built.manifest.id,
+            invocationId: lease.invocationId,
+            itemCount: built.manifest.itemCount,
+            summarized: built.manifest.summarized,
+            estimatedInputTokens: built.manifest.estimatedInputTokens,
+            contextPolicyRevision: built.manifest.contextPolicyRevision,
+          });
+          invocationContext = built.invocationContext;
+        }
+      } catch (error) {
+        if (error instanceof StaleLeaseError) throw error;
+        const inputTooLarge = error instanceof ContextInputTooLargeError;
+        const sourceIntegrityFailure = error instanceof ContextSourceIntegrityError;
+        const compressionRequired = error instanceof ContextCompressionRequiredError;
+        await this.execution.fail(lease, {
+          code: inputTooLarge ? 'context_input_too_large' : 'context_build_failed',
+          message: inputTooLarge
+            ? 'The required Invocation Context exceeds the approved input limit.'
+            : 'The Invocation Context could not be built.',
+          retryable: !inputTooLarge && !sourceIntegrityFailure && !compressionRequired,
+        });
+        return undefined;
+      }
+    }
     const engine = this.engines.get(`${lease.engineKind}:${lease.engineVersion}`);
     if (!engine) {
       await this.execution.fail(lease, {
@@ -128,6 +203,7 @@ export class RunWorker {
         invocationId: lease.invocationId,
         agentRevisionId: lease.agentRevisionId,
         prompt: trigger.prompt,
+        ...(invocationContext ? { invocationContext } : {}),
         outputGeneration: generation,
         ...(lease.checkpoint ? { checkpoint: lease.checkpoint } : {}),
         ...(lease.resumeResponse ? { resumeResponse: lease.resumeResponse } : {}),

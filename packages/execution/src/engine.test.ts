@@ -1,4 +1,5 @@
 import type { AgentRevisionId } from '@cmaster/agents';
+import type { ContextManifestId } from '@cmaster/context';
 import type { OrganizationId } from '@cmaster/identity';
 import type {
   ModelGateway,
@@ -178,6 +179,46 @@ describe('AiSdkAgentEngine Tool Loop', () => {
       fallbackUsed: false,
     });
     expect(events.at(-1)).toEqual({ type: 'completed' });
+  });
+});
+
+describe('AiSdkAgentEngine Invocation Context', () => {
+  it('supplies complete base history while Checkpoints retain only post-invocation deltas', async () => {
+    const models = new ToolLoopModelGateway();
+    const invokes = { value: 0 };
+    const contextualInvocation: EngineInvocation = {
+      ...invocation,
+      invocationContext: {
+        manifestId: '00000000-0000-4000-8000-000000000099' as ContextManifestId,
+        messages: [
+          { role: 'user', text: 'earlier request', trustClass: 'conversation' },
+          { role: 'assistant', text: 'earlier answer', trustClass: 'conversation' },
+          { role: 'user', text: 'trigger request', trustClass: 'conversation' },
+        ],
+      },
+    };
+    let checkpoint: ExecutionCheckpoint | undefined;
+    for await (const event of new AiSdkAgentEngine(
+      models,
+      completingTools(invokes),
+    ).execute(contextualInvocation, new AbortController().signal)) {
+      if (event.type === 'checkpoint_reached') {
+        checkpoint = event.checkpoint;
+        break;
+      }
+    }
+    if (!checkpoint) throw new Error('Context-aware checkpoint expected');
+
+    expect(models.requests[0]?.transcript?.slice(0, 3)).toEqual([
+      { role: 'user', text: 'earlier request' },
+      { role: 'assistant', text: 'earlier answer', toolRequests: [] },
+      { role: 'user', text: 'trigger request' },
+    ]);
+    expect(checkpoint.contextManifestId).toBe(contextualInvocation.invocationContext?.manifestId);
+    expect(JSON.stringify(checkpoint.toolLoop?.providerNeutralTranscript))
+      .not.toContain('earlier request');
+    expect(JSON.stringify(checkpoint.toolLoop?.providerNeutralTranscript))
+      .not.toContain('trigger request');
   });
 });
 

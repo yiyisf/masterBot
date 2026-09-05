@@ -5,7 +5,14 @@ export const runStatusSchema = z.enum([
   'accepted', 'queued', 'running', 'waiting', 'succeeded', 'failed', 'cancelled',
 ]);
 export const runFailureSchema = z.object({
-  code: z.enum(['engine_failed', 'model_failed', 'dispatch_attempts_exhausted', 'output_delivery_failed']),
+  code: z.enum([
+    'engine_failed',
+    'model_failed',
+    'context_input_too_large',
+    'context_build_failed',
+    'dispatch_attempts_exhausted',
+    'output_delivery_failed',
+  ]),
   message: z.string(),
   retryable: z.boolean(),
 });
