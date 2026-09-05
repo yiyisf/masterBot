@@ -14,6 +14,7 @@
 - [领域语言](../../CONTEXT.md) — 项目统一术语
 - [架构决策](../adr/) — 关键取舍及原因
 - [Slice 3 Governed Tool Runtime 设计](../design/slice-3-governed-tool-runtime.html) — Grill 对齐后的自包含实施设计
+- [Slice 4 Context & Artifacts 设计](../design/slice-4-context-artifacts.html) — Context 压缩、Manifest、Artifact 存储与最小消费闭环
 
 ## 架构图
 

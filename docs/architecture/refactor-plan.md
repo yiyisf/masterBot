@@ -136,25 +136,41 @@
 
 **分支**：`refactor/context-artifacts`
 
+**详细设计**：[`docs/design/slice-4-context-artifacts.html`](../design/slice-4-context-artifacts.html)
+
+**实施追踪**：[#109](https://github.com/yiyisf/masterBot/issues/109)
+
 ### 目标
 
-建立可审计 Context 和可复用工作输出。
+建立可审计、可恢复的 Invocation Context 和可复用的 Text/Markdown 工作输出，优先完成 Conversation 第二次 Run → 历史压缩 → Artifact Tool → Assistant Message 引用的主流程。
 
 ### 交付
 
-- Context Builder、Policy、Manifest 和内容 provenance/hash
-- Conversation History 选择与摘要派生
-- Artifact/Version/Content metadata
-- Local content-addressed Adapter、staging/quarantine/derivative/trash
-- ToolOutcome → Artifact reference
-- Artifact REST/权限/Range read 与 Renderer Registry
+- Context Builder、固定 baseline Context Policy、Context Manifest/Context Summary 和内容 provenance/hash
+- 以 Trigger Message sequence 为历史上界；token 阈值、较早连续历史单层摘要、最近完整 Turn 原文
+- 新的不可变 Development Agent Revision 与显式 context window/max output Model Profiles
+- Artifact/Version/Content metadata，以及 `sourceToolCallId` 幂等恢复
+- Local content-addressed Adapter：staging、UTF-8/大小检查、SHA-256、atomic promote、Blob 去重与过期 staging 清理
+- 低风险、无需确认的 `cmaster.artifact.create_text`；Harness 确定性把 ToolOutcome Artifact Reference 附加到最终 Assistant Message
+- 创建者私有的 Artifact metadata/content REST、单一 byte Range read，以及最小 Text/Markdown/unknown Renderer Registry
+- `invocation.context_built` 与 `artifact.created` 安全 Run Events；正文、hash 和 storage key 不进入 Browser Event/Trace
 
 ### 验收/退出
 
-- 第二个 Run 引用 Message/Context Manifest，不复制历史
-- Artifact 重复内容复用 Blob，版本不可覆盖
-- Worker 重启不丢已提交 Artifact
-- Storage path/key 不进入 Domain、Contract 或 UI
+- 第二个 Run 只使用截至 Trigger Message 的历史，引用 Message/Context Manifest 而不复制正文；恢复复用同一 Manifest 和 Summary
+- 超预算历史产生结构化 Context Summary + 最近完整 Turn；Trigger Message 不截断，无法容纳时明确失败
+- Artifact 重复内容在同 Organization 内复用 Blob，Version 不可覆盖，Message 固定引用确切 Version
+- Artifact 提交后、ToolOutcome 前崩溃不重复创建；Worker 重启不丢已提交 Artifact 或最终 Message 引用
+- 创建者可完整/Range 读取；同 Organization 其他 Principal 不可读取
+- Storage path/key、Prompt、Summary/Artifact 正文不进入 Domain、Contract、Run Event、UI metadata 或普通遥测
+
+### 明确延后
+
+- 文件上传与 quarantine、预览 derivative、删除/trash/完整 GC
+- 二进制 Artifact、PDF/Office/图片处理、分块或流式创建、多区间 Range
+- 跨 Organization 去重语义、共享/管理员访问、在线编辑和版本 UI
+- 语义检索、递归/分块/滚动摘要、执行中 Tool Result 压缩、Provider 服务端压缩、精确 tokenizer
+- 完整 Artifact 列表与正式员工体验；由 Slice 5 完成
 
 ## 7. Slice 5 — Employee Workspace
 

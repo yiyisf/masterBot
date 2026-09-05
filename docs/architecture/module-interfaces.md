@@ -56,7 +56,8 @@ interface ConversationModule {
 - Run 只引用 Message，不由 Conversation Module 执行。
 - Context Builder 通过受控读接口获取历史，不能直查表。
 - Slice 1 的 Browser Command 明确拆分为创建 Conversation、追加 Employee Message、以 Message Trigger 创建 Run；不提供重新耦合三者的 `/chat` Command。
-- Message 使用 Conversation 内严格递增 sequence；外部暂只接受一个 Provider-neutral Text Part。
+- Message 使用 Conversation 内严格递增 sequence；Employee 外部输入仍只接受一个 Provider-neutral Text Part。Slice 4 的 Assistant Message 可追加指向确切 Artifact Version 的 Artifact Reference Part，不复制 Artifact metadata 或内容。
+- Slice 4 为 Context Builder 提供受控历史读取：只返回同 Organization、截至 Trigger Message sequence 的不可变 Message；Conversation Module 不做选择、预算或摘要。
 
 ## 4. Execution
 
@@ -86,7 +87,7 @@ interface RunQueries {
 - Harness 只通过 Agent Engine、Tool Runtime、Context Builder、Policy、Artifact 等公开 Interface 协作。
 - Checkpoint 只在声明的安全点产生；不兼容 Engine version 必须显式失败或迁移。
 
-Slice 2 使用 `accepted | queued | running | succeeded | failed | cancelled`；Slice 3 增加非终态 `waiting`，具体原因由持久化 Interrupt 表达，Invocation 等待时为 `interrupted` 且不持有 Worker Lease。`output_ready` 是取消边界：若取消先提交则丢弃后续 Engine 输出；若输出先提交则取消太晚，继续幂等追加 Assistant Message。Tool Provider in-flight 期间暂时不可取消，Tool boundary 持久化后恢复可取消，不引入 `cancelling/completing`。Slice 2 在此 Interface 内增加按 generation 排序的聚合 output events；Slice 3 在 Tool/Interrupt 安全点写 Engine-neutral Checkpoint，Lease 恢复不得重复已完成 ToolCall。
+Slice 2 使用 `accepted | queued | running | succeeded | failed | cancelled`；Slice 3 增加非终态 `waiting`，具体原因由持久化 Interrupt 表达，Invocation 等待时为 `interrupted` 且不持有 Worker Lease。`output_ready` 是取消边界：若取消先提交则丢弃后续 Engine 输出；若输出先提交则取消太晚，继续幂等追加 Assistant Message。Tool Provider in-flight 期间暂时不可取消，Tool boundary 持久化后恢复可取消，不引入 `cancelling/completing`。Slice 2 在此 Interface 内增加按 generation 排序的聚合 output events；Slice 3 在 Tool/Interrupt 安全点写 Engine-neutral Checkpoint，Lease 恢复不得重复已完成 ToolCall。Slice 4 在 Agent Engine 前构建并固定 Context Manifest；Checkpoint 只保存 `contextManifestId` 和 Invocation 开始后的执行增量，不复制 Manifest 引用的 Message 或 Artifact 内容。最终 `output_ready` 同时固定文本和 Harness 收集的 Artifact References，以便崩溃后幂等交付同一 Assistant Message。
 
 ### Agent Engine Port
 
@@ -118,6 +119,7 @@ interface AgentModule {
 - Published Revision 不可修改；回滚是激活旧 Revision。
 - Revision 声明能力和 Policy 引用，不持有 Credential 或运行状态。
 - Run 固定实际使用的 Agent/Engine/Model/Policy 版本。
+- Slice 4 新建不可变 Development Agent Revision，固定 baseline Context Policy Revision，并在原有 Grant 上增加 `cmaster.artifact.create_text`；不得修改 Slice 3 已发布 Revision。
 
 ## 6. Models
 
@@ -139,6 +141,8 @@ interface ModelModule {
 - Slice 2 的 `ModelGateway` 在一次 Invocation 内最多尝试一个 Primary 和一个 Fallback；每次尝试都先持久化 ModelCall，AI SDK `maxRetries` 固定为 `0`。
 - Models 拥有 ModelCall，Execution 只保存实际 Profile/usage 快照；两者不跨 Module JOIN，也不建立 `model_calls → runs/invocations` 外键。
 - Profile 配置一经该 ID 使用即不可原地修改；Credential 明文不进入 Profile、Contract、Run Event 或 Trace。
+- Slice 4 使用新的不可变 Model Profile ID，显式固定 `contextWindowTokens` 与 `maxOutputTokens`。Context 输入预算同时容纳输出与安全余量，并取 Primary、可用 Fallback 和 Context Policy 限制的最小值。
+- 摘要调用仍通过 Models Module，禁用 Tool，ModelCall 标记 `purpose = context_summary` 并记录实际 Profile/usage；首版复用 Run 的 Primary 与受限 Fallback，不建设独立 Summarizer Catalog。
 
 ## 7. Tools
 
@@ -163,6 +167,7 @@ interface ToolRuntime {
 - Policy、Employee Confirmation、Credential Lease、输入校验、超时、脱敏与审计由 Runtime 协调执行；每个 Dispatch Attempt 使用有限 Lease 和 fencing，恢复复用稳定 idempotency key。
 - Slice 3 只消费通用 governed-tool Principal Entitlement，不建设本地逐 Principal/逐 Tool RBAC。
 - Tool 安装/Provider 管理不暴露在执行 Interface；Agent Skills/Legacy Parser 与完整隔离 Provider 管理后置到独立 Slice。
+- Slice 4 增加低风险、无需 Employee Confirmation 的 `cmaster.artifact.create_text` Capability，只接受 title、`plain_text | markdown` 和最多 48 KiB UTF-8 内容。Provider Adapter 由 Artifacts Module 拥有，并使用稳定 `sourceToolCallId` 调用 Artifact Module；Tools 继续只拥有通用治理与 Ledger。
 
 ## 8. Context
 
@@ -170,13 +175,18 @@ interface ToolRuntime {
 
 ```ts
 interface ContextBuilder {
-  build(request: BuildInvocationContext): Promise<InvocationContext>;
+  build(request: BuildInvocationContext): Promise<BuiltInvocationContext>;
+  materialize(request: MaterializeInvocationContext): Promise<InvocationContext>;
 }
 ```
 
-- 输入来源保留 provenance、scope、content hash 和分类。
-- 输出是 Engine-neutral 的有限投影。
-- 不拥有 Conversation 存储、Knowledge ingestion、Tool 执行或 Provider 消息格式。
+- `(organizationId, invocationId)` 唯一且幂等：已完成 Manifest 必须复用，不重新选择或摘要。
+- Message 选择上界固定为 Trigger Message sequence；Run 接受后追加的 Message 不进入该 Invocation。
+- 有效预算为 Model Profile、Primary/Fallback、Context Policy、输出预留和安全余量的交集。首版以 UTF-8 bytes 加结构开销做确定性保守估算。
+- 固定优先级为 Agent instructions/Tool contract、完整 Trigger Message、最近完整 Conversation Turns 与其可读 Text/Markdown Artifact、较早连续历史的 Context Summary。
+- Context Summary 使用固定通用结构；它和 Artifact 内容始终是低信任参考资料，不能提升为 Agent instructions。极端历史若连一次摘要请求也无法容纳则明确失败，不静默丢弃。
+- Manifest 保存来源 ID/sequence、content hash、纳入方式、预算和 Summary 引用，不复制 Message 或 Artifact 正文；恢复时重新读取并校验 hash。
+- 输出是 Engine-neutral 的有限投影；不拥有 Conversation 存储、Knowledge ingestion、Tool 执行或 Provider 消息格式。
 
 ## 9. Artifacts
 
@@ -184,9 +194,10 @@ interface ContextBuilder {
 
 ```ts
 interface ArtifactModule {
-  create(command: CreateArtifact): Promise<Artifact>;
+  create(command: CreateArtifact): Promise<ArtifactCreateResult>;
   createVersion(command: CreateArtifactVersion): Promise<Artifact>;
-  open(query: OpenArtifact): Promise<ArtifactContent>;
+  get(query: GetArtifact): Promise<ArtifactView>;
+  open(query: OpenArtifactVersion): Promise<ArtifactContent>;
   list(query: ListArtifacts): Promise<Page<ArtifactSummary>>;
 }
 ```
@@ -200,9 +211,12 @@ interface ArtifactContentStore {
 }
 ```
 
-- Domain/Contract 不暴露路径和 S3 key。
-- 写入顺序为 staging → hash/check → atomic promote → metadata commit。
-- 删除由引用检查和 GC 完成。
+- Domain/Contract 不暴露路径和 S3 key。Message、ToolOutcome 和 Run Event 使用确切 `artifactId + artifactVersionId`，不得指向可变化的 latest version。
+- Slice 4 的 Artifact 默认由 initiating Principal 私有；metadata、完整读取和 Range read 均执行同 Organization、同 Principal 权限检查。
+- 写入顺序为 staging → UTF-8/大小/media type 检查 → SHA-256 → atomic promote → ArtifactContent/Artifact/Version 单事务 metadata commit。数据库只记录已正式可用的 Content。
+- `(organizationId, sourceToolCallId)` 唯一且校验 request hash；恢复同一 ToolCall 返回原 Artifact，不同内容冲突。同 Organization、相同 bytes 和 media type 复用 ArtifactContent/Blob。
+- Slice 4 只实现 Blob、staging 清理、完整读取和单一 byte Range；quarantine、derivatives、trash、删除与完整 GC 延后，且不创建空状态或 Port。
+- Browser 只开放 metadata 与指定 Version 内容读取，不提供创建、编辑或删除 Command。删除最终仍由引用检查和 GC 完成。
 
 ## 10. Governance
 
@@ -274,6 +288,8 @@ interface StreamEnvelope<T> {
 - Domain ↔ Contract 映射集中在 API/Presenter Adapter。
 - Run Event、Output Delta 和 UI Projection 是不同模型。
 - assistant-ui/AI SDK UI/AG-UI 可替换，不改变 Harness 或历史数据。
+- Slice 4 增加 `invocation.context_built` 与 `artifact.created` 安全事件，只携带 ID、计数、策略/媒体类型和估算用量，不携带正文、hash、Prompt 或 storage key。Context Manifest/Summary 正文不提供 Browser REST。
+- Artifact 内容端点支持完整读取和单一 `bytes` Range（含 open-ended/suffix）；非法、越界或多区间请求返回 416。最小 Registry 提供安全 Text/Markdown Renderer 与未知类型 Fallback，完整体验留给 Slice 5。
 
 ## 13. Persistence、Messaging 与 Observability Ports
 

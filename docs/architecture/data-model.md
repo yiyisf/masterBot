@@ -38,7 +38,8 @@ Conversation 1 ── * Message
 
 - Message 是员工可见内容的不可变事实。
 - Conversation 可包含多次 Run 的输入与输出。
-- 后一次 Run 的 Context Manifest 引用历史 Message ID，不复制 Message 内容到 Run。
+- Employee 外部输入仍只有 Text Part；Slice 4 的 Assistant Message 可包含 Text Part 和指向确切 Artifact Version 的 Artifact Reference Part，旧 Message 不随 Artifact 新版本变化。
+- 后一次 Run 的 Context Manifest 引用历史 Message ID，不复制 Message 内容到 Run；Message Trigger 的 sequence 是该 Run 可见历史的固定上界。
 
 ### Run / Trigger
 
@@ -61,7 +62,7 @@ Run
 ├── resolvedEngineProfileId / resolvedModelProfileId
 ├── resolvedPolicyRevisionIds
 ├── startedAt / completedAt / failure
-└── lastSequence / currentCheckpointId?
+└── lastSequence / currentCheckpointId? / contextManifestId?
 ```
 
 Slice 2 的 Run 状态为：
@@ -114,11 +115,17 @@ Event 信封包含 `eventId/schemaVersion/type/timestamp/payload/causationId/cor
 
 ### Checkpoint
 
-Checkpoint 保存安全恢复所需 Working State、Engine Adapter/version、Context Manifest reference 和已完成副作用边界。Slice 3 在 Tool 完成、创建 Interrupt 前和 Confirmation 解决后的安全点保存 Provider-neutral transcript、已完成 ToolCall ID、剩余 Model Tool Request、执行计数和 output generation；恢复不得重新生成已确认请求或重复已完成 ToolCall。
+Checkpoint 保存安全恢复所需 Working State、Engine Adapter/version、Context Manifest reference 和已完成副作用边界。Slice 3 在 Tool 完成、创建 Interrupt 前和 Confirmation 解决后的安全点保存 Provider-neutral transcript、已完成 ToolCall ID、剩余 Model Tool Request、执行计数和 output generation；恢复不得重新生成已确认请求或重复已完成 ToolCall。Slice 4 后，Manifest 是基础 Invocation Context 的唯一恢复入口；Checkpoint 只保存 `contextManifestId` 与 Invocation 开始后的模型/Tool 增量，不复制 Manifest 引用的 Message 或 Artifact 内容。`output_ready` 同时固定最终 Text 和按完成顺序去重的 Artifact References。
+
+### ContextManifest / ContextSummary
+
+ContextManifest 是一次 Invocation 实际 Context 选择的不可变、Organization-scoped 记录，`(organizationId, invocationId)` 唯一。它保存 Trigger Message sequence、Context Policy version、预算/估算用量，以及有序来源项的 source ID/sequence、content hash、分类与 `verbatim | summary` 纳入方式；不复制 Message 或 Artifact 正文。
+
+ContextSummary 是对一个明确连续来源区间的有损派生内容。首版使用固定的 Employee Goal、Explicit Constraints、Established Facts、Decisions and Commitments、Relevant Artifacts、Unresolved Items 结构；它不是 Message、Memory 或 Knowledge，也不能提升来源内容的指令权限。恢复通过 Manifest 重新读取权威来源并校验 hash；已完成 Manifest 不重新选择或摘要。
 
 ### Outbox 与状态表
 
-当前状态表是查询权威；RunEvent 是时间线权威。应用事务同时写状态、Event 和 Outbox，不采用完整 Event Sourcing。
+当前状态表是查询权威；RunEvent 是时间线权威。应用事务同时写状态、Event 和 Outbox，不采用完整 Event Sourcing。Context/Execution 和 Artifact/Tools 的跨 Module 提交不使用分布式事务，分别以稳定 invocationId 与 sourceToolCallId 幂等收敛。
 
 ## 5. Agent、Model 与 Policy 版本
 
@@ -135,7 +142,9 @@ Published Revision 不可修改，保存 instructions、capability requirement�
 
 Organization 批准的 ModelProfile 描述 Provider reference、能力、成本级别和数据策略。Slice 2 每个 Organization 恰有一个 active Primary 和至多一个 active Fallback；Profile ID 代表不可变配置，Credential 只保存 opaque `credentialRef`。
 
-ModelCall 保存每次实际尝试的 Profile、route role、attempt number、是否产生输出、安全失败分类、usage 和 trace/span ID，不只保存“默认模型”。Models 拥有这些记录；Execution 只在 Run 保存最终解析的 Profile/display name、Fallback 标记和 usage 快照。为保持 Module 所有权，ModelCall 的 Run/Invocation ID 是相关标识而非跨 Module 外键。
+ModelCall 保存每次实际尝试的 Profile、route role、attempt number、purpose、是否产生输出、安全失败分类、usage 和 trace/span ID，不只保存“默认模型”。Slice 4 的 purpose 至少区分 `agent_execution | context_summary`。Models 拥有这些记录；Execution 只在 Run 保存最终解析的 Profile/display name、Fallback 标记和 usage 快照。为保持 Module 所有权，ModelCall 的 Run/Invocation ID 是相关标识而非跨 Module 外键。
+
+Slice 4 使用新 Profile ID 固定 `contextWindowTokens` 与 `maxOutputTokens`，不修改已使用 Profile。有效输入预算取 Context Policy、Primary 及可用 Fallback 中最严格的限制，并扣除输出及安全余量；AI SDK Adapter 实际施加 max output，不只在 Context Builder 中预留。
 
 ### PolicyRevision / Approval
 
@@ -166,12 +175,14 @@ Artifact 1 ── * ArtifactVersion
 ArtifactVersion * ── 1 ArtifactContent
 ```
 
-Artifact 保存种类、标题、访问 Policy 和当前版本；Version 保存 provenance、`createdByInvocationId/sourceToolCallId` 与 `contentId`；Content 保存 storage adapter、opaque key、SHA-256、media type、size 和状态。
+Artifact 保存种类、标题、访问 Policy、`createdForPrincipalId` 和当前版本；Version 保存 provenance、`createdByInvocationId/sourceToolCallId` 与 `contentId`；Content 保存 Organization、storage adapter、opaque key、SHA-256、media type、size 和状态。
 
-- Version 不可原地覆盖。
-- 多个 Version 可引用同一 Content。
+- Version 不可原地覆盖；Message 固定引用确切 Version，而不是可变化的 current version。
+- `(organizationId, sourceToolCallId)` 唯一并关联 request hash；同一 ToolCall 恢复返回原 Artifact，不同内容产生幂等冲突。
+- 多个 Version 可引用同一 Content；Slice 4 在同 Organization、相同 bytes 与 media type 时复用 Content/Blob，跨 Organization 去重不定义为 Contract。
+- Slice 4 数据库只提交已正式可用 Content：staging → check/hash → atomic promote 完成后，ArtifactContent/Artifact/Version 在同一事务提交。
 - Storage migration 只改变 Content location，不改变 Artifact/Version identity。
-- Blob 在无引用后由 GC 延迟清理。
+- Blob 在无引用后由 GC 延迟清理；quarantine、derivative、trash 和完整 GC 在有上传、预览、删除调用者后实现。
 
 ## 8. Task 与 Workflow
 
@@ -195,7 +206,7 @@ Plan 不是持久 Task。Schedule/Webhook 只产生 Trigger。Runbook 是带风�
 | agents | agents, agent_revisions, agent_drafts, eval_suites, eval_evidence |
 | models | model_profiles, model_calls, model_usage |
 | tools | tools, tool_providers, tool_calls, tool_grants, connectors, skills, skill_revisions |
-| context | context_manifests, memories, knowledge_sources/references |
+| context | context_manifests, context_manifest_items, context_summaries, memories, knowledge_sources/references |
 | artifacts | artifacts, artifact_versions, artifact_contents, derivatives |
 | automation | tasks, task_dependencies, workflows, workflow_revisions, workflow_executions, schedules |
 | governance | policy_revisions, approvals, audit_records, credential_references |
