@@ -7,6 +7,7 @@ import {
   ArtifactIdempotencyConflictError,
   ArtifactInputInvalidError,
   ArtifactNotFoundError,
+  ArtifactRangeNotSatisfiableError,
   LocalArtifactContentStore,
   PostgresArtifactModule,
 } from '@cmaster/artifacts';
@@ -100,6 +101,36 @@ describe('Artifacts Module', () => {
       artifactId: created.artifact.id,
       artifactVersionId: created.version.id,
     }))).resolves.toBe('# Launch\nReady.');
+    const closed = await restarted.open({
+      identity: owner,
+      artifactId: created.artifact.id,
+      artifactVersionId: created.version.id,
+      range: { kind: 'closed', start: 2, endInclusive: 7 },
+    });
+    expect(closed).toMatchObject({
+      totalSizeBytes: 15,
+      contentLength: 6,
+      range: { start: 2, endInclusive: 7 },
+    });
+    await expect(content(closed)).resolves.toBe('Launch');
+    await expect(content(await restarted.open({
+      identity: owner,
+      artifactId: created.artifact.id,
+      artifactVersionId: created.version.id,
+      range: { kind: 'open_ended', start: 9 },
+    }))).resolves.toBe('Ready.');
+    await expect(content(await restarted.open({
+      identity: owner,
+      artifactId: created.artifact.id,
+      artifactVersionId: created.version.id,
+      range: { kind: 'suffix', length: 6 },
+    }))).resolves.toBe('Ready.');
+    await expect(restarted.open({
+      identity: owner,
+      artifactId: created.artifact.id,
+      artifactVersionId: created.version.id,
+      range: { kind: 'closed', start: 15, endInclusive: 20 },
+    })).rejects.toBeInstanceOf(ArtifactRangeNotSatisfiableError);
 
     await expect(restarted.create({ ...command, title: 'Changed request' }))
       .rejects.toBeInstanceOf(ArtifactIdempotencyConflictError);

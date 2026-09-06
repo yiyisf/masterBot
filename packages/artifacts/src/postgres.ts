@@ -6,6 +6,7 @@ import {
   ArtifactIdempotencyConflictError,
   ArtifactInputInvalidError,
   ArtifactNotFoundError,
+  ArtifactRangeNotSatisfiableError,
   type Artifact,
   type ArtifactContentId,
   type ArtifactCreateResult,
@@ -159,6 +160,29 @@ async function findBySource(
     },
     version: row,
   };
+}
+
+function resolveRange(
+  request: NonNullable<OpenArtifactVersionQuery['range']>,
+  sizeBytes: number,
+): { start: number; endInclusive: number } {
+  if (sizeBytes === 0) throw new ArtifactRangeNotSatisfiableError();
+  if (request.kind === 'suffix') {
+    if (!Number.isSafeInteger(request.length) || request.length <= 0) {
+      throw new ArtifactRangeNotSatisfiableError();
+    }
+    return { start: Math.max(0, sizeBytes - request.length), endInclusive: sizeBytes - 1 };
+  }
+  if (!Number.isSafeInteger(request.start) || request.start < 0 || request.start >= sizeBytes) {
+    throw new ArtifactRangeNotSatisfiableError();
+  }
+  if (request.kind === 'open_ended') {
+    return { start: request.start, endInclusive: sizeBytes - 1 };
+  }
+  if (!Number.isSafeInteger(request.endInclusive) || request.endInclusive < request.start) {
+    throw new ArtifactRangeNotSatisfiableError();
+  }
+  return { start: request.start, endInclusive: Math.min(request.endInclusive, sizeBytes - 1) };
 }
 
 /** PostgreSQL metadata adapter coordinated with formally promoted local Artifact Content. */
@@ -346,10 +370,13 @@ export class PostgresArtifactModule implements ArtifactModule {
     if (!row || row.storage_adapter !== 'local-content-addressed-v1') {
       throw new ArtifactNotFoundError();
     }
+    const range = query.range ? resolveRange(query.range, row.size_bytes) : undefined;
     return {
       mediaType: row.media_type,
-      sizeBytes: row.size_bytes,
-      bytes: this.store.read(row.storage_ref),
+      totalSizeBytes: row.size_bytes,
+      contentLength: range ? range.endInclusive - range.start + 1 : row.size_bytes,
+      ...(range ? { range } : {}),
+      bytes: this.store.read(row.storage_ref, range),
     };
   }
 }

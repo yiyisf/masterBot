@@ -69,15 +69,23 @@ export interface ArtifactView {
   readonly versions: readonly ArtifactVersion[];
 }
 
+export type ArtifactByteRangeRequest =
+  | { readonly kind: 'closed'; readonly start: number; readonly endInclusive: number }
+  | { readonly kind: 'open_ended'; readonly start: number }
+  | { readonly kind: 'suffix'; readonly length: number };
+
 export interface OpenArtifactVersionQuery {
   readonly identity: RequestIdentity;
   readonly artifactId: ArtifactId;
   readonly artifactVersionId: ArtifactVersionId;
+  readonly range?: ArtifactByteRangeRequest;
 }
 
 export interface OpenedArtifactContent {
   readonly mediaType: ArtifactVersion['mediaType'];
-  readonly sizeBytes: number;
+  readonly totalSizeBytes: number;
+  readonly contentLength: number;
+  readonly range?: { readonly start: number; readonly endInclusive: number };
   readonly bytes: AsyncIterable<Uint8Array>;
 }
 
@@ -92,6 +100,7 @@ export interface ArtifactModule {
 export class ArtifactInputInvalidError extends Error {}
 export class ArtifactIdempotencyConflictError extends Error {}
 export class ArtifactNotFoundError extends Error {}
+export class ArtifactRangeNotSatisfiableError extends Error {}
 
 export function artifactId(value: string): ArtifactId {
   return value as ArtifactId;

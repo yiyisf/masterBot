@@ -24,7 +24,10 @@ export interface StoredArtifactContent {
 /** Content storage seam; references are opaque outside the owning Artifacts adapter. */
 export interface ArtifactContentStore {
   write(input: StoreArtifactContent): Promise<StoredArtifactContent>;
-  read(storageRef: string): AsyncIterable<Uint8Array>;
+  read(
+    storageRef: string,
+    range?: { readonly start: number; readonly endInclusive: number },
+  ): AsyncIterable<Uint8Array>;
   cleanupStaging(olderThan: Date): Promise<number>;
 }
 
@@ -83,7 +86,10 @@ export class LocalArtifactContentStore implements ArtifactContentStore {
     };
   }
 
-  async *read(storageRef: string): AsyncIterable<Uint8Array> {
+  async *read(
+    storageRef: string,
+    range?: { readonly start: number; readonly endInclusive: number },
+  ): AsyncIterable<Uint8Array> {
     if (!/^blobs\/sha256\/[0-9a-f]{2}\/[0-9a-f]{2}\/[0-9a-f]{64}$/.test(storageRef)) {
       throw new Error('Stored Artifact reference is invalid');
     }
@@ -91,7 +97,9 @@ export class LocalArtifactContentStore implements ArtifactContentStore {
     const expectedHash = storageRef.slice(storageRef.lastIndexOf('/') + 1);
     const actualHash = createHash('sha256').update(bytes).digest('hex');
     if (actualHash !== expectedHash) throw new Error('Stored Artifact content failed integrity validation');
-    yield bytes;
+    yield range
+      ? bytes.subarray(range.start, range.endInclusive + 1)
+      : bytes;
   }
 
   async cleanupStaging(olderThan: Date): Promise<number> {

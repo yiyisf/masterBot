@@ -76,6 +76,7 @@ const conversations = new PostgresConversationModule(database.pool);
 const execution = new PostgresExecutionModule(database.pool);
 
 let models: ModelGateway | undefined;
+let artifacts: PostgresArtifactModule | undefined;
 let governedAgentTools: GovernedAgentToolRuntime | undefined;
 let toolConfirmationCoordinator: ToolConfirmationCoordinator | undefined;
 if (config.features.nextArchitecture) await identity.provision();
@@ -137,7 +138,7 @@ if (config.features.toolRuntime) {
   const organizationId = identity.resolveRequest().organizationId;
   const approvals = new PostgresApprovalModule(database.pool);
   const catalog = new PostgresToolCatalog(database.pool);
-  const artifacts = config.features.contextArtifacts
+  artifacts = config.features.contextArtifacts
     ? new PostgresArtifactModule(database.pool, config.artifactStorageRoot)
     : undefined;
   const providers = [
@@ -221,6 +222,7 @@ const api = config.role === 'worker' ? undefined : buildApi({
   database,
   ...(config.features.nextArchitecture ? {
     runApi: { identity, agents, conversations, execution, notifier },
+    ...(artifacts ? { artifactApi: { identity, artifacts } } : {}),
     ...(toolConfirmationCoordinator ? { toolConfirmationCoordinator } : {}),
   } : {}),
 });

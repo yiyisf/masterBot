@@ -8,6 +8,7 @@ import {
 } from '@cmaster/contracts';
 import { useParams } from 'next/navigation';
 import { useCallback, useEffect, useReducer, useState } from 'react';
+import { ArtifactCard } from '../../../../features/artifacts/artifact-card';
 import { applyRunEvent, projectionFromSnapshot, type RunProjection } from '../../../../lib/run-projection';
 
 const apiUrl = process.env.NEXT_PUBLIC_CMASTER_API_URL ?? 'http://localhost:3100';
@@ -209,10 +210,16 @@ export default function RunPage() {
         {messages.map((message) => (
           <article className="message" key={message.id}>
             <strong>{message.author}</strong>
-            <p>{message.parts
-              .filter((part) => part.type === 'text')
-              .map((part) => part.text)
-              .join('')}</p>
+            {message.parts.map((part, index) => part.type === 'text'
+              ? <p key={`text-${index}`}>{part.text}</p>
+              : (
+                <ArtifactCard
+                  key={part.artifactVersionId}
+                  apiUrl={apiUrl}
+                  artifactId={part.artifactId}
+                  artifactVersionId={part.artifactVersionId}
+                />
+              ))}
           </article>
         ))}
       </section>

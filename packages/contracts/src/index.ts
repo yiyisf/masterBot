@@ -1,4 +1,18 @@
-export { createContractClient, type ContractClient } from '#internal/client';
+export {
+  createContractClient,
+  readArtifactVersionContent,
+  type ContractClient,
+} from '#internal/client';
+export {
+  artifactContentHeadersSchema,
+  artifactMediaTypeSchema,
+  artifactSchema,
+  artifactVersionSchema,
+  artifactViewSchema,
+  type ArtifactContract,
+  type ArtifactVersionContract,
+  type ArtifactViewContract,
+} from '#internal/artifacts';
 export {
   appendMessageRequestSchema,
   artifactReferenceMessagePartSchema,
