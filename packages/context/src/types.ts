@@ -58,10 +58,16 @@ export function deriveEffectiveContextInputLimit(
 }
 
 export type ContextManifestId = Brand<string, 'ContextManifestId'>;
+export type ContextRunId = Brand<string, 'ContextRunId'>;
 export type ContextInvocationId = Brand<string, 'ContextInvocationId'>;
 export type ContextArtifactVersionId = Brand<string, 'ContextArtifactVersionId'>;
 export type ContextSummaryId = Brand<string, 'ContextSummaryId'>;
 export type ContextSourceHash = Brand<string, 'ContextSourceHash'>;
+
+/** Converts an Execution-owned Run reference at the Context boundary. */
+export function contextRunId(value: string): ContextRunId {
+  return value as ContextRunId;
+}
 
 /** Converts an Execution-owned Invocation reference at the Context boundary. */
 export function contextInvocationId(value: string): ContextInvocationId {
@@ -87,7 +93,7 @@ export type ContextManifestItem =
     readonly sourceHash: ContextSourceHash;
     readonly provenance: 'employee_message' | 'assistant_message';
     readonly trustClass: 'conversation';
-    readonly inclusionMode: 'verbatim';
+    readonly inclusionMode: 'verbatim' | 'summary';
   }
   | {
     readonly sourceKind: 'artifact';
@@ -119,14 +125,14 @@ export interface ContextManifest {
   readonly estimatedInputTokens: number;
   readonly fixedOverheadTokens: number;
   readonly itemCount: number;
-  readonly summarized: false;
+  readonly summarized: boolean;
   readonly items: readonly ContextManifestItem[];
   readonly createdAt: Date;
 }
 
 /** One Engine-neutral materialized Message with an explicit trust classification. */
 export interface InvocationContextMessage {
-  readonly role: 'user' | 'assistant';
+  readonly role: 'user' | 'assistant' | 'reference';
   readonly text: string;
   readonly trustClass: 'conversation' | 'reference';
 }
@@ -145,6 +151,10 @@ export interface BuildInvocationContext {
   triggerMessageId: MessageId;
   modelBudget: ContextModelBudget;
   fixedOverheadTokens: number;
+  summaryExecution?: {
+    runId: ContextRunId;
+    signal: AbortSignal;
+  };
 }
 
 /** Atomic build result containing auditable metadata and its verified materialization. */
@@ -173,6 +183,13 @@ export interface ContextBuilder {
 export class ContextInputTooLargeError extends Error {}
 /** Temporary explicit failure until the over-budget Summary path is implemented. */
 export class ContextCompressionRequiredError extends Error {}
+/** Classified internal Context build failure; public Run output remains aggregate and safe. */
+export class ContextBuildFailureError extends Error {
+  constructor(readonly retryable: boolean) {
+    super('Invocation Context build failed');
+  }
+}
+
 /** Safe aggregate for missing or changed Context sources and malformed Manifest data. */
 export class ContextSourceIntegrityError extends Error {}
 

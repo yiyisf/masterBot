@@ -10,6 +10,7 @@ import {
 } from '@cmaster/conversations';
 import {
   contextInvocationId,
+  contextRunId,
   PostgresContextBuilder,
   slice4BaselineContextPolicy,
   type InvocationContext,
@@ -22,7 +23,12 @@ import {
   type EngineInvocation,
   type EngineEvent,
 } from '@cmaster/execution';
-import { modelProfileId } from '@cmaster/models';
+import {
+  modelProfileId,
+  type ModelEvent,
+  type ModelGateway,
+  type ModelInvocationRequest,
+} from '@cmaster/models';
 import {
   organizationId,
   PostgresDevelopmentIdentity,
@@ -42,6 +48,39 @@ beforeAll(async () => {
 afterAll(async () => {
   await pool.end();
 });
+
+const workerSummary = `## Employee Goal\nContinue the work\n## Explicit Constraints\nNone\n## Established Facts\nEarlier work exists\n## Decisions and Commitments\nKeep the boundary\n## Relevant Artifacts\nNone\n## Unresolved Items\nComplete follow-up`;
+
+class SummaryGateway implements Pick<ModelGateway, 'stream'> {
+  readonly requests: ModelInvocationRequest[] = [];
+
+  constructor(private readonly fail = false) {}
+
+  async *stream(request: ModelInvocationRequest): AsyncIterable<ModelEvent> {
+    this.requests.push(request);
+    const callId = randomUUID() as never;
+    const profile = { id: modelProfileId(randomUUID()), displayName: 'Summary Model' };
+    yield { type: 'model_selected', callId, profile, fallback: false };
+    if (this.fail) {
+      yield {
+        type: 'model_failed',
+        callId,
+        profile,
+        failure: { code: 'stream_interrupted', message: 'safe failure', retryable: true },
+        hadOutput: false,
+      };
+      return;
+    }
+    yield { type: 'text_delta', text: workerSummary };
+    yield {
+      type: 'model_completed',
+      callId,
+      profile,
+      usage: { inputTokens: 1_700, outputTokens: 160, totalTokens: 1_860 },
+      fallbackUsed: false,
+    };
+  }
+}
 
 class CapturingEngine implements AgentEngine {
   readonly kind = 'ai-sdk' as const;
@@ -106,14 +145,25 @@ describe('Context-aware Worker execution', () => {
     })).value;
     await conversations.appendEmployeeMessage(requestIdentity, conversation.id, {
       commandId: commandId(randomUUID()),
-      parts: [{ type: 'text', text: 'initial request' }],
+      parts: [{ type: 'text', text: `older request ${'a'.repeat(700)}` }],
     });
     await conversations.appendAssistantMessage({
       organizationId: requestIdentity.organizationId,
       conversationId: conversation.id,
       sourceRunId: randomUUID(),
       sourceInvocationId: randomUUID(),
-      parts: [{ type: 'text', text: 'initial answer' }],
+      parts: [{ type: 'text', text: `older answer ${'b'.repeat(700)}` }],
+    });
+    await conversations.appendEmployeeMessage(requestIdentity, conversation.id, {
+      commandId: commandId(randomUUID()),
+      parts: [{ type: 'text', text: `initial request ${'c'.repeat(300)}` }],
+    });
+    await conversations.appendAssistantMessage({
+      organizationId: requestIdentity.organizationId,
+      conversationId: conversation.id,
+      sourceRunId: randomUUID(),
+      sourceInvocationId: randomUUID(),
+      parts: [{ type: 'text', text: `initial answer ${'d'.repeat(300)}` }],
     });
     const trigger = (await conversations.appendEmployeeMessage(requestIdentity, conversation.id, {
       commandId: commandId(randomUUID()),
@@ -127,11 +177,12 @@ describe('Context-aware Worker execution', () => {
       conversationId: conversation.id,
       agent: await agents.resolveDefault(requestIdentity.organizationId),
     });
-    const builder = new PostgresContextBuilder(pool, conversations);
+    const summaryModels = new SummaryGateway();
+    const builder = new PostgresContextBuilder(pool, conversations, summaryModels);
     const modelBudget = {
       primaryProfileId: modelProfileId(randomUUID()),
-      strictestContextWindowTokens: 65_536,
-      maximumOutputTokens: 16_384,
+      strictestContextWindowTokens: 6_296,
+      maximumOutputTokens: 100,
     };
     const precommitted = await builder.build({
       organizationId: requestIdentity.organizationId,
@@ -140,6 +191,10 @@ describe('Context-aware Worker execution', () => {
       triggerMessageId: trigger.id,
       modelBudget,
       fixedOverheadTokens: 128,
+      summaryExecution: {
+        runId: contextRunId(accepted.value.id),
+        signal: new AbortController().signal,
+      },
     });
 
     await conversations.appendEmployeeMessage(requestIdentity, conversation.id, {
@@ -174,12 +229,118 @@ describe('Context-aware Worker execution', () => {
     expect(contextEvent?.data).toEqual({
       manifestId: precommitted.manifest.id,
       invocationId: accepted.value.rootInvocation.id,
-      itemCount: 3,
-      summarized: false,
+      itemCount: 6,
+      summarized: true,
       estimatedInputTokens: precommitted.manifest.estimatedInputTokens,
       contextPolicyRevision: 'slice4-context-v1',
     });
+    expect(summaryModels.requests).toHaveLength(1);
     expect(JSON.stringify(contextEvent)).not.toContain('initial request');
+    expect(JSON.stringify(contextEvent)).not.toContain(workerSummary);
     expect(JSON.stringify(contextEvent)).not.toContain(precommitted.manifest.items[0]?.sourceHash);
+
+    const oversizedTrigger = (await conversations.appendEmployeeMessage(
+      requestIdentity,
+      conversation.id,
+      {
+        commandId: commandId(randomUUID()),
+        parts: [{ type: 'text', text: `mandatory ${'x'.repeat(500)}` }],
+      },
+    )).value;
+    const oversizedRun = await execution.acceptRun(requestIdentity, {
+      commandId: runCommandId(randomUUID()),
+      messageId: oversizedTrigger.id,
+      conversationId: conversation.id,
+      agent: await agents.resolveDefault(requestIdentity.organizationId),
+    });
+    const unusedEngine = new CapturingEngine();
+    const rejectingWorker = new RunWorker(
+      execution,
+      conversations,
+      [unusedEngine],
+      { workerId: `context-worker-${randomUUID()}`, leaseTtlMs: 1_000, maxAttempts: 3 },
+      {
+        agentRevisionId: contextRevisionId,
+        builder,
+        models: {
+          resolveContextBudget: async () => ({
+            primaryProfileId: modelProfileId(randomUUID()),
+            strictestContextWindowTokens: 4_500,
+            maximumOutputTokens: 100,
+          }),
+        },
+        resolveFixedOverheadTokens: async () => 250,
+      },
+    );
+    await rejectingWorker.relayOne();
+    await rejectingWorker.executeOne();
+
+    expect(unusedEngine.invocation).toBeUndefined();
+    await expect(execution.getRun(requestIdentity, oversizedRun.value.id)).resolves.toMatchObject({
+      status: 'failed',
+      failure: { code: 'context_input_too_large', retryable: false },
+    });
+
+    const failingConversation = (await conversations.create(requestIdentity, {
+      commandId: commandId(randomUUID()),
+      title: 'Summary failure',
+    })).value;
+    await conversations.appendEmployeeMessage(requestIdentity, failingConversation.id, {
+      commandId: commandId(randomUUID()),
+      parts: [{ type: 'text', text: `older request ${'a'.repeat(700)}` }],
+    });
+    await conversations.appendAssistantMessage({
+      organizationId: requestIdentity.organizationId,
+      conversationId: failingConversation.id,
+      sourceRunId: randomUUID(),
+      sourceInvocationId: randomUUID(),
+      parts: [{ type: 'text', text: `older answer ${'b'.repeat(700)}` }],
+    });
+    await conversations.appendEmployeeMessage(requestIdentity, failingConversation.id, {
+      commandId: commandId(randomUUID()),
+      parts: [{ type: 'text', text: `recent request ${'c'.repeat(300)}` }],
+    });
+    await conversations.appendAssistantMessage({
+      organizationId: requestIdentity.organizationId,
+      conversationId: failingConversation.id,
+      sourceRunId: randomUUID(),
+      sourceInvocationId: randomUUID(),
+      parts: [{ type: 'text', text: `recent answer ${'d'.repeat(300)}` }],
+    });
+    const failingTrigger = (await conversations.appendEmployeeMessage(
+      requestIdentity,
+      failingConversation.id,
+      {
+        commandId: commandId(randomUUID()),
+        parts: [{ type: 'text', text: 'trigger summary failure' }],
+      },
+    )).value;
+    const failingRun = await execution.acceptRun(requestIdentity, {
+      commandId: runCommandId(randomUUID()),
+      messageId: failingTrigger.id,
+      conversationId: failingConversation.id,
+      agent: await agents.resolveDefault(requestIdentity.organizationId),
+    });
+    const failingSummaryModels = new SummaryGateway(true);
+    const failureWorker = new RunWorker(
+      execution,
+      conversations,
+      [new CapturingEngine()],
+      { workerId: `context-worker-${randomUUID()}`, leaseTtlMs: 1_000, maxAttempts: 3 },
+      {
+        agentRevisionId: contextRevisionId,
+        builder: new PostgresContextBuilder(pool, conversations, failingSummaryModels),
+        models: { resolveContextBudget: async () => modelBudget },
+        resolveFixedOverheadTokens: async () => 128,
+      },
+    );
+    await failureWorker.relayOne();
+    await failureWorker.executeOne();
+
+    expect(failingSummaryModels.requests).toHaveLength(1);
+    await expect(execution.getRun(requestIdentity, failingRun.value.id)).resolves.toMatchObject({
+      status: 'failed',
+      failure: { code: 'context_build_failed', retryable: true },
+    });
   });
 });

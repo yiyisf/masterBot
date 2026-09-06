@@ -127,7 +127,9 @@ export class AiSdkAgentEngine implements AgentEngine {
     const baseTranscript: ModelTranscriptMessage[] = input.invocationContext
       ? input.invocationContext.messages.map((message) => message.role === 'user'
         ? { role: 'user', text: message.text }
-        : { role: 'assistant', text: message.text, toolRequests: [] })
+        : message.role === 'reference'
+          ? { role: 'reference', text: message.text }
+          : { role: 'assistant', text: message.text, toolRequests: [] })
       : [{ role: 'user', text: input.prompt }];
     const transcript: ModelTranscriptMessage[] = restored
       ? [...baseTranscript, ...restored.providerNeutralTranscript]

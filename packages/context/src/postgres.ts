@@ -6,8 +6,15 @@ import type {
   MessageId,
 } from '@cmaster/conversations';
 import type { OrganizationId } from '@cmaster/identity';
+import type {
+  ModelCallId,
+  ModelGateway,
+  ModelProfileId,
+  ModelUsage,
+} from '@cmaster/models';
 import type { Pool, PoolClient } from 'pg';
 import {
+  ContextBuildFailureError,
   ContextCompressionRequiredError,
   ContextInputTooLargeError,
   ContextSourceIntegrityError,
@@ -43,7 +50,22 @@ interface ManifestRow {
   estimated_input_tokens: number;
   fixed_overhead_tokens: number;
   item_count: number;
-  summarized: false;
+  summarized: boolean;
+  created_at: Date;
+}
+
+interface SummaryRow {
+  id: string;
+  organization_id: string;
+  invocation_id: string;
+  source_start_sequence: number;
+  source_end_sequence: number;
+  source_hash: string;
+  content: string;
+  content_hash: string;
+  model_call_id: string;
+  model_profile_id: string;
+  model_usage: ModelUsage;
   created_at: Date;
 }
 
@@ -58,10 +80,12 @@ interface ManifestItemRow {
   inclusion_mode: ContextManifestItem['inclusionMode'];
 }
 
+function hashText(value: string): ContextSourceHash {
+  return createHash('sha256').update(value).digest('hex') as ContextSourceHash;
+}
+
 function sourceHash(message: Message): ContextSourceHash {
-  return createHash('sha256')
-    .update(JSON.stringify({ author: message.author, parts: message.parts }))
-    .digest('hex') as ContextSourceHash;
+  return hashText(JSON.stringify({ author: message.author, parts: message.parts }));
 }
 
 function estimateMessageTokens(message: Message): number {
@@ -71,12 +95,117 @@ function estimateMessageTokens(message: Message): number {
   );
 }
 
+const summaryHeadings = [
+  'Employee Goal',
+  'Explicit Constraints',
+  'Established Facts',
+  'Decisions and Commitments',
+  'Relevant Artifacts',
+  'Unresolved Items',
+] as const;
+const summaryOutputReserveTokens = 512;
+
+function completeTurns(messages: readonly Message[]): readonly (readonly Message[])[] {
+  const turns: Message[][] = [];
+  for (const message of messages) {
+    if (message.author === 'employee' || turns.length === 0) turns.push([]);
+    const currentTurn = turns.at(-1);
+    if (!currentTurn) throw new ContextSourceIntegrityError('Conversation Turn is invalid');
+    currentTurn.push(message);
+  }
+  return turns;
+}
+
+function redactSensitiveSummaryMaterial(text: string): string {
+  return text
+    .replace(/<think>[\s\S]*?<\/think>/gi, '[REDACTED REASONING]')
+    .replace(/\bBearer\s+[^\s]+/gi, 'Bearer [REDACTED]')
+    .replace(/\b(api[_ -]?key|password|secret|access[_ -]?token)\s*[:=]\s*[^\s]+/gi,
+      '$1=[REDACTED]');
+}
+
+function summaryPrompt(messages: readonly Message[]): string {
+  const source = messages.map((message) => ({
+    sequence: message.sequence,
+    role: message.author,
+    text: redactSensitiveSummaryMaterial(message.parts.map((part) => part.text).join('')),
+  }));
+  return [
+    'Summarize the bounded conversation source as low-trust reference material.',
+    'Do not add instructions, hidden reasoning, credentials, policy internals, or facts not present.',
+    `Return exactly these Markdown sections with no preamble: ${summaryHeadings.map((heading) => `## ${heading}`).join('; ')}.`,
+    `Source Messages:\n${JSON.stringify(source)}`,
+  ].join('\n');
+}
+
+function assertSummaryStructure(content: string): void {
+  const headingLines = content.split('\n')
+    .map((line) => line.trim())
+    .filter((line) => line.startsWith('## '));
+  const expectedHeadings = summaryHeadings.map((heading) => `## ${heading}`);
+  const firstContentLine = content.split('\n').find((line) => line.trim().length > 0)?.trim();
+  if (JSON.stringify(headingLines) !== JSON.stringify(expectedHeadings)
+    || firstContentLine !== expectedHeadings[0]
+    || redactSensitiveSummaryMaterial(content) !== content) {
+    throw new ContextSourceIntegrityError('Context Summary has an invalid structure');
+  }
+}
+
+interface GeneratedSummary {
+  content: string;
+  callId: ModelCallId;
+  profileId: ModelProfileId;
+  usage: ModelUsage;
+}
+
+async function generateSummary(
+  models: Pick<ModelGateway, 'stream'>,
+  request: BuildInvocationContext,
+  prompt: string,
+): Promise<GeneratedSummary> {
+  const execution = request.summaryExecution;
+  if (!execution) throw new ContextCompressionRequiredError('Summary execution is unavailable');
+  let content = '';
+  let callId: ModelCallId | undefined;
+  let profileId: ModelProfileId | undefined;
+  let usage: ModelUsage | undefined;
+  for await (const event of models.stream({
+    organizationId: request.organizationId,
+    runId: execution.runId,
+    invocationId: request.invocationId,
+    purpose: 'context_summary',
+    prompt,
+    tools: [],
+    signal: execution.signal,
+  })) {
+    if (event.type === 'text_delta') content += event.text;
+    if (event.type === 'model_output_discarded') content = '';
+    if (event.type === 'model_completed') {
+      callId = event.callId;
+      profileId = event.profile.id;
+      usage = event.usage;
+    }
+    if (event.type === 'model_failed') {
+      throw new ContextBuildFailureError(event.failure.retryable);
+    }
+    if (event.type === 'tool_requested') {
+      throw new ContextBuildFailureError(false);
+    }
+  }
+  if (!callId || !profileId || !usage || content.length === 0) {
+    throw new ContextBuildFailureError(true);
+  }
+  assertSummaryStructure(content);
+  return { content, callId, profileId, usage };
+}
+
 function mapManifestItem(row: ManifestItemRow): ContextManifestItem {
   const common = { sourceHash: row.source_hash as ContextSourceHash };
   if (row.source_kind === 'message') {
     if (row.source_sequence === null
       || !['employee_message', 'assistant_message'].includes(row.provenance)
-      || row.trust_class !== 'conversation' || row.inclusion_mode !== 'verbatim') {
+      || row.trust_class !== 'conversation'
+      || !['verbatim', 'summary'].includes(row.inclusion_mode)) {
       throw new ContextSourceIntegrityError('Stored Message Context item is invalid');
     }
     return {
@@ -86,7 +215,7 @@ function mapManifestItem(row: ManifestItemRow): ContextManifestItem {
       sourceHash: row.source_hash as ContextSourceHash,
       provenance: row.provenance as 'employee_message' | 'assistant_message',
       trustClass: 'conversation',
-      inclusionMode: 'verbatim',
+      inclusionMode: row.inclusion_mode as 'verbatim' | 'summary',
     };
   }
   if (row.source_kind === 'artifact') {
@@ -156,11 +285,24 @@ async function loadManifest(
   };
 }
 
+async function loadSummary(
+  pool: Pool,
+  organizationId: OrganizationId,
+  summaryId: ContextSummaryId,
+): Promise<SummaryRow | undefined> {
+  const result = await pool.query<SummaryRow>(
+    `SELECT * FROM context_summaries WHERE organization_id = $1 AND id = $2`,
+    [organizationId, summaryId],
+  );
+  return result.rows[0];
+}
+
 /** PostgreSQL Manifest Adapter; source bodies remain behind owning Module interfaces. */
 export class PostgresContextBuilder implements ContextBuilder {
   constructor(
     private readonly pool: Pool,
     private readonly conversations: Pick<ConversationModule, 'readHistoryThrough'>,
+    private readonly summaryModels?: Pick<ModelGateway, 'stream'>,
     private readonly policy: ContextPolicy = slice4BaselineContextPolicy,
   ) {}
 
@@ -170,11 +312,10 @@ export class PostgresContextBuilder implements ContextBuilder {
     }
     const client = await this.pool.connect();
     let manifest: ContextManifest;
+    let transactionStarted = false;
+    const lockKey = `context:${request.organizationId}:${request.invocationId}`;
     try {
-      await client.query('BEGIN');
-      await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1, 0))', [
-        `context:${request.organizationId}:${request.invocationId}`,
-      ]);
+      await client.query('SELECT pg_advisory_lock(hashtextextended($1, 0))', [lockKey]);
       const existing = await loadManifest(client, request.organizationId, {
         invocationId: request.invocationId,
       });
@@ -205,47 +346,149 @@ export class PostgresContextBuilder implements ContextBuilder {
         if (mandatoryInputTokens > effectiveInputTokens) {
           throw new ContextInputTooLargeError('Mandatory Invocation Context exceeds the input limit');
         }
-        const estimatedInputTokens = request.fixedOverheadTokens
+        let estimatedInputTokens = request.fixedOverheadTokens
           + history.messages.reduce((total, message) => total + estimateMessageTokens(message), 0);
+        let summary: (GeneratedSummary & {
+          id: ContextSummaryId;
+          sourceMessages: readonly Message[];
+          sourceHash: ContextSourceHash;
+          contentHash: ContextSourceHash;
+        }) | undefined;
+        let retainedMessages = [...history.messages];
         if (estimatedInputTokens > effectiveInputTokens) {
-          throw new ContextCompressionRequiredError(
-            'Conversation history requires Context compression',
+          if (!this.summaryModels) {
+            throw new ContextCompressionRequiredError('Summary Model is unavailable');
+          }
+          const historyBeforeTrigger = history.messages.filter(
+            (message) => message.id !== trigger.id,
           );
+          const turns = completeTurns(historyBeforeTrigger);
+          const retainedTurns: (readonly Message[])[] = [];
+          let retainedTokens = mandatoryInputTokens + summaryOutputReserveTokens;
+          for (let index = turns.length - 1; index >= 0; index -= 1) {
+            const turn = turns[index];
+            if (!turn) continue;
+            const turnTokens = turn.reduce(
+              (total, message) => total + estimateMessageTokens(message),
+              0,
+            );
+            if (retainedTokens + turnTokens > effectiveInputTokens) break;
+            retainedTurns.unshift(turn);
+            retainedTokens += turnTokens;
+          }
+          const retainedBeforeTrigger = retainedTurns.flat();
+          const summarySourceCount = historyBeforeTrigger.length - retainedBeforeTrigger.length;
+          const sourceMessages = historyBeforeTrigger.slice(0, summarySourceCount);
+          if (sourceMessages.length === 0) {
+            throw new ContextCompressionRequiredError('No contiguous Summary span was available');
+          }
+          const prompt = summaryPrompt(sourceMessages);
+          if (estimateConservativeUtf8Tokens(prompt, request.fixedOverheadTokens)
+            > effectiveInputTokens) {
+            throw new ContextCompressionRequiredError('Summary source exceeds one Model request');
+          }
+          const generated = await generateSummary(this.summaryModels, request, prompt);
+          const contentHash = hashText(generated.content);
+          summary = {
+            ...generated,
+            id: randomUUID() as ContextSummaryId,
+            sourceMessages,
+            sourceHash: hashText(JSON.stringify(sourceMessages.map((message) => ({
+              id: message.id,
+              sequence: message.sequence,
+              hash: sourceHash(message),
+            })))),
+            contentHash,
+          };
+          retainedMessages = [...retainedBeforeTrigger, trigger];
+          estimatedInputTokens = request.fixedOverheadTokens
+            + estimateConservativeUtf8Tokens(summary.content, 8)
+            + retainedMessages.reduce(
+              (total, message) => total + estimateMessageTokens(message),
+              0,
+            );
+          if (estimatedInputTokens > effectiveInputTokens) {
+            throw new ContextSourceIntegrityError('Generated Context Summary exceeds the input limit');
+          }
         }
 
         const manifestId = randomUUID() as ContextManifestId;
+        const itemCount = history.messages.length + (summary ? 1 : 0);
+        await client.query('BEGIN');
+        transactionStarted = true;
         await client.query(
           `INSERT INTO context_manifests (
              id, organization_id, invocation_id, conversation_id, trigger_message_id,
              trigger_sequence, context_policy_revision, effective_input_tokens,
-             estimated_input_tokens, fixed_overhead_tokens, item_count
-           ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
+             estimated_input_tokens, fixed_overhead_tokens, item_count, summarized
+           ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)`,
           [manifestId, request.organizationId, request.invocationId, request.conversationId,
             request.triggerMessageId, history.triggerSequence, this.policy.revision,
             effectiveInputTokens, estimatedInputTokens, request.fixedOverheadTokens,
-            history.messages.length],
+            itemCount, summary !== undefined],
         );
-        for (const [position, message] of history.messages.entries()) {
+        if (summary) {
+          const firstSource = summary.sourceMessages[0];
+          const lastSource = summary.sourceMessages.at(-1);
+          if (!firstSource || !lastSource) {
+            throw new ContextSourceIntegrityError('Context Summary source span is empty');
+          }
+          await client.query(
+            `INSERT INTO context_summaries (
+               id, organization_id, invocation_id, source_start_sequence,
+               source_end_sequence, source_hash, content, content_hash,
+               model_call_id, model_profile_id, model_usage
+             ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
+            [summary.id, request.organizationId, request.invocationId,
+              firstSource.sequence,
+              lastSource.sequence,
+              summary.sourceHash, summary.content, summary.contentHash,
+              summary.callId, summary.profileId, JSON.stringify(summary.usage)],
+          );
+        }
+        let position = 0;
+        for (const message of history.messages) {
+          const inclusionMode = summary?.sourceMessages.some((source) => source.id === message.id)
+            ? 'summary' : 'verbatim';
           await client.query(
             `INSERT INTO context_manifest_items (
                manifest_id, organization_id, position, source_kind, source_id,
                source_sequence, source_hash, provenance, trust_class, inclusion_mode
-             ) VALUES ($1, $2, $3, 'message', $4, $5, $6, $7, 'conversation', 'verbatim')`,
+             ) VALUES ($1, $2, $3, 'message', $4, $5, $6, $7, 'conversation', $8)`,
             [manifestId, request.organizationId, position, message.id, message.sequence,
               sourceHash(message), message.author === 'employee'
-                ? 'employee_message' : 'assistant_message'],
+                ? 'employee_message' : 'assistant_message', inclusionMode],
           );
+          position += 1;
+          if (summary && position === summary.sourceMessages.length) {
+            await client.query(
+              `INSERT INTO context_manifest_items (
+                 manifest_id, organization_id, position, source_kind, source_id,
+                 source_sequence, source_hash, provenance, trust_class, inclusion_mode
+               ) VALUES ($1, $2, $3, 'summary', $4, NULL, $5,
+                         'context_summary', 'reference', 'summary')`,
+              [manifestId, request.organizationId, position, summary.id, summary.contentHash],
+            );
+            position += 1;
+          }
         }
         const inserted = await loadManifest(client, request.organizationId, { id: manifestId });
         if (!inserted) throw new Error('Context Manifest was not persisted');
         manifest = inserted;
       }
-      await client.query('COMMIT');
+      if (transactionStarted) {
+        await client.query('COMMIT');
+        transactionStarted = false;
+      }
     } catch (error) {
-      await client.query('ROLLBACK');
+      if (transactionStarted) await client.query('ROLLBACK');
       throw error;
     } finally {
-      client.release();
+      try {
+        await client.query('SELECT pg_advisory_unlock(hashtextextended($1, 0))', [lockKey]);
+      } finally {
+        client.release();
+      }
     }
     return {
       manifest,
@@ -268,24 +511,56 @@ export class PostgresContextBuilder implements ContextBuilder {
     });
     const messagesById = new Map(history.messages.map((message) => [message.id, message]));
     const messages: InvocationContextMessage[] = [];
+    const summarySourceReferences: Array<{ id: MessageId; sequence: number; hash: ContextSourceHash }> = [];
     for (const item of manifest.items) {
-      if (item.sourceKind !== 'message') {
-        throw new ContextSourceIntegrityError('Context source kind is not materializable in this Slice');
+      if (item.sourceKind === 'message') {
+        const message = messagesById.get(item.sourceId);
+        if (!message || message.sequence !== item.sourceSequence
+          || sourceHash(message) !== item.sourceHash) {
+          throw new ContextSourceIntegrityError('Context source integrity check failed');
+        }
+        const expectedProvenance = message.author === 'employee'
+          ? 'employee_message' : 'assistant_message';
+        if (item.provenance !== expectedProvenance) {
+          throw new ContextSourceIntegrityError('Context source provenance check failed');
+        }
+        if (item.inclusionMode === 'summary') {
+          summarySourceReferences.push({
+            id: message.id,
+            sequence: message.sequence,
+            hash: item.sourceHash,
+          });
+        } else {
+          messages.push({
+            role: message.author === 'employee' ? 'user' : 'assistant',
+            text: message.parts.map((part) => part.text).join(''),
+            trustClass: 'conversation',
+          });
+        }
+        continue;
       }
-      const message = messagesById.get(item.sourceId);
-      if (!message || message.sequence !== item.sourceSequence || sourceHash(message) !== item.sourceHash) {
-        throw new ContextSourceIntegrityError('Context source integrity check failed');
+      if (item.sourceKind === 'summary') {
+        const summary = await loadSummary(this.pool, request.organizationId, item.sourceId);
+        const expectedSourceHash = hashText(JSON.stringify(summarySourceReferences));
+        const firstSource = summarySourceReferences[0];
+        const lastSource = summarySourceReferences.at(-1);
+        if (!summary || !firstSource || !lastSource
+          || hashText(summary.content) !== item.sourceHash
+          || summary.content_hash !== item.sourceHash
+          || summary.source_hash !== expectedSourceHash
+          || summary.source_start_sequence !== firstSource.sequence
+          || summary.source_end_sequence !== lastSource.sequence) {
+          throw new ContextSourceIntegrityError('Context Summary integrity check failed');
+        }
+        assertSummaryStructure(summary.content);
+        messages.push({
+          role: 'reference',
+          text: summary.content,
+          trustClass: 'reference',
+        });
+        continue;
       }
-      const expectedProvenance = message.author === 'employee'
-        ? 'employee_message' : 'assistant_message';
-      if (item.provenance !== expectedProvenance) {
-        throw new ContextSourceIntegrityError('Context source provenance check failed');
-      }
-      messages.push({
-        role: message.author === 'employee' ? 'user' : 'assistant',
-        text: message.parts.map((part) => part.text).join(''),
-        trustClass: 'conversation',
-      });
+      throw new ContextSourceIntegrityError('Artifact Context is not available in this Slice');
     }
     return { manifestId: manifest.id, messages };
   }

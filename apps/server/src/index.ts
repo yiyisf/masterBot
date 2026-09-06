@@ -160,7 +160,7 @@ if (models) engines.push(new AiSdkAgentEngine(models, governedAgentTools));
 const contextRuntime = config.features.contextArtifacts && models && governedAgentTools
   ? {
     agentRevisionId: agentRevisionId(config.developmentIdentity.contextArtifactAgentRevisionId),
-    builder: new PostgresContextBuilder(database.pool, conversations),
+    builder: new PostgresContextBuilder(database.pool, conversations, models),
     models,
     resolveFixedOverheadTokens: async (input: Parameters<GovernedAgentToolRuntime['list']>[0]) => (
       slice4BaselineFixedOverheadTokens

@@ -1,9 +1,11 @@
 import type { ConversationModule } from '@cmaster/conversations';
 import {
+  ContextBuildFailureError,
   ContextCompressionRequiredError,
   ContextInputTooLargeError,
   ContextSourceIntegrityError,
   contextInvocationId,
+  contextRunId,
   type ContextBuilder,
   type InvocationContext,
 } from '@cmaster/context';
@@ -127,6 +129,10 @@ export class RunWorker {
             triggerMessageId: lease.messageId,
             modelBudget,
             fixedOverheadTokens,
+            summaryExecution: {
+              runId: contextRunId(lease.runId),
+              signal,
+            },
           });
           await this.execution.attachContextManifest(lease, {
             manifestId: built.manifest.id,
@@ -143,12 +149,16 @@ export class RunWorker {
         const inputTooLarge = error instanceof ContextInputTooLargeError;
         const sourceIntegrityFailure = error instanceof ContextSourceIntegrityError;
         const compressionRequired = error instanceof ContextCompressionRequiredError;
+        const classifiedBuildFailure = error instanceof ContextBuildFailureError
+          ? error.retryable
+          : undefined;
         await this.execution.fail(lease, {
           code: inputTooLarge ? 'context_input_too_large' : 'context_build_failed',
           message: inputTooLarge
             ? 'The required Invocation Context exceeds the approved input limit.'
             : 'The Invocation Context could not be built.',
-          retryable: !inputTooLarge && !sourceIntegrityFailure && !compressionRequired,
+          retryable: classifiedBuildFailure
+            ?? (!inputTooLarge && !sourceIntegrityFailure && !compressionRequired),
         });
         return undefined;
       }

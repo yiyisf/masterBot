@@ -5,6 +5,7 @@ export type ModelProfileId = Brand<string, 'ModelProfileId'>;
 export type ModelCallId = Brand<string, 'ModelCallId'>;
 
 export type ModelRouteRole = 'primary' | 'fallback';
+export type ModelCallPurpose = 'agent_execution' | 'context_summary';
 export type ModelFailureCode =
   | 'rate_limited'
   | 'timeout'
@@ -88,6 +89,7 @@ export interface ModelCall {
   runId: string;
   invocationId: string;
   modelProfileId: ModelProfileId;
+  purpose: ModelCallPurpose;
   attemptNumber: number;
   routeRole: ModelRouteRole;
   status: 'running' | 'succeeded' | 'failed' | 'discarded';
@@ -126,6 +128,7 @@ export interface ModelRequestedTool {
 
 export type ModelTranscriptMessage =
   | { role: 'user'; text: string }
+  | { role: 'reference'; text: string }
   | { role: 'assistant'; text: string; toolRequests: readonly ModelRequestedTool[] }
   | { role: 'tool'; requestId: string; name: string; output: unknown };
 
@@ -133,6 +136,7 @@ export interface ModelInvocationRequest {
   organizationId: OrganizationId;
   runId: string;
   invocationId: string;
+  purpose?: ModelCallPurpose;
   prompt: string;
   transcript?: readonly ModelTranscriptMessage[];
   tools?: readonly ModelAvailableTool[];

@@ -6,6 +6,7 @@ import type {
   ModelAdapter,
   ModelCall,
   ModelCallId,
+  ModelCallPurpose,
   ModelContextBudget,
   ModelEvent,
   ModelFailure,
@@ -49,6 +50,7 @@ interface CallRow {
   run_id: string;
   invocation_id: string;
   model_profile_id: string;
+  purpose: ModelCallPurpose;
   attempt_number: number;
   route_role: 'primary' | 'fallback';
   status: 'running' | 'succeeded' | 'failed' | 'discarded';
@@ -109,6 +111,7 @@ function mapCall(row: CallRow): ModelCall {
     runId: row.run_id,
     invocationId: row.invocation_id,
     modelProfileId: row.model_profile_id as ModelProfileId,
+    purpose: row.purpose,
     attemptNumber: row.attempt_number,
     routeRole: row.route_role,
     status: row.status,
@@ -293,6 +296,9 @@ export class PostgresModelGateway implements ModelGateway {
   }
 
   async *stream(request: ModelInvocationRequest): AsyncIterable<ModelEvent> {
+    if (request.purpose === 'context_summary' && (request.tools?.length ?? 0) > 0) {
+      throw new Error('Context Summary Model calls cannot enable Tools');
+    }
     // Worker 恢复时，上一进程可能未能关闭 ModelCall；先把遗留 running 调用归一化为可审计失败。
     const interruptedFailure: ModelFailure = {
       code: 'stream_interrupted',
@@ -330,6 +336,7 @@ export class PostgresModelGateway implements ModelGateway {
           'cmaster.invocation.id': request.invocationId,
           'cmaster.model_profile.id': profile.id,
           'cmaster.model.fallback': fallbackAttempt,
+          'cmaster.model.purpose': request.purpose ?? 'agent_execution',
         },
       });
       const ids = traceIds(span);
@@ -337,11 +344,11 @@ export class PostgresModelGateway implements ModelGateway {
         await this.pool.query(
           `INSERT INTO model_calls (
              id, organization_id, run_id, invocation_id, model_profile_id,
-             attempt_number, route_role, status, trace_id, span_id
-           ) VALUES ($1, $2, $3, $4, $5, $6, $7, 'running', $8, $9)`,
+             purpose, attempt_number, route_role, status, trace_id, span_id
+           ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'running', $9, $10)`,
           [callId, request.organizationId, request.runId, request.invocationId,
-            profile.id, attemptBase + index + 1, profile.routeRole,
-            ids.traceId ?? null, ids.spanId ?? null],
+            profile.id, request.purpose ?? 'agent_execution', attemptBase + index + 1,
+            profile.routeRole, ids.traceId ?? null, ids.spanId ?? null],
         );
       } catch (error) {
         span.addEvent('exception', { 'exception.type': 'model_persistence_failed' });

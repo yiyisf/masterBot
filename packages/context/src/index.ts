@@ -1,11 +1,13 @@
 export { PostgresContextBuilder } from './postgres.js';
 export {
+  ContextBuildFailureError,
   ContextCompressionRequiredError,
   ContextInputTooLargeError,
   ContextSourceIntegrityError,
   contextArtifactVersionId,
   contextInvocationId,
   contextPolicyRevision,
+  contextRunId,
   contextSummaryId,
   deriveEffectiveContextInputLimit,
   estimateConservativeUtf8Tokens,
@@ -22,6 +24,7 @@ export {
   type ContextModelBudget,
   type ContextPolicy,
   type ContextPolicyRevision,
+  type ContextRunId,
   type ContextSourceHash,
   type ContextSummaryId,
   type InvocationContext,

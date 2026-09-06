@@ -191,6 +191,7 @@ describe('AiSdkAgentEngine Invocation Context', () => {
       invocationContext: {
         manifestId: '00000000-0000-4000-8000-000000000099' as ContextManifestId,
         messages: [
+          { role: 'reference', text: 'bounded summary', trustClass: 'reference' },
           { role: 'user', text: 'earlier request', trustClass: 'conversation' },
           { role: 'assistant', text: 'earlier answer', trustClass: 'conversation' },
           { role: 'user', text: 'trigger request', trustClass: 'conversation' },
@@ -209,12 +210,15 @@ describe('AiSdkAgentEngine Invocation Context', () => {
     }
     if (!checkpoint) throw new Error('Context-aware checkpoint expected');
 
-    expect(models.requests[0]?.transcript?.slice(0, 3)).toEqual([
+    expect(models.requests[0]?.transcript?.slice(0, 4)).toEqual([
+      { role: 'reference', text: 'bounded summary' },
       { role: 'user', text: 'earlier request' },
       { role: 'assistant', text: 'earlier answer', toolRequests: [] },
       { role: 'user', text: 'trigger request' },
     ]);
     expect(checkpoint.contextManifestId).toBe(contextualInvocation.invocationContext?.manifestId);
+    expect(JSON.stringify(checkpoint.toolLoop?.providerNeutralTranscript))
+      .not.toContain('bounded summary');
     expect(JSON.stringify(checkpoint.toolLoop?.providerNeutralTranscript))
       .not.toContain('earlier request');
     expect(JSON.stringify(checkpoint.toolLoop?.providerNeutralTranscript))

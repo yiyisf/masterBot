@@ -8,6 +8,7 @@ export {
   type ModelAvailableTool,
   type ModelCall,
   type ModelCallId,
+  type ModelCallPurpose,
   type ModelContextBudget,
   type ModelContextLimits,
   type ModelEvent,

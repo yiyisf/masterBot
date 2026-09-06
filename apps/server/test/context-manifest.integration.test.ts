@@ -4,12 +4,25 @@ import {
   MessageNotFoundError,
   PostgresConversationModule,
 } from '@cmaster/conversations';
-import { contextInvocationId, PostgresContextBuilder } from '@cmaster/context';
+import {
+  ContextBuildFailureError,
+  ContextCompressionRequiredError,
+  ContextInputTooLargeError,
+  contextInvocationId,
+  contextRunId,
+  PostgresContextBuilder,
+} from '@cmaster/context';
 import {
   organizationId,
   PostgresDevelopmentIdentity,
   principalId,
 } from '@cmaster/identity';
+import {
+  modelProfileId,
+  type ModelEvent,
+  type ModelGateway,
+  type ModelInvocationRequest,
+} from '@cmaster/models';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { Pool } from 'pg';
 
@@ -24,6 +37,73 @@ beforeAll(async () => {
 afterAll(async () => {
   await pool.end();
 });
+
+const summaryText = `## Employee Goal\nLaunch safely\n## Explicit Constraints\nNone\n## Established Facts\nPrior analysis exists\n## Decisions and Commitments\nUse staged rollout\n## Relevant Artifacts\nNone\n## Unresolved Items\nConfirm launch date`;
+
+class SummaryModelGateway implements Pick<ModelGateway, 'stream'> {
+  readonly requests: ModelInvocationRequest[] = [];
+
+  constructor(
+    private readonly mode: 'success' | 'fallback' | 'failure' | 'unsafe' = 'success',
+  ) {}
+
+  async *stream(request: ModelInvocationRequest): AsyncIterable<ModelEvent> {
+    this.requests.push(request);
+    const callId = randomUUID() as never;
+    const profile = { id: modelProfileId(randomUUID()), displayName: 'Summary Model' };
+    yield { type: 'model_selected', callId, profile, fallback: false };
+    if (this.mode === 'fallback') {
+      yield { type: 'text_delta', text: 'discarded private draft' };
+      yield {
+        type: 'model_output_discarded',
+        profileId: profile.id,
+        reason: 'fallback',
+      };
+      const fallbackProfile = { id: modelProfileId(randomUUID()), displayName: 'Fallback Summary' };
+      const fallbackCallId = randomUUID() as never;
+      yield {
+        type: 'model_fallback_selected',
+        fromProfileId: profile.id,
+        toProfile: fallbackProfile,
+      };
+      yield { type: 'model_selected', callId: fallbackCallId, profile: fallbackProfile, fallback: true };
+      yield { type: 'text_delta', text: summaryText };
+      yield {
+        type: 'model_completed',
+        callId: fallbackCallId,
+        profile: fallbackProfile,
+        usage: { inputTokens: 1_700, outputTokens: 180, totalTokens: 1_880 },
+        fallbackUsed: true,
+      };
+      return;
+    }
+    if (this.mode === 'failure') {
+      yield {
+        type: 'model_failed',
+        callId,
+        profile,
+        failure: {
+          code: 'stream_interrupted',
+          message: 'provider secret must not escape',
+          retryable: true,
+        },
+        hadOutput: false,
+      };
+      return;
+    }
+    yield {
+      type: 'text_delta',
+      text: this.mode === 'unsafe' ? `${summaryText}\npassword=leaked-value` : summaryText,
+    };
+    yield {
+      type: 'model_completed',
+      callId,
+      profile,
+      usage: { inputTokens: 1_700, outputTokens: 180, totalTokens: 1_880 },
+      fallbackUsed: false,
+    };
+  }
+}
 
 async function provisionIdentity() {
   const identity = new PostgresDevelopmentIdentity(pool, {
@@ -82,6 +162,133 @@ describe('governed Invocation Context', () => {
       conversationId: conversation.id,
       triggerMessageId: trigger.id,
     })).rejects.toBeInstanceOf(MessageNotFoundError);
+  });
+
+  it('summarizes one older contiguous span and retains the newest complete Turn and Trigger', async () => {
+    const identity = await provisionIdentity();
+    const conversations = new PostgresConversationModule(pool);
+    const requestIdentity = identity.resolveRequest();
+    const conversation = (await conversations.create(requestIdentity, {
+      commandId: commandId(randomUUID()),
+      title: 'Long history',
+    })).value;
+    const appendEmployee = async (text: string) => (await conversations.appendEmployeeMessage(
+      requestIdentity,
+      conversation.id,
+      { commandId: commandId(randomUUID()), parts: [{ type: 'text', text }] },
+    )).value;
+    const appendAssistant = async (text: string) => (await conversations.appendAssistantMessage({
+      organizationId: requestIdentity.organizationId,
+      conversationId: conversation.id,
+      sourceRunId: randomUUID(),
+      sourceInvocationId: randomUUID(),
+      parts: [{ type: 'text', text }],
+    })).value;
+    const oldRequest = `old request api_key=super-secret ${'a'.repeat(700)}`;
+    const oldAnswer = `old answer ${'b'.repeat(700)}`;
+    await appendEmployee(oldRequest);
+    await appendAssistant(oldAnswer);
+    await appendEmployee(`recent request ${'c'.repeat(300)}`);
+    await appendAssistant(`recent answer ${'d'.repeat(300)}`);
+    const trigger = await appendEmployee(`trigger ${'e'.repeat(100)}`);
+    const models = new SummaryModelGateway();
+    const context = new PostgresContextBuilder(pool, conversations, models);
+    const request = {
+      organizationId: requestIdentity.organizationId,
+      invocationId: contextInvocationId(randomUUID()),
+      conversationId: conversation.id,
+      triggerMessageId: trigger.id,
+      modelBudget: {
+        strictestContextWindowTokens: 6_396,
+        maximumOutputTokens: 100,
+      },
+      fixedOverheadTokens: 100,
+      summaryExecution: {
+        runId: contextRunId(randomUUID()),
+        signal: new AbortController().signal,
+      },
+    };
+
+    const built = await context.build(request);
+    expect(models.requests).toHaveLength(1);
+    expect(models.requests[0]).toMatchObject({ purpose: 'context_summary' });
+    expect(models.requests[0]?.tools).toEqual([]);
+    expect(models.requests[0]?.prompt).toContain('old request');
+    expect(models.requests[0]?.prompt).not.toContain('super-secret');
+    expect(models.requests[0]?.prompt).not.toContain('recent request');
+    expect(built.manifest.summarized).toBe(true);
+    expect(built.manifest.items.map((item) => [item.sourceKind, item.inclusionMode]))
+      .toEqual([
+        ['message', 'summary'],
+        ['message', 'summary'],
+        ['summary', 'summary'],
+        ['message', 'verbatim'],
+        ['message', 'verbatim'],
+        ['message', 'verbatim'],
+      ]);
+    expect(built.invocationContext.messages).toEqual([
+      { role: 'reference', text: summaryText, trustClass: 'reference' },
+      { role: 'user', text: `recent request ${'c'.repeat(300)}`, trustClass: 'conversation' },
+      { role: 'assistant', text: `recent answer ${'d'.repeat(300)}`, trustClass: 'conversation' },
+      { role: 'user', text: `trigger ${'e'.repeat(100)}`, trustClass: 'conversation' },
+    ]);
+
+    await expect(context.build(request)).resolves.toEqual(built);
+    expect(models.requests).toHaveLength(1);
+
+    const fallbackModels = new SummaryModelGateway('fallback');
+    const fallbackContext = new PostgresContextBuilder(pool, conversations, fallbackModels);
+    const fallbackBuilt = await fallbackContext.build({
+      ...request,
+      invocationId: contextInvocationId(randomUUID()),
+    });
+    expect(fallbackBuilt.invocationContext.messages[0]).toEqual({
+      role: 'reference', text: summaryText, trustClass: 'reference',
+    });
+    expect(JSON.stringify(fallbackBuilt)).not.toContain('discarded private draft');
+
+    const unsafeModels = new SummaryModelGateway('unsafe');
+    const unsafeContext = new PostgresContextBuilder(pool, conversations, unsafeModels);
+    await expect(unsafeContext.build({
+      ...request,
+      invocationId: contextInvocationId(randomUUID()),
+    })).rejects.toThrow('invalid structure');
+
+    const failingModels = new SummaryModelGateway('failure');
+    const failingContext = new PostgresContextBuilder(pool, conversations, failingModels);
+    const failure = await failingContext.build({
+      ...request,
+      invocationId: contextInvocationId(randomUUID()),
+    }).catch((error: unknown) => error);
+    expect(failure).toBeInstanceOf(ContextBuildFailureError);
+    expect(failure).toMatchObject({ retryable: true });
+    expect(String(failure)).not.toContain('provider secret');
+
+    await expect(context.build({
+      ...request,
+      invocationId: contextInvocationId(randomUUID()),
+      modelBudget: {
+        strictestContextWindowTokens: 4_500,
+        maximumOutputTokens: 100,
+      },
+      fixedOverheadTokens: 250,
+    })).rejects.toBeInstanceOf(ContextInputTooLargeError);
+
+    const oversizedSummaryModels = new SummaryModelGateway();
+    const oversizedSummaryContext = new PostgresContextBuilder(
+      pool,
+      conversations,
+      oversizedSummaryModels,
+    );
+    await expect(oversizedSummaryContext.build({
+      ...request,
+      invocationId: contextInvocationId(randomUUID()),
+      modelBudget: {
+        strictestContextWindowTokens: 5_196,
+        maximumOutputTokens: 100,
+      },
+    })).rejects.toBeInstanceOf(ContextCompressionRequiredError);
+    expect(oversizedSummaryModels.requests).toHaveLength(0);
   });
 
   it('creates and reuses an immutable short-history Manifest without storing source bodies', async () => {
