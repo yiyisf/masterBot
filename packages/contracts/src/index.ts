@@ -1,8 +1,10 @@
 export { createContractClient, type ContractClient } from '#internal/client';
 export {
   appendMessageRequestSchema,
+  artifactReferenceMessagePartSchema,
   conversationSchema,
   createConversationRequestSchema,
+  employeeMessagePartsSchema,
   isoDateTimeSchema,
   messagePageSchema,
   messagePartsSchema,

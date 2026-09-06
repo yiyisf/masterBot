@@ -39,6 +39,7 @@ const environmentSchema = z.object({
   CMASTER_AI_SDK_RUNTIME_ENABLED: z.enum(['true', 'false']).default('false').transform((value) => value === 'true'),
   CMASTER_TOOL_RUNTIME_ENABLED: z.enum(['true', 'false']).default('false').transform((value) => value === 'true'),
   CMASTER_CONTEXT_ARTIFACTS_ENABLED: z.enum(['true', 'false']).default('false').transform((value) => value === 'true'),
+  CMASTER_ARTIFACT_STORAGE_ROOT: z.string().min(1).default('data/artifacts'),
   CMASTER_HTTP_FETCH_ALLOWED_HOSTS: z.string().default(''),
   CMASTER_RUNTIME_ENV: z.enum(['development', 'test', 'production']).default('development'),
   CMASTER_DEV_ORGANIZATION_ID: z.uuid().default('00000000-0000-4000-8000-000000000001'),
@@ -89,6 +90,7 @@ export interface ServerConfig {
     contextArtifacts: boolean;
   };
   runtimeEnvironment: 'development' | 'test' | 'production';
+  artifactStorageRoot: string;
   developmentIdentity: {
     organizationId: string;
     principalId: string;
@@ -348,6 +350,7 @@ export function loadServerConfig(
       contextArtifacts: parsed.CMASTER_CONTEXT_ARTIFACTS_ENABLED,
     },
     runtimeEnvironment: parsed.CMASTER_RUNTIME_ENV,
+    artifactStorageRoot: parsed.CMASTER_ARTIFACT_STORAGE_ROOT,
     toolRuntime: {
       httpFetchAllowedHosts: parseAllowedHosts(parsed.CMASTER_HTTP_FETCH_ALLOWED_HOSTS),
     },

@@ -119,7 +119,7 @@ describe('EchoAgentEngine', () => {
     }
     expect(events).toEqual([
       { type: 'text_delta', text: 'hello' },
-      { type: 'completed' },
+      { type: 'completed', artifactReferences: [] },
     ]);
   });
 });
@@ -144,7 +144,15 @@ describe('AiSdkAgentEngine Tool Loop', () => {
           outcomeKind: 'success',
           toolCallId: 'tool-call-1',
           modelOutput: { iso: '2026-01-02T12:00:00Z' },
-          safeSummary: { title: 'Current time read', details: {} },
+          safeSummary: { title: 'Artifact created', details: {} },
+          artifact: {
+            reference: {
+              artifactId: '00000000-0000-4000-8000-000000000061' as never,
+              artifactVersionId: '00000000-0000-4000-8000-000000000062' as never,
+            },
+            kind: 'text',
+            mediaType: 'text/plain; charset=utf-8',
+          },
         };
       },
       async recover() {
@@ -178,7 +186,108 @@ describe('AiSdkAgentEngine Tool Loop', () => {
       usage: { inputTokens: 5, outputTokens: 3, totalTokens: 8 },
       fallbackUsed: false,
     });
-    expect(events.at(-1)).toEqual({ type: 'completed' });
+    expect(events).toContainEqual({
+      type: 'artifact_created',
+      toolCallId: 'tool-call-1',
+      artifact: {
+        reference: {
+          artifactId: '00000000-0000-4000-8000-000000000061',
+          artifactVersionId: '00000000-0000-4000-8000-000000000062',
+        },
+        kind: 'text',
+        mediaType: 'text/plain; charset=utf-8',
+      },
+    });
+    expect(events.at(-1)).toEqual({
+      type: 'completed',
+      artifactReferences: [{
+        artifactId: '00000000-0000-4000-8000-000000000061',
+        artifactVersionId: '00000000-0000-4000-8000-000000000062',
+      }],
+    });
+  });
+
+  it('fixes successful Artifact references in completion order and removes duplicates', async () => {
+    let modelStep = 0;
+    const models = {
+      async *stream() {
+        modelStep += 1;
+        yield {
+          type: 'model_selected' as const,
+          callId: `call-${modelStep}` as never,
+          profile: selection,
+          fallback: false,
+        };
+        if (modelStep === 1) {
+          yield {
+            type: 'model_completed' as const,
+            callId: 'call-1' as never,
+            profile: selection,
+            usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+            fallbackUsed: false,
+          };
+          for (let index = 0; index < 3; index += 1) {
+            yield {
+              type: 'tool_requested' as const,
+              request: { requestId: `artifact-${index}`, name: 'create_text_artifact', input: {} },
+            };
+          }
+          return;
+        }
+        yield { type: 'text_delta' as const, text: 'Artifacts are ready.' };
+        yield {
+          type: 'model_completed' as const,
+          callId: 'call-2' as never,
+          profile: selection,
+          usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+          fallbackUsed: false,
+        };
+      },
+    };
+    let toolNumber = 0;
+    const references = [
+      {
+        artifactId: '00000000-0000-4000-8000-000000000071' as never,
+        artifactVersionId: '00000000-0000-4000-8000-000000000072' as never,
+      },
+      {
+        artifactId: '00000000-0000-4000-8000-000000000073' as never,
+        artifactVersionId: '00000000-0000-4000-8000-000000000074' as never,
+      },
+    ];
+    const engine = new AiSdkAgentEngine(models, {
+      async list() {
+        return [{ name: 'create_text_artifact', description: 'create', inputSchema: {}, outputSchema: {} }];
+      },
+      async invoke() {
+        const reference = references[toolNumber === 2 ? 0 : toolNumber];
+        toolNumber += 1;
+        if (!reference) throw new Error('Artifact reference is unavailable');
+        return {
+          kind: 'completed' as const,
+          outcomeKind: 'success' as const,
+          toolCallId: `tool-${toolNumber}`,
+          modelOutput: reference,
+          safeSummary: { title: 'Artifact created', details: {} },
+          artifact: {
+            reference,
+            kind: 'text' as const,
+            mediaType: 'text/plain; charset=utf-8' as const,
+          },
+        };
+      },
+      async recover() { throw new Error('not expected'); },
+    });
+    const events = [];
+    for await (const event of engine.execute(invocation, new AbortController().signal)) {
+      events.push(event);
+    }
+
+    expect(events.at(-1)).toEqual({ type: 'completed', artifactReferences: references });
+    const checkpoints = events.filter((event) => event.type === 'checkpoint_reached');
+    expect(checkpoints.at(-1)).toMatchObject({
+      checkpoint: { toolLoop: { artifactReferences: references } },
+    });
   });
 });
 
@@ -308,7 +417,7 @@ describe('AiSdkAgentEngine interrupt recovery', () => {
       name: 'current_time',
       output: { iso: '2026-01-02T12:00:00Z' },
     });
-    expect(resumedEvents.at(-1)).toEqual({ type: 'completed' });
+    expect(resumedEvents.at(-1)).toEqual({ type: 'completed', artifactReferences: [] });
   });
 
   it('resumes from a completed Tool checkpoint without invoking or recovering that ToolCall', async () => {
@@ -356,6 +465,6 @@ describe('AiSdkAgentEngine interrupt recovery', () => {
     expect(invokes).toBe(1);
     expect(recovers).toBe(0);
     expect(models.requests).toHaveLength(2);
-    expect(resumed.at(-1)).toEqual({ type: 'completed' });
+    expect(resumed.at(-1)).toEqual({ type: 'completed', artifactReferences: [] });
   });
 });

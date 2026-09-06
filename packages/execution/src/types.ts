@@ -1,4 +1,5 @@
 import type { AgentId, AgentRevisionId, ResolvedAgentRevision } from '@cmaster/agents';
+import type { ArtifactReference } from '@cmaster/artifacts';
 import type { ConversationId, MessageId } from '@cmaster/conversations';
 import type { ContextManifestId, ContextPolicyRevision } from '@cmaster/context';
 import type { OrganizationId, PrincipalId, RequestIdentity } from '@cmaster/identity';
@@ -31,6 +32,7 @@ export type RunEventType =
   | 'invocation.started'
   | 'run.recovery_started'
   | 'invocation.context_built'
+  | 'artifact.created'
   | 'interrupt.requested'
   | 'interrupt.resolved'
   | 'run.waiting'
@@ -89,6 +91,7 @@ export interface ExecutionCheckpoint {
     toolCallCount: number;
     providerNeutralTranscript: readonly ModelTranscriptMessage[];
     completedToolCallIds: readonly string[];
+    artifactReferences?: readonly ArtifactReference[];
     pendingToolRequest?: ModelRequestedTool;
     remainingModelToolRequests: readonly ModelRequestedTool[];
     outputGeneration: number;
@@ -103,6 +106,11 @@ export interface ContextBuiltMetadata {
   summarized: boolean;
   estimatedInputTokens: number;
   contextPolicyRevision: ContextPolicyRevision;
+}
+
+export interface PreparedRunOutput {
+  readonly text: string;
+  readonly artifactReferences: readonly ArtifactReference[];
 }
 
 export interface RequestInterruptCommand {
@@ -149,6 +157,14 @@ export interface RunSnapshot {
 }
 
 export type ExecutionProgressEvent =
+  | {
+    type: 'artifact_created';
+    toolCallId: string;
+    invocationId: InvocationId;
+    reference: ArtifactReference;
+    kind: 'text';
+    mediaType: 'text/plain; charset=utf-8' | 'text/markdown; charset=utf-8';
+  }
   | { type: 'model_selected'; profileId: ModelProfileId; displayName: string; fallback: boolean }
   | { type: 'model_fallback_selected'; fromProfileId: ModelProfileId; toProfileId: ModelProfileId; displayName: string }
   | { type: 'model_output_discarded'; profileId: ModelProfileId; reason: 'fallback' | 'failure' }

@@ -3,6 +3,7 @@
 import {
   createContractClient,
   runEventEnvelopeSchema,
+  type MessageContract,
   type RunSnapshotContract,
 } from '@cmaster/contracts';
 import { useParams } from 'next/navigation';
@@ -11,11 +12,7 @@ import { applyRunEvent, projectionFromSnapshot, type RunProjection } from '../..
 
 const apiUrl = process.env.NEXT_PUBLIC_CMASTER_API_URL ?? 'http://localhost:3100';
 
-type DisplayMessage = {
-  id: string;
-  author: 'employee' | 'assistant';
-  parts: ReadonlyArray<{ type: 'text'; text: string }>;
-};
+type DisplayMessage = MessageContract;
 
 export default function RunPage() {
   const params = useParams<{ runId: string }>();
@@ -212,7 +209,10 @@ export default function RunPage() {
         {messages.map((message) => (
           <article className="message" key={message.id}>
             <strong>{message.author}</strong>
-            <p>{message.parts[0]?.text ?? ''}</p>
+            <p>{message.parts
+              .filter((part) => part.type === 'text')
+              .map((part) => part.text)
+              .join('')}</p>
           </article>
         ))}
       </section>

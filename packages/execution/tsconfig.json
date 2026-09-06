@@ -5,6 +5,7 @@
     { "path": "../kernel" },
     { "path": "../identity" },
     { "path": "../agents" },
+    { "path": "../artifacts" },
     { "path": "../conversations" },
     { "path": "../context" },
     { "path": "../models" }

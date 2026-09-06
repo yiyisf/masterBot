@@ -793,13 +793,18 @@ export interface components {
             sequence: number;
             /** @enum {string} */
             author: "employee" | "assistant";
-            parts: [
-                {
-                    /** @enum {string} */
-                    type: "text";
-                    text: string;
-                }
-            ];
+            parts: ({
+                /** @enum {string} */
+                type: "text";
+                text: string;
+            } | {
+                /** @enum {string} */
+                type: "artifact_reference";
+                /** Format: uuid */
+                artifactId: string;
+                /** Format: uuid */
+                artifactVersionId: string;
+            })[];
             /** Format: date-time */
             createdAt: string;
             /** Format: uuid */
@@ -818,13 +823,18 @@ export interface components {
                 sequence: number;
                 /** @enum {string} */
                 author: "employee" | "assistant";
-                parts: [
-                    {
-                        /** @enum {string} */
-                        type: "text";
-                        text: string;
-                    }
-                ];
+                parts: ({
+                    /** @enum {string} */
+                    type: "text";
+                    text: string;
+                } | {
+                    /** @enum {string} */
+                    type: "artifact_reference";
+                    /** Format: uuid */
+                    artifactId: string;
+                    /** Format: uuid */
+                    artifactVersionId: string;
+                })[];
                 /** Format: date-time */
                 createdAt: string;
                 /** Format: uuid */

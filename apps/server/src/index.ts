@@ -1,4 +1,10 @@
 import { agentRevisionId, PostgresAgentModule } from '@cmaster/agents';
+import {
+  CreateTextArtifactToolProvider,
+  createTextArtifactToolRevision,
+  PostgresArtifactModule,
+  SLICE4_ARTIFACT_TOOL_GRANT_ID,
+} from '@cmaster/artifacts';
 import { PostgresConversationModule } from '@cmaster/conversations';
 import {
   estimateConservativeUtf8Tokens,
@@ -22,6 +28,8 @@ import {
   PostgresToolCatalog,
   PostgresToolRuntime,
   TextStatisticsToolProvider,
+  toolGrantId,
+  toolRevisionId,
   workflowValidationToolCatalog,
 } from '@cmaster/tools';
 import {
@@ -129,15 +137,40 @@ if (config.features.toolRuntime) {
   const organizationId = identity.resolveRequest().organizationId;
   const approvals = new PostgresApprovalModule(database.pool);
   const catalog = new PostgresToolCatalog(database.pool);
+  const artifacts = config.features.contextArtifacts
+    ? new PostgresArtifactModule(database.pool, config.artifactStorageRoot)
+    : undefined;
   const providers = [
     new CurrentTimeToolProvider(),
     new TextStatisticsToolProvider(),
     new HttpsFetchToolProvider({ allowedHosts: config.toolRuntime.httpFetchAllowedHosts }),
+    ...(artifacts ? [new CreateTextArtifactToolProvider(artifacts)] : []),
   ];
   await catalog.provision(
     organizationId,
-    workflowValidationToolCatalog(agentRevisionId(config.developmentIdentity.activeAgentRevisionId)),
+    workflowValidationToolCatalog(agentRevisionId(config.developmentIdentity.toolAgentRevisionId)),
   );
+  if (artifacts) {
+    const baseline = workflowValidationToolCatalog(
+      agentRevisionId(config.developmentIdentity.contextArtifactAgentRevisionId),
+    );
+    await catalog.provision(organizationId, {
+      revisions: [
+        ...baseline.revisions,
+        { ...createTextArtifactToolRevision, id: toolRevisionId(createTextArtifactToolRevision.id) },
+      ],
+      grants: [{
+        id: toolGrantId(SLICE4_ARTIFACT_TOOL_GRANT_ID),
+        agentRevisionId: agentRevisionId(
+          config.developmentIdentity.contextArtifactAgentRevisionId,
+        ),
+        capabilityIds: [
+          ...(baseline.grants[0]?.capabilityIds ?? []),
+          createTextArtifactToolRevision.capabilityId,
+        ],
+      }],
+    });
+  }
   const toolRuntime = new PostgresToolRuntime(
     database.pool, new Slice3BaselinePolicy(), approvals, providers,
   );

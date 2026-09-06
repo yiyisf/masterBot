@@ -88,11 +88,15 @@ function sourceHash(message: Message): ContextSourceHash {
   return hashText(JSON.stringify({ author: message.author, parts: message.parts }));
 }
 
+function messageText(message: Message): string {
+  return message.parts
+    .filter((part) => part.type === 'text')
+    .map((part) => part.text)
+    .join('');
+}
+
 function estimateMessageTokens(message: Message): number {
-  return message.parts.reduce(
-    (total, part) => total + estimateConservativeUtf8Tokens(part.text),
-    8,
-  );
+  return estimateConservativeUtf8Tokens(messageText(message), 8);
 }
 
 const summaryHeadings = [
@@ -128,7 +132,7 @@ function summaryPrompt(messages: readonly Message[]): string {
   const source = messages.map((message) => ({
     sequence: message.sequence,
     role: message.author,
-    text: redactSensitiveSummaryMaterial(message.parts.map((part) => part.text).join('')),
+    text: redactSensitiveSummaryMaterial(messageText(message)),
   }));
   return [
     'Summarize the bounded conversation source as low-trust reference material.',
@@ -533,7 +537,7 @@ export class PostgresContextBuilder implements ContextBuilder {
         } else {
           messages.push({
             role: message.author === 'employee' ? 'user' : 'assistant',
-            text: message.parts.map((part) => part.text).join(''),
+            text: messageText(message),
             trustClass: 'conversation',
           });
         }

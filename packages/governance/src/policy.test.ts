@@ -67,25 +67,28 @@ describe('Slice3BaselinePolicy', () => {
     });
   });
 
-  it('allows the low-risk current-time Capability without an obligation', async () => {
+  it('allows low-risk baseline and Artifact Capabilities without an obligation', async () => {
     const policy = new Slice3BaselinePolicy();
 
-    const decision = await policy.evaluate({
-      organizationId: organizationId('10000000-0000-4000-8000-000000000001'),
-      principalId: principalId('20000000-0000-4000-8000-000000000001'),
-      agentRevisionId: agentRevisionId('30000000-0000-4000-8000-000000000001'),
-      principalEntitlements: ['enterprise_assistant.use_governed_tools'],
-      agentGranted: true,
-      toolRevisionActive: true,
-      capabilityId: 'cmaster.utility.current_time:v1',
-    });
-
-    expect(decision).toEqual({
-      effect: 'allow',
-      policyVersion: 'slice3-baseline-v1',
-      reason: 'baseline_tool_allowed',
-      obligations: [],
-    });
+    for (const capabilityId of [
+      'cmaster.utility.current_time:v1',
+      'cmaster.artifact.create_text:v1',
+    ]) {
+      await expect(policy.evaluate({
+        organizationId: organizationId('10000000-0000-4000-8000-000000000001'),
+        principalId: principalId('20000000-0000-4000-8000-000000000001'),
+        agentRevisionId: agentRevisionId('30000000-0000-4000-8000-000000000001'),
+        principalEntitlements: ['enterprise_assistant.use_governed_tools'],
+        agentGranted: true,
+        toolRevisionActive: true,
+        capabilityId,
+      })).resolves.toEqual({
+        effect: 'allow',
+        policyVersion: 'slice3-baseline-v1',
+        reason: 'baseline_tool_allowed',
+        obligations: [],
+      });
+    }
   });
 
   it('requires Employee Confirmation for the allowlisted HTTP fetch Capability', async () => {

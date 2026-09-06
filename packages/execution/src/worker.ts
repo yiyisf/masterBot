@@ -20,6 +20,7 @@ import { PostgresExecutionModule, type RunLease } from './postgres.js';
 import {
   StaleLeaseError,
   type ExecutionProgressEvent,
+  type PreparedRunOutput,
   type RunFailure,
 } from './types.js';
 
@@ -83,7 +84,13 @@ export class RunWorker {
         conversationId: lease.conversationId,
         sourceRunId: lease.runId,
         sourceInvocationId: lease.invocationId,
-        parts: [{ type: 'text', text: output }],
+        parts: [
+          { type: 'text', text: output.text },
+          ...output.artifactReferences.map((reference) => ({
+            type: 'artifact_reference' as const,
+            ...reference,
+          })),
+        ],
       });
       await this.execution.complete(lease, message.value.id);
       return true;
@@ -96,7 +103,10 @@ export class RunWorker {
     }
   }
 
-  private async executeEngine(lease: RunLease, signal: AbortSignal): Promise<string | undefined> {
+  private async executeEngine(
+    lease: RunLease,
+    signal: AbortSignal,
+  ): Promise<PreparedRunOutput | undefined> {
     // Slice 2 只投影触发它的 Employee Text Message；历史、Memory/Knowledge 由 Context Builder Slice 接管。
     const trigger = await this.conversations.getMessageTrigger(
       lease.organizationId,
@@ -178,6 +188,7 @@ export class RunWorker {
     let pending = '';
     let outputStarted = false;
     let completed = false;
+    let artifactReferences: PreparedRunOutput['artifactReferences'] = [];
     let interrupted = false;
     let terminalModelFailure: ModelFailure | undefined;
     let lastFlushAt = Date.now();
@@ -250,7 +261,10 @@ export class RunWorker {
           await record({ type: 'output_reset', generation, reason });
         });
         if (event.type === 'model_failed') terminalModelFailure = event.failure;
-        if (event.type === 'completed') completed = true;
+        if (event.type === 'completed') {
+          completed = true;
+          artifactReferences = event.artifactReferences;
+        }
       }
       await flush();
 
@@ -266,7 +280,7 @@ export class RunWorker {
       }
       if (!completed || output.length === 0) throw new Error('Engine ended without completed text output');
       await record({ type: 'output_completed', generation });
-      return output;
+      return { text: output, artifactReferences };
     } catch (error) {
       if (error instanceof StaleLeaseError) throw error;
       const failure: RunFailure = error instanceof ExecutionLimitExceededError
@@ -292,6 +306,16 @@ export class RunWorker {
     resetOutput: (reason: 'fallback' | 'failure') => Promise<void>,
   ): Promise<void> {
     switch (event.type) {
+      case 'artifact_created':
+        await record({
+          type: 'artifact_created',
+          toolCallId: event.toolCallId,
+          invocationId: lease.invocationId,
+          reference: event.artifact.reference,
+          kind: event.artifact.kind,
+          mediaType: event.artifact.mediaType,
+        });
+        break;
       case 'model_selected':
         await record({
           type: 'model_selected',

@@ -1,4 +1,5 @@
 import type { AgentRevisionId } from '@cmaster/agents';
+import type { ArtifactReference } from '@cmaster/artifacts';
 import type { InvocationContext } from '@cmaster/context';
 import type { OrganizationId } from '@cmaster/identity';
 import type {
@@ -38,6 +39,11 @@ export type AgentToolOutcome =
     toolCallId: string;
     modelOutput: unknown;
     safeSummary: { title: string; details: Readonly<Record<string, string>> };
+    artifact?: {
+      reference: ArtifactReference;
+      kind: 'text';
+      mediaType: 'text/plain; charset=utf-8' | 'text/markdown; charset=utf-8';
+    };
   }
   | {
     kind: 'interrupt';
@@ -83,7 +89,12 @@ export type EngineEvent =
     allowedResponses: readonly InterruptResponse[];
     checkpoint: ExecutionCheckpoint;
   }
-  | { type: 'completed' };
+  | {
+    type: 'artifact_created';
+    toolCallId: string;
+    artifact: NonNullable<Extract<AgentToolOutcome, { kind: 'completed' }>['artifact']>;
+  }
+  | { type: 'completed'; artifactReferences: readonly ArtifactReference[] };
 
 export interface AgentEngine {
   readonly kind: 'echo' | 'ai-sdk';
@@ -99,7 +110,7 @@ export class EchoAgentEngine implements AgentEngine {
     if (signal.aborted) return;
     yield { type: 'text_delta', text: input.prompt };
     if (signal.aborted) return;
-    yield { type: 'completed' };
+    yield { type: 'completed', artifactReferences: [] };
   }
 }
 
@@ -141,6 +152,7 @@ export class AiSdkAgentEngine implements AgentEngine {
     let modelStepNumber = restored?.modelStepNumber ?? 0;
     let toolCallCount = restored?.toolCallCount ?? 0;
     const completedToolCallIds = [...(restored?.completedToolCallIds ?? [])];
+    const artifactReferences = [...(restored?.artifactReferences ?? [])];
     const pending: Array<{
       request: ModelRequestedTool;
       recoverToolCallId?: string;
@@ -173,6 +185,7 @@ export class AiSdkAgentEngine implements AgentEngine {
         toolCallCount,
         providerNeutralTranscript: checkpointTranscript(),
         completedToolCallIds,
+        artifactReferences,
         ...(pendingToolRequest ? { pendingToolRequest } : {}),
         remainingModelToolRequests: pending.map((item) => item.request),
         outputGeneration: input.outputGeneration ?? 0,
@@ -210,6 +223,16 @@ export class AiSdkAgentEngine implements AgentEngine {
             toolCallId: outcome.toolCallId,
             toolName: current.request.name,
             safeSummary: outcome.safeSummary,
+          };
+        }
+        if (outcome.kind === 'completed' && outcome.artifact) {
+          if (!artifactReferences.some((reference) => (
+            reference.artifactVersionId === outcome.artifact?.reference.artifactVersionId
+          ))) artifactReferences.push(outcome.artifact.reference);
+          yield {
+            type: 'artifact_created',
+            toolCallId: outcome.toolCallId,
+            artifact: outcome.artifact,
           };
         }
         if (outcome.kind === 'interrupt' && !continuingUncertainOutcome) {
@@ -305,7 +328,7 @@ export class AiSdkAgentEngine implements AgentEngine {
       }
       if (!completed) return;
       if (requestedTools.length === 0) {
-        yield { type: 'completed' };
+        yield { type: 'completed', artifactReferences };
         return;
       }
       transcript.push({ role: 'assistant', text: assistantText, toolRequests: requestedTools });

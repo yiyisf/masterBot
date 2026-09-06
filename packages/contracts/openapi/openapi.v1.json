@@ -108,27 +108,54 @@
           },
           "parts": {
             "type": "array",
-            "prefixItems": [
-              {
-                "type": "object",
-                "properties": {
-                  "type": {
-                    "type": "string",
-                    "enum": [
-                      "text"
-                    ]
+            "items": {
+              "oneOf": [
+                {
+                  "type": "object",
+                  "properties": {
+                    "type": {
+                      "type": "string",
+                      "enum": [
+                        "text"
+                      ]
+                    },
+                    "text": {
+                      "type": "string",
+                      "maxLength": 32768
+                    }
                   },
-                  "text": {
-                    "type": "string",
-                    "maxLength": 32768
-                  }
+                  "required": [
+                    "type",
+                    "text"
+                  ]
                 },
-                "required": [
-                  "type",
-                  "text"
-                ]
-              }
-            ]
+                {
+                  "type": "object",
+                  "properties": {
+                    "type": {
+                      "type": "string",
+                      "enum": [
+                        "artifact_reference"
+                      ]
+                    },
+                    "artifactId": {
+                      "type": "string",
+                      "format": "uuid"
+                    },
+                    "artifactVersionId": {
+                      "type": "string",
+                      "format": "uuid"
+                    }
+                  },
+                  "required": [
+                    "type",
+                    "artifactId",
+                    "artifactVersionId"
+                  ]
+                }
+              ]
+            },
+            "minItems": 1
           },
           "createdAt": {
             "type": "string",
@@ -186,27 +213,54 @@
                 },
                 "parts": {
                   "type": "array",
-                  "prefixItems": [
-                    {
-                      "type": "object",
-                      "properties": {
-                        "type": {
-                          "type": "string",
-                          "enum": [
-                            "text"
-                          ]
+                  "items": {
+                    "oneOf": [
+                      {
+                        "type": "object",
+                        "properties": {
+                          "type": {
+                            "type": "string",
+                            "enum": [
+                              "text"
+                            ]
+                          },
+                          "text": {
+                            "type": "string",
+                            "maxLength": 32768
+                          }
                         },
-                        "text": {
-                          "type": "string",
-                          "maxLength": 32768
-                        }
+                        "required": [
+                          "type",
+                          "text"
+                        ]
                       },
-                      "required": [
-                        "type",
-                        "text"
-                      ]
-                    }
-                  ]
+                      {
+                        "type": "object",
+                        "properties": {
+                          "type": {
+                            "type": "string",
+                            "enum": [
+                              "artifact_reference"
+                            ]
+                          },
+                          "artifactId": {
+                            "type": "string",
+                            "format": "uuid"
+                          },
+                          "artifactVersionId": {
+                            "type": "string",
+                            "format": "uuid"
+                          }
+                        },
+                        "required": [
+                          "type",
+                          "artifactId",
+                          "artifactVersionId"
+                        ]
+                      }
+                    ]
+                  },
+                  "minItems": 1
                 },
                 "createdAt": {
                   "type": "string",

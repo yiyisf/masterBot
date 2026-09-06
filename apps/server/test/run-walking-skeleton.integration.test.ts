@@ -351,24 +351,42 @@ describe('Run Walking Skeleton', () => {
     await worker('relay-prepared').relayOne();
     const firstLease = await execution.leaseNext('worker-prepared-a', 50, 1);
     expect(firstLease).toBeDefined();
-    await execution.saveOutputReady(firstLease!, 'recover prepared output');
+    const preparedArtifactReference = {
+      artifactId: '00000000-0000-4000-8000-000000000081' as never,
+      artifactVersionId: '00000000-0000-4000-8000-000000000082' as never,
+    };
+    const preparedArtifactReferences = [preparedArtifactReference];
+    await execution.saveOutputReady(firstLease!, {
+      text: 'recover prepared output',
+      artifactReferences: preparedArtifactReferences,
+    });
     const firstMessage = await conversations.appendAssistantMessage({
       organizationId: firstLease!.organizationId,
       conversationId: firstLease!.conversationId,
       sourceRunId: firstLease!.runId,
       sourceInvocationId: firstLease!.invocationId,
-      parts: [{ type: 'text', text: 'recover prepared output' }],
+      parts: [
+        { type: 'text', text: 'recover prepared output' },
+        { type: 'artifact_reference', ...preparedArtifactReference },
+      ],
     });
 
     await new Promise((resolve) => setTimeout(resolve, 80));
     const deliveryLease = await execution.leaseNext('worker-prepared-b', 1_000, 1);
-    expect(deliveryLease?.preparedOutput).toBe('recover prepared output');
+    expect(deliveryLease?.preparedOutput).toEqual({
+      text: 'recover prepared output', artifactReferences: preparedArtifactReferences,
+    });
     const replayedMessage = await conversations.appendAssistantMessage({
       organizationId: deliveryLease!.organizationId,
       conversationId: deliveryLease!.conversationId,
       sourceRunId: deliveryLease!.runId,
       sourceInvocationId: deliveryLease!.invocationId,
-      parts: [{ type: 'text', text: deliveryLease!.preparedOutput! }],
+      parts: [
+        { type: 'text', text: deliveryLease!.preparedOutput!.text },
+        ...deliveryLease!.preparedOutput!.artifactReferences.map((reference) => ({
+          type: 'artifact_reference' as const, ...reference,
+        })),
+      ],
     });
     expect(replayedMessage).toMatchObject({ replayed: true, value: { id: firstMessage.value.id } });
     await execution.complete(deliveryLease!, replayedMessage.value.id);

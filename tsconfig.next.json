@@ -4,6 +4,7 @@
     { "path": "./packages/kernel" },
     { "path": "./packages/contracts" },
     { "path": "./packages/identity" },
+    { "path": "./packages/artifacts" },
     { "path": "./packages/context" },
     { "path": "./packages/agents" },
     { "path": "./packages/governance" },

@@ -110,7 +110,7 @@ class CapturingEngine implements AgentEngine {
       },
     };
     yield { type: 'text_delta', text: 'context received' };
-    yield { type: 'completed' };
+    yield { type: 'completed', artifactReferences: [] };
   }
 }
 

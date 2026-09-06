@@ -20,6 +20,7 @@ import {
   type InterruptResponse,
   type InvocationId,
   type InvocationStatus,
+  type PreparedRunOutput,
   type RequestInterruptCommand,
   type ResolveInterruptCommand,
   type RunCommandId,
@@ -61,7 +62,7 @@ interface RunRow {
   started_at: Date | null;
   completed_at: Date | null;
   invocation_status: InvocationStatus;
-  prepared_output: { text: string } | null;
+  prepared_output: { text: string; artifactReferences?: PreparedRunOutput['artifactReferences'] } | null;
   output_generation: number;
   has_streamed_output: boolean;
   interrupt_id: string | null;
@@ -104,7 +105,7 @@ export interface RunLease {
   attemptNumber: number;
   outputGeneration: number;
   hasStreamedOutput: boolean;
-  preparedOutput?: string;
+  preparedOutput?: PreparedRunOutput;
   contextManifestId?: ContextBuiltMetadata['manifestId'];
   checkpoint?: ExecutionCheckpoint;
   resumeResponse?: InterruptResponse;
@@ -874,7 +875,12 @@ export class PostgresExecutionModule implements ExecutionModule {
         attemptNumber,
         outputGeneration: run.output_generation,
         hasStreamedOutput: run.has_streamed_output,
-        ...(run.prepared_output === null ? {} : { preparedOutput: run.prepared_output.text }),
+        ...(run.prepared_output === null ? {} : {
+          preparedOutput: {
+            text: run.prepared_output.text,
+            artifactReferences: run.prepared_output.artifactReferences ?? [],
+          },
+        }),
         ...(run.context_manifest_id === null
           ? {}
           : { contextManifestId: run.context_manifest_id as ContextBuiltMetadata['manifestId'] }),
@@ -959,6 +965,16 @@ export class PostgresExecutionModule implements ExecutionModule {
 
       for (const event of events) {
         switch (event.type) {
+          case 'artifact_created':
+            await appendEvent(client, lease.organizationId, lease.runId, 'artifact.created', {
+              invocationId: event.invocationId,
+              toolCallId: event.toolCallId,
+              artifactId: event.reference.artifactId,
+              artifactVersionId: event.reference.artifactVersionId,
+              kind: event.kind,
+              mediaType: event.mediaType,
+            }, lease.attemptId);
+            break;
           case 'model_selected':
             await client.query(
               `UPDATE runs SET resolved_model_profile_id = $3,
@@ -1086,7 +1102,13 @@ export class PostgresExecutionModule implements ExecutionModule {
     }
   }
 
-  async saveOutputReady(lease: RunLease, text: string): Promise<'ready' | 'cancelled'> {
+  async saveOutputReady(
+    lease: RunLease,
+    output: PreparedRunOutput | string,
+  ): Promise<'ready' | 'cancelled'> {
+    const preparedOutput: PreparedRunOutput = typeof output === 'string'
+      ? { text: output, artifactReferences: [] }
+      : output;
     const client = await this.pool.connect();
     try {
       await client.query('BEGIN');
@@ -1103,7 +1125,7 @@ export class PostgresExecutionModule implements ExecutionModule {
       await client.query(
         `UPDATE invocations SET prepared_output = $3, output_ready_at = clock_timestamp()
          WHERE organization_id = $1 AND id = $2`,
-        [lease.organizationId, lease.invocationId, JSON.stringify({ text })],
+        [lease.organizationId, lease.invocationId, JSON.stringify(preparedOutput)],
       );
       await client.query(
         `UPDATE execution_checkpoints SET consumed_at = clock_timestamp()
@@ -1112,7 +1134,8 @@ export class PostgresExecutionModule implements ExecutionModule {
       );
       await appendEvent(client, lease.organizationId, lease.runId, 'invocation.output_ready', {
         invocationId: lease.invocationId,
-        text,
+        text: preparedOutput.text,
+        artifactReferences: preparedOutput.artifactReferences,
       }, lease.attemptId);
       await client.query('COMMIT');
       return 'ready';
