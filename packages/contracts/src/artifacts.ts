@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { isoDateTimeSchema, uuidSchema } from './conversations.js';
+import { isoDateTimeSchema, uuidSchema } from '#internal/conversations';
 
 export const artifactMediaTypeSchema = z.string().min(1).max(200);
 export const artifactVersionSchema = z.object({

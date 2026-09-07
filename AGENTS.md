@@ -185,6 +185,9 @@ npm run next:server -- --role=all
 # Web :3101
 npm run next:web
 
+# 启动隔离的 Next.js 开发服务器并验证 /workspace 可编译
+npm run next:web-development-smoke
+
 # 显式 PostgreSQL Integration Test（需要 DATABASE_URL）
 npm run next:test:integration
 
