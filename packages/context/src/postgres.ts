@@ -1,11 +1,17 @@
 import { createHash, randomUUID } from 'node:crypto';
+import {
+  ArtifactNotFoundError,
+  type ArtifactId,
+  type ArtifactModule,
+  type ArtifactVersionId,
+} from '@cmaster/artifacts';
 import type {
   ConversationId,
   ConversationModule,
   Message,
   MessageId,
 } from '@cmaster/conversations';
-import type { OrganizationId } from '@cmaster/identity';
+import type { OrganizationId, PrincipalId, RequestIdentity } from '@cmaster/identity';
 import type {
   ModelCallId,
   ModelGateway,
@@ -23,6 +29,7 @@ import {
   slice4BaselineContextPolicy,
   type BuildInvocationContext,
   type BuiltInvocationContext,
+  type ContextArtifactId,
   type ContextArtifactVersionId,
   type ContextBuilder,
   type ContextInvocationId,
@@ -73,6 +80,7 @@ interface ManifestItemRow {
   position: number;
   source_kind: 'message' | 'artifact' | 'summary';
   source_id: string;
+  artifact_id: string | null;
   source_sequence: number | null;
   source_hash: string;
   provenance: ContextManifestItem['provenance'];
@@ -97,6 +105,97 @@ function messageText(message: Message): string {
 
 function estimateMessageTokens(message: Message): number {
   return estimateConservativeUtf8Tokens(messageText(message), 8);
+}
+
+interface ResolvedArtifactSource {
+  artifactId: ArtifactId;
+  versionId: ArtifactVersionId;
+  messageId: MessageId;
+  content?: string;
+  sourceHash: ContextSourceHash;
+  estimatedTokens: number;
+}
+
+async function artifactText(content: AsyncIterable<Uint8Array>): Promise<string> {
+  const chunks: Uint8Array[] = [];
+  for await (const chunk of content) chunks.push(chunk);
+  const bytes = Buffer.concat(chunks);
+  const text = bytes.toString('utf8');
+  if (Buffer.from(text, 'utf8').compare(bytes) !== 0) {
+    throw new ContextSourceIntegrityError('Artifact Context source is not valid UTF-8');
+  }
+  return text;
+}
+
+async function resolveArtifactSources(
+  artifacts: Pick<ArtifactModule, 'get' | 'open'> | undefined,
+  messages: readonly Message[],
+  organizationId: OrganizationId,
+  principalId: PrincipalId,
+): Promise<ReadonlyMap<MessageId, readonly ResolvedArtifactSource[]>> {
+  const byMessage = new Map<MessageId, ResolvedArtifactSource[]>();
+  const identity: RequestIdentity = {
+    organizationId,
+    principalId,
+    principalType: 'employee',
+    displayName: 'Invocation initiator',
+  };
+  try {
+    for (const message of messages) {
+      const references = message.parts.filter((part) => part.type === 'artifact_reference');
+      if (references.length === 0) continue;
+      if (!artifacts) throw new ContextSourceIntegrityError('Artifacts Module is unavailable');
+      const resolved: ResolvedArtifactSource[] = [];
+      for (const reference of references) {
+        const view = await artifacts.get({ identity, artifactId: reference.artifactId });
+        const version = view.versions.find((candidate) => (
+          candidate.id === reference.artifactVersionId
+        ));
+        if (!version) throw new ContextSourceIntegrityError('Artifact Version was not found');
+        const supported = view.artifact.kind === 'text'
+          && (version.mediaType === 'text/plain; charset=utf-8'
+            || version.mediaType === 'text/markdown; charset=utf-8');
+        if (!supported) {
+          const metadata = JSON.stringify({
+            artifactId: reference.artifactId,
+            artifactVersionId: reference.artifactVersionId,
+            kind: view.artifact.kind,
+            mediaType: version.mediaType,
+          });
+          resolved.push({
+            artifactId: reference.artifactId,
+            versionId: reference.artifactVersionId,
+            messageId: message.id,
+            sourceHash: hashText(metadata),
+            estimatedTokens: estimateConservativeUtf8Tokens(metadata, 8),
+          });
+          continue;
+        }
+        const opened = await artifacts.open({
+          identity,
+          artifactId: reference.artifactId,
+          artifactVersionId: reference.artifactVersionId,
+        });
+        const content = await artifactText(opened.bytes);
+        resolved.push({
+          artifactId: reference.artifactId,
+          versionId: reference.artifactVersionId,
+          messageId: message.id,
+          content,
+          sourceHash: hashText(content),
+          estimatedTokens: estimateConservativeUtf8Tokens(content, 16),
+        });
+      }
+      byMessage.set(message.id, resolved);
+    }
+  } catch (error) {
+    if (error instanceof ContextSourceIntegrityError) throw error;
+    if (error instanceof ArtifactNotFoundError) {
+      throw new ContextSourceIntegrityError('Artifact Context source was not found');
+    }
+    throw new ContextBuildFailureError(true);
+  }
+  return byMessage;
 }
 
 const summaryHeadings = [
@@ -128,11 +227,21 @@ function redactSensitiveSummaryMaterial(text: string): string {
       '$1=[REDACTED]');
 }
 
-function summaryPrompt(messages: readonly Message[]): string {
+function summaryPrompt(
+  messages: readonly Message[],
+  artifactsByMessage: ReadonlyMap<MessageId, readonly ResolvedArtifactSource[]>,
+): string {
   const source = messages.map((message) => ({
     sequence: message.sequence,
     role: message.author,
     text: redactSensitiveSummaryMaterial(messageText(message)),
+    artifacts: (artifactsByMessage.get(message.id) ?? []).map((artifact) => ({
+      artifactId: artifact.artifactId,
+      artifactVersionId: artifact.versionId,
+      ...(artifact.content === undefined
+        ? { inclusion: 'reference_only' }
+        : { content: redactSensitiveSummaryMaterial(artifact.content) }),
+    })),
   }));
   return [
     'Summarize the bounded conversation source as low-trust reference material.',
@@ -223,17 +332,20 @@ function mapManifestItem(row: ManifestItemRow): ContextManifestItem {
     };
   }
   if (row.source_kind === 'artifact') {
-    if (row.source_sequence !== null || row.provenance !== 'artifact_version'
-      || row.trust_class !== 'reference' || row.inclusion_mode !== 'verbatim') {
+    if (row.artifact_id === null || row.source_sequence !== null
+      || row.provenance !== 'artifact_version'
+      || row.trust_class !== 'reference'
+      || !['verbatim', 'summary', 'reference_only'].includes(row.inclusion_mode)) {
       throw new ContextSourceIntegrityError('Stored Artifact Context item is invalid');
     }
     return {
       sourceKind: 'artifact',
       ...common,
+      artifactId: row.artifact_id as ContextArtifactId,
       sourceId: row.source_id as ContextArtifactVersionId,
       provenance: 'artifact_version',
       trustClass: 'reference',
-      inclusionMode: 'verbatim',
+      inclusionMode: row.inclusion_mode as 'verbatim' | 'summary' | 'reference_only',
     };
   }
   if (row.source_sequence !== null || row.provenance !== 'context_summary'
@@ -264,7 +376,7 @@ async function loadManifest(
   const row = result.rows[0];
   if (!row) return undefined;
   const items = await client.query<ManifestItemRow>(
-    `SELECT position, source_kind, source_id, source_sequence, source_hash,
+    `SELECT position, source_kind, source_id, artifact_id, source_sequence, source_hash,
             provenance, trust_class, inclusion_mode
      FROM context_manifest_items
      WHERE organization_id = $1 AND manifest_id = $2
@@ -307,6 +419,7 @@ export class PostgresContextBuilder implements ContextBuilder {
     private readonly pool: Pool,
     private readonly conversations: Pick<ConversationModule, 'readHistoryThrough'>,
     private readonly summaryModels?: Pick<ModelGateway, 'stream'>,
+    private readonly artifacts?: Pick<ArtifactModule, 'get' | 'open'>,
     private readonly policy: ContextPolicy = slice4BaselineContextPolicy,
   ) {}
 
@@ -338,6 +451,13 @@ export class PostgresContextBuilder implements ContextBuilder {
           conversationId: request.conversationId,
           triggerMessageId: request.triggerMessageId,
         });
+        const artifactSourcesByMessage = await resolveArtifactSources(
+          this.artifacts,
+          history.messages,
+          request.organizationId,
+          request.principalId,
+        );
+        const allArtifactSources = [...artifactSourcesByMessage.values()].flat();
         const effectiveInputTokens = deriveEffectiveContextInputLimit(
           this.policy,
           request.modelBudget,
@@ -346,12 +466,18 @@ export class PostgresContextBuilder implements ContextBuilder {
           (message) => message.id === request.triggerMessageId,
         );
         if (!trigger) throw new ContextSourceIntegrityError('Trigger Message is absent from history');
-        const mandatoryInputTokens = request.fixedOverheadTokens + estimateMessageTokens(trigger);
+        const mandatoryInputTokens = request.fixedOverheadTokens
+          + estimateMessageTokens(trigger)
+          + (artifactSourcesByMessage.get(trigger.id) ?? []).reduce(
+            (total, artifact) => total + artifact.estimatedTokens,
+            0,
+          );
         if (mandatoryInputTokens > effectiveInputTokens) {
           throw new ContextInputTooLargeError('Mandatory Invocation Context exceeds the input limit');
         }
         let estimatedInputTokens = request.fixedOverheadTokens
-          + history.messages.reduce((total, message) => total + estimateMessageTokens(message), 0);
+          + history.messages.reduce((total, message) => total + estimateMessageTokens(message), 0)
+          + allArtifactSources.reduce((total, artifact) => total + artifact.estimatedTokens, 0);
         let summary: (GeneratedSummary & {
           id: ContextSummaryId;
           sourceMessages: readonly Message[];
@@ -373,7 +499,12 @@ export class PostgresContextBuilder implements ContextBuilder {
             const turn = turns[index];
             if (!turn) continue;
             const turnTokens = turn.reduce(
-              (total, message) => total + estimateMessageTokens(message),
+              (total, message) => total
+                + estimateMessageTokens(message)
+                + (artifactSourcesByMessage.get(message.id) ?? []).reduce(
+                  (artifactTotal, artifact) => artifactTotal + artifact.estimatedTokens,
+                  0,
+                ),
               0,
             );
             if (retainedTokens + turnTokens > effectiveInputTokens) break;
@@ -386,7 +517,7 @@ export class PostgresContextBuilder implements ContextBuilder {
           if (sourceMessages.length === 0) {
             throw new ContextCompressionRequiredError('No contiguous Summary span was available');
           }
-          const prompt = summaryPrompt(sourceMessages);
+          const prompt = summaryPrompt(sourceMessages, artifactSourcesByMessage);
           if (estimateConservativeUtf8Tokens(prompt, request.fixedOverheadTokens)
             > effectiveInputTokens) {
             throw new ContextCompressionRequiredError('Summary source exceeds one Model request');
@@ -397,18 +528,26 @@ export class PostgresContextBuilder implements ContextBuilder {
             ...generated,
             id: randomUUID() as ContextSummaryId,
             sourceMessages,
-            sourceHash: hashText(JSON.stringify(sourceMessages.map((message) => ({
-              id: message.id,
-              sequence: message.sequence,
-              hash: sourceHash(message),
-            })))),
+            sourceHash: hashText(JSON.stringify(sourceMessages.flatMap((message) => [
+              { kind: 'message', id: message.id, sequence: message.sequence, hash: sourceHash(message) },
+              ...(artifactSourcesByMessage.get(message.id) ?? []).map((artifact) => ({
+                kind: 'artifact',
+                id: artifact.versionId,
+                hash: artifact.sourceHash,
+              })),
+            ]))),
             contentHash,
           };
           retainedMessages = [...retainedBeforeTrigger, trigger];
           estimatedInputTokens = request.fixedOverheadTokens
             + estimateConservativeUtf8Tokens(summary.content, 8)
             + retainedMessages.reduce(
-              (total, message) => total + estimateMessageTokens(message),
+              (total, message) => total
+                + estimateMessageTokens(message)
+                + (artifactSourcesByMessage.get(message.id) ?? []).reduce(
+                  (artifactTotal, artifact) => artifactTotal + artifact.estimatedTokens,
+                  0,
+                ),
               0,
             );
           if (estimatedInputTokens > effectiveInputTokens) {
@@ -417,7 +556,7 @@ export class PostgresContextBuilder implements ContextBuilder {
         }
 
         const manifestId = randomUUID() as ContextManifestId;
-        const itemCount = history.messages.length + (summary ? 1 : 0);
+        const itemCount = history.messages.length + allArtifactSources.length + (summary ? 1 : 0);
         await client.query('BEGIN');
         transactionStarted = true;
         await client.query(
@@ -451,25 +590,43 @@ export class PostgresContextBuilder implements ContextBuilder {
           );
         }
         let position = 0;
+        const lastSummaryMessageId = summary?.sourceMessages.at(-1)?.id;
         for (const message of history.messages) {
-          const inclusionMode = summary?.sourceMessages.some((source) => source.id === message.id)
-            ? 'summary' : 'verbatim';
+          const messageIsSummarized = summary?.sourceMessages.some(
+            (source) => source.id === message.id,
+          ) ?? false;
           await client.query(
             `INSERT INTO context_manifest_items (
-               manifest_id, organization_id, position, source_kind, source_id,
+               manifest_id, organization_id, position, source_kind, source_id, artifact_id,
                source_sequence, source_hash, provenance, trust_class, inclusion_mode
-             ) VALUES ($1, $2, $3, 'message', $4, $5, $6, $7, 'conversation', $8)`,
+             ) VALUES ($1, $2, $3, 'message', $4, NULL, $5, $6, $7, 'conversation', $8)`,
             [manifestId, request.organizationId, position, message.id, message.sequence,
               sourceHash(message), message.author === 'employee'
-                ? 'employee_message' : 'assistant_message', inclusionMode],
+                ? 'employee_message' : 'assistant_message',
+              messageIsSummarized ? 'summary' : 'verbatim'],
           );
           position += 1;
-          if (summary && position === summary.sourceMessages.length) {
+          for (const artifact of artifactSourcesByMessage.get(message.id) ?? []) {
+            const inclusionMode = messageIsSummarized
+              ? 'summary'
+              : artifact.content === undefined ? 'reference_only' : 'verbatim';
             await client.query(
               `INSERT INTO context_manifest_items (
-                 manifest_id, organization_id, position, source_kind, source_id,
+                 manifest_id, organization_id, position, source_kind, source_id, artifact_id,
                  source_sequence, source_hash, provenance, trust_class, inclusion_mode
-               ) VALUES ($1, $2, $3, 'summary', $4, NULL, $5,
+               ) VALUES ($1, $2, $3, 'artifact', $4, $5, NULL, $6,
+                         'artifact_version', 'reference', $7)`,
+              [manifestId, request.organizationId, position, artifact.versionId,
+                artifact.artifactId, artifact.sourceHash, inclusionMode],
+            );
+            position += 1;
+          }
+          if (summary && message.id === lastSummaryMessageId) {
+            await client.query(
+              `INSERT INTO context_manifest_items (
+                 manifest_id, organization_id, position, source_kind, source_id, artifact_id,
+                 source_sequence, source_hash, provenance, trust_class, inclusion_mode
+               ) VALUES ($1, $2, $3, 'summary', $4, NULL, NULL, $5,
                          'context_summary', 'reference', 'summary')`,
               [manifestId, request.organizationId, position, summary.id, summary.contentHash],
             );
@@ -498,6 +655,7 @@ export class PostgresContextBuilder implements ContextBuilder {
       manifest,
       invocationContext: await this.materialize({
         organizationId: request.organizationId,
+        principalId: request.principalId,
         manifestId: manifest.id,
       }),
     };
@@ -515,7 +673,10 @@ export class PostgresContextBuilder implements ContextBuilder {
     });
     const messagesById = new Map(history.messages.map((message) => [message.id, message]));
     const messages: InvocationContextMessage[] = [];
-    const summarySourceReferences: Array<{ id: MessageId; sequence: number; hash: ContextSourceHash }> = [];
+    const summarySourceReferences: Array<
+      | { kind: 'message'; id: MessageId; sequence: number; hash: ContextSourceHash }
+      | { kind: 'artifact'; id: ContextArtifactVersionId; hash: ContextSourceHash }
+    > = [];
     for (const item of manifest.items) {
       if (item.sourceKind === 'message') {
         const message = messagesById.get(item.sourceId);
@@ -530,6 +691,7 @@ export class PostgresContextBuilder implements ContextBuilder {
         }
         if (item.inclusionMode === 'summary') {
           summarySourceReferences.push({
+            kind: 'message',
             id: message.id,
             sequence: message.sequence,
             hash: item.sourceHash,
@@ -546,8 +708,13 @@ export class PostgresContextBuilder implements ContextBuilder {
       if (item.sourceKind === 'summary') {
         const summary = await loadSummary(this.pool, request.organizationId, item.sourceId);
         const expectedSourceHash = hashText(JSON.stringify(summarySourceReferences));
-        const firstSource = summarySourceReferences[0];
-        const lastSource = summarySourceReferences.at(-1);
+        const messageReferences = summarySourceReferences.filter(
+          (reference): reference is Extract<typeof reference, { kind: 'message' }> => (
+            reference.kind === 'message'
+          ),
+        );
+        const firstSource = messageReferences[0];
+        const lastSource = messageReferences.at(-1);
         if (!summary || !firstSource || !lastSource
           || hashText(summary.content) !== item.sourceHash
           || summary.content_hash !== item.sourceHash
@@ -564,7 +731,66 @@ export class PostgresContextBuilder implements ContextBuilder {
         });
         continue;
       }
-      throw new ContextSourceIntegrityError('Artifact Context is not available in this Slice');
+      if (!this.artifacts) throw new ContextSourceIntegrityError('Artifacts Module is unavailable');
+      const identity: RequestIdentity = {
+        organizationId: request.organizationId,
+        principalId: request.principalId,
+        principalType: 'employee',
+        displayName: 'Invocation initiator',
+      };
+      try {
+        const view = await this.artifacts.get({
+          identity,
+          artifactId: item.artifactId as unknown as ArtifactId,
+        });
+        const version = view.versions.find((candidate) => (
+          candidate.id === (item.sourceId as unknown as ArtifactVersionId)
+        ));
+        if (!version) throw new ContextSourceIntegrityError('Artifact Version was not found');
+        const supported = view.artifact.kind === 'text'
+          && (version.mediaType === 'text/plain; charset=utf-8'
+            || version.mediaType === 'text/markdown; charset=utf-8');
+        if (!supported || item.inclusionMode === 'reference_only') {
+          const metadata = JSON.stringify({
+            artifactId: item.artifactId,
+            artifactVersionId: item.sourceId,
+            kind: view.artifact.kind,
+            mediaType: version.mediaType,
+          });
+          if (hashText(metadata) !== item.sourceHash
+            || (item.inclusionMode !== 'reference_only' && item.inclusionMode !== 'summary')) {
+            throw new ContextSourceIntegrityError('Artifact Context metadata integrity check failed');
+          }
+          if (item.inclusionMode === 'summary') {
+            summarySourceReferences.push({
+              kind: 'artifact', id: item.sourceId, hash: item.sourceHash,
+            });
+          }
+          continue;
+        }
+        const opened = await this.artifacts.open({
+          identity,
+          artifactId: item.artifactId as unknown as ArtifactId,
+          artifactVersionId: item.sourceId as unknown as ArtifactVersionId,
+        });
+        const content = await artifactText(opened.bytes);
+        if (hashText(content) !== item.sourceHash) {
+          throw new ContextSourceIntegrityError('Artifact Context source integrity check failed');
+        }
+        if (item.inclusionMode === 'summary') {
+          summarySourceReferences.push({
+            kind: 'artifact', id: item.sourceId, hash: item.sourceHash,
+          });
+        } else {
+          messages.push({ role: 'reference', text: content, trustClass: 'reference' });
+        }
+      } catch (error) {
+        if (error instanceof ContextSourceIntegrityError) throw error;
+        if (error instanceof ArtifactNotFoundError) {
+          throw new ContextSourceIntegrityError('Artifact Context source was not found');
+        }
+        throw new ContextBuildFailureError(true);
+      }
     }
     return { manifestId: manifest.id, messages };
   }

@@ -195,6 +195,7 @@ describe('governed Invocation Context', () => {
     const context = new PostgresContextBuilder(pool, conversations, models);
     const request = {
       organizationId: requestIdentity.organizationId,
+      principalId: requestIdentity.principalId,
       invocationId: contextInvocationId(randomUUID()),
       conversationId: conversation.id,
       triggerMessageId: trigger.id,
@@ -319,6 +320,7 @@ describe('governed Invocation Context', () => {
 
     const buildRequest = {
       organizationId: requestIdentity.organizationId,
+      principalId: requestIdentity.principalId,
       invocationId,
       conversationId: conversation.id,
       triggerMessageId: trigger.id,
@@ -361,6 +363,7 @@ describe('governed Invocation Context', () => {
 
     await expect(context.materialize({
       organizationId: requestIdentity.organizationId,
+      principalId: requestIdentity.principalId,
       manifestId: built.manifest.id,
     })).resolves.toEqual(built.invocationContext);
   });

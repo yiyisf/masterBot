@@ -1,5 +1,5 @@
 import type { ConversationId, MessageId } from '@cmaster/conversations';
-import type { OrganizationId } from '@cmaster/identity';
+import type { OrganizationId, PrincipalId } from '@cmaster/identity';
 import type { Brand } from '@cmaster/kernel';
 
 export type ContextPolicyRevision = Brand<string, 'ContextPolicyRevision'>;
@@ -60,6 +60,7 @@ export function deriveEffectiveContextInputLimit(
 export type ContextManifestId = Brand<string, 'ContextManifestId'>;
 export type ContextRunId = Brand<string, 'ContextRunId'>;
 export type ContextInvocationId = Brand<string, 'ContextInvocationId'>;
+export type ContextArtifactId = Brand<string, 'ContextArtifactId'>;
 export type ContextArtifactVersionId = Brand<string, 'ContextArtifactVersionId'>;
 export type ContextSummaryId = Brand<string, 'ContextSummaryId'>;
 export type ContextSourceHash = Brand<string, 'ContextSourceHash'>;
@@ -72,6 +73,11 @@ export function contextRunId(value: string): ContextRunId {
 /** Converts an Execution-owned Invocation reference at the Context boundary. */
 export function contextInvocationId(value: string): ContextInvocationId {
   return value as ContextInvocationId;
+}
+
+/** Converts an Artifact reference at the Context boundary. */
+export function contextArtifactId(value: string): ContextArtifactId {
+  return value as ContextArtifactId;
 }
 
 /** Converts an Artifact Version reference at the Context boundary. */
@@ -97,11 +103,12 @@ export type ContextManifestItem =
   }
   | {
     readonly sourceKind: 'artifact';
+    readonly artifactId: ContextArtifactId;
     readonly sourceId: ContextArtifactVersionId;
     readonly sourceHash: ContextSourceHash;
     readonly provenance: 'artifact_version';
     readonly trustClass: 'reference';
-    readonly inclusionMode: 'verbatim';
+    readonly inclusionMode: 'verbatim' | 'summary' | 'reference_only';
   }
   | {
     readonly sourceKind: 'summary';
@@ -146,6 +153,7 @@ export interface InvocationContext {
 /** Stable Invocation/source identities and approved limits required for Context selection. */
 export interface BuildInvocationContext {
   organizationId: OrganizationId;
+  principalId: PrincipalId;
   invocationId: ContextInvocationId;
   conversationId: ConversationId;
   triggerMessageId: MessageId;
@@ -166,6 +174,7 @@ export interface BuiltInvocationContext {
 /** Organization-scoped request to verify and materialize a completed Manifest. */
 export interface MaterializeInvocationContext {
   organizationId: OrganizationId;
+  principalId: PrincipalId;
   manifestId: ContextManifestId;
 }
 

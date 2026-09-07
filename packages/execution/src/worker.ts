@@ -118,6 +118,7 @@ export class RunWorker {
         if (lease.contextManifestId) {
           invocationContext = await this.contextRuntime.builder.materialize({
             organizationId: lease.organizationId,
+            principalId: lease.initiatingPrincipalId,
             manifestId: lease.contextManifestId,
           });
         } else {
@@ -134,6 +135,7 @@ export class RunWorker {
           });
           const built = await this.contextRuntime.builder.build({
             organizationId: lease.organizationId,
+            principalId: lease.initiatingPrincipalId,
             invocationId: contextInvocationId(lease.invocationId),
             conversationId: lease.conversationId,
             triggerMessageId: lease.messageId,

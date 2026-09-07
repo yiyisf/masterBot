@@ -186,6 +186,7 @@ describe('Context-aware Worker execution', () => {
     };
     const precommitted = await builder.build({
       organizationId: requestIdentity.organizationId,
+      principalId: requestIdentity.principalId,
       invocationId: contextInvocationId(accepted.value.rootInvocation.id),
       conversationId: conversation.id,
       triggerMessageId: trigger.id,

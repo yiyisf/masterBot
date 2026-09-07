@@ -191,10 +191,10 @@ if (notifier instanceof PostgresRunEventNotifier) await notifier.start();
 
 const engines: AgentEngine[] = [new EchoAgentEngine()];
 if (models) engines.push(new AiSdkAgentEngine(models, governedAgentTools));
-const contextRuntime = config.features.contextArtifacts && models && governedAgentTools
+const contextRuntime = config.features.contextArtifacts && models && governedAgentTools && artifacts
   ? {
     agentRevisionId: agentRevisionId(config.developmentIdentity.contextArtifactAgentRevisionId),
-    builder: new PostgresContextBuilder(database.pool, conversations, models),
+    builder: new PostgresContextBuilder(database.pool, conversations, models, artifacts),
     models,
     resolveFixedOverheadTokens: async (input: Parameters<GovernedAgentToolRuntime['list']>[0]) => (
       slice4BaselineFixedOverheadTokens
