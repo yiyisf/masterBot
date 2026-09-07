@@ -1,3 +1,8 @@
+import {
+  artifactId,
+  artifactVersionId,
+  CREATE_TEXT_ARTIFACT_CAPABILITY_ID,
+} from '@cmaster/artifacts';
 import type {
   AgentToolOutcome,
   AgentToolRuntime,
@@ -117,6 +122,28 @@ export class GovernedAgentToolRuntime implements AgentToolRuntime {
   }
 }
 
+function artifactCompletion(value: unknown): NonNullable<
+  Extract<AgentToolOutcome, { kind: 'completed' }>['artifact']
+> {
+  if (!value || typeof value !== 'object'
+    || !('artifactId' in value) || typeof value.artifactId !== 'string'
+    || !('artifactVersionId' in value) || typeof value.artifactVersionId !== 'string'
+    || !('kind' in value) || value.kind !== 'text'
+    || !('mediaType' in value)
+    || (value.mediaType !== 'text/plain; charset=utf-8'
+      && value.mediaType !== 'text/markdown; charset=utf-8')) {
+    throw new GovernedToolRecoveryError();
+  }
+  return {
+    reference: {
+      artifactId: artifactId(value.artifactId),
+      artifactVersionId: artifactVersionId(value.artifactVersionId),
+    },
+    kind: 'text',
+    mediaType: value.mediaType,
+  };
+}
+
 function projectCall(call: ToolCall, descriptor: ToolDescriptor): AgentToolOutcome {
   if (call.outcome) return projectOutcome(call.outcome, descriptor);
   if (call.status === 'awaiting_confirmation') {
@@ -139,6 +166,9 @@ function projectOutcome(outcome: ToolOutcome, descriptor: ToolDescriptor): Agent
         toolCallId: outcome.toolCallId,
         modelOutput: outcome.value,
         safeSummary: outcome.safeSummary,
+        ...(descriptor.capabilityId === CREATE_TEXT_ARTIFACT_CAPABILITY_ID
+          ? { artifact: artifactCompletion(outcome.value) }
+          : {}),
       };
     case 'denied':
       return {

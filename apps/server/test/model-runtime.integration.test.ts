@@ -45,6 +45,7 @@ class ScriptedModelAdapter implements ModelAdapter {
   readonly providerKind = 'openai-compatible' as const;
   fallbackCalls = 0;
   primaryCalls = 0;
+  readonly requests: ModelAdapterRequest[] = [];
 
   constructor(private readonly mode:
     | 'fallback-after-partial'
@@ -53,6 +54,7 @@ class ScriptedModelAdapter implements ModelAdapter {
     | 'tool-request') {}
 
   async *stream(request: ModelAdapterRequest): AsyncIterable<ModelAdapterEvent> {
+    this.requests.push(request);
     if (request.profile.routeRole === 'fallback') {
       this.fallbackCalls += 1;
       yield { type: 'text_delta', text: 'final fallback answer' };
@@ -105,11 +107,12 @@ async function fixture(
     principalDisplayName: 'Model Runtime Employee',
   });
   await identity.provision();
+  const aiSdkRevisionId = agentRevisionId(randomUUID());
   const agent = new PostgresAgentModule(pool, {
     agentId: agentId(randomUUID()),
     echoRevisionId: agentRevisionId(randomUUID()),
-    aiSdkRevisionId: agentRevisionId(randomUUID()),
-    activeEngineKind: 'ai-sdk',
+    aiSdkRevisionId,
+    activeRevisionId: aiSdkRevisionId,
     name: `AI Agent ${randomUUID()}`,
   });
   await agent.provision(identity.resolveRequest().organizationId);
@@ -136,17 +139,18 @@ async function fixture(
       providerModelId: 'primary-model',
       credentialRef: 'env:primary',
       capabilities: { streamingText: true, toolCalling: true },
+      contextLimits: { contextWindowTokens: 131_072, maxOutputTokens: 16_384 },
       dataHandlingTier: 'test',
       costTier: 'test',
     },
-    {
-      id: fallbackProfileId,
+    {      id: fallbackProfileId,
       displayName: 'Fallback Test Model',
       routeRole: 'fallback',
       baseUrl: 'https://fallback.example.test/v1',
       providerModelId: 'fallback-model',
       credentialRef: 'env:fallback',
       capabilities: { streamingText: true, toolCalling: true },
+      contextLimits: { contextWindowTokens: 65_536, maxOutputTokens: 8_192 },
       dataHandlingTier: 'test',
       costTier: 'test',
     },
@@ -198,6 +202,88 @@ async function fixture(
 }
 
 describe('AI SDK Model Runtime', () => {
+  it('records context-summary work with Tool use disabled and actual usage', async () => {
+    const adapter = new ScriptedModelAdapter('primary-success');
+    const runtime = await fixture(adapter, false);
+    const events = [];
+    for await (const event of runtime.models.stream({
+      organizationId: runtime.identity.resolveRequest().organizationId,
+      runId: runtime.runId,
+      invocationId: randomUUID(),
+      purpose: 'context_summary',
+      prompt: 'Summarize the bounded source span.',
+      signal: new AbortController().signal,
+    })) events.push(event);
+
+    expect(events.at(-1)).toMatchObject({
+      type: 'model_completed',
+      profile: { id: runtime.primaryProfileId },
+      usage: { inputTokens: 2, outputTokens: 2, totalTokens: 4 },
+    });
+    expect(adapter.requests[0]?.tools).toBeUndefined();
+    const streamWithTool = async () => {
+      for await (const event of runtime.models.stream({
+        organizationId: runtime.identity.resolveRequest().organizationId,
+        runId: runtime.runId,
+        invocationId: randomUUID(),
+        purpose: 'context_summary',
+        prompt: 'Do not execute Tools.',
+        tools: [{
+          name: 'forbidden_tool',
+          description: 'Must remain unavailable to summary calls.',
+          inputSchema: { type: 'object' },
+          outputSchema: { type: 'object' },
+        }],
+        signal: new AbortController().signal,
+      })) { throw new Error(`Unexpected summary Model event: ${event.type}`); }
+    };
+    await expect(streamWithTool()).rejects.toThrow('cannot enable Tools');
+    const calls = await runtime.models.listCalls(
+      runtime.identity.resolveRequest().organizationId,
+      runtime.runId,
+    );
+    expect(calls).toHaveLength(1);
+    expect(calls[0]).toMatchObject({
+      purpose: 'context_summary',
+      modelProfileId: runtime.primaryProfileId,
+      usage: { inputTokens: 2, outputTokens: 2, totalTokens: 4 },
+    });
+    await runtime.worker.relayOne();
+    await runtime.worker.executeOne();
+  });
+
+  it('keeps context-summary purpose and usage through constrained Fallback', async () => {
+    const adapter = new ScriptedModelAdapter('fallback-after-partial');
+    const runtime = await fixture(adapter, false);
+    const events = [];
+    for await (const event of runtime.models.stream({
+      organizationId: runtime.identity.resolveRequest().organizationId,
+      runId: runtime.runId,
+      invocationId: randomUUID(),
+      purpose: 'context_summary',
+      prompt: 'Summarize the bounded source span.',
+      signal: new AbortController().signal,
+    })) events.push(event);
+
+    expect(events).toContainEqual({
+      type: 'model_fallback_selected',
+      fromProfileId: runtime.primaryProfileId,
+      toProfile: { id: runtime.fallbackProfileId, displayName: 'Fallback Test Model' },
+    });
+    const calls = await runtime.models.listCalls(
+      runtime.identity.resolveRequest().organizationId,
+      runtime.runId,
+    );
+    expect(calls.map((call) => [call.purpose, call.routeRole, call.status])).toEqual([
+      ['context_summary', 'primary', 'discarded'],
+      ['context_summary', 'fallback', 'succeeded'],
+    ]);
+    expect(calls[1]?.usage).toEqual({ inputTokens: 4, outputTokens: 3, totalTokens: 7 });
+    expect(adapter.requests.every((request) => request.tools === undefined)).toBe(true);
+    await runtime.worker.relayOne();
+    await runtime.worker.executeOne();
+  });
+
   it('publishes a Model Tool Request only after its ModelCall is durably completed', async () => {
     const runtime = await fixture(new ScriptedModelAdapter('tool-request'), false);
     await runtime.worker.relayOne();

@@ -116,7 +116,7 @@ data/artifacts/
 └── trash/{date}/...
 ```
 
-业务只持有 `contentId`；本地路径不进入 Domain 或 Contract。
+业务只持有 `contentId`；本地路径不进入 Domain 或 Contract。该目录是 Adapter 的目标布局而非要求预建空能力：Slice 4 实现 staging、正式 Blob 与过期 staging 清理；quarantine、derivatives、trash 在文件上传、预览、删除/GC 出现真实调用者时按此布局延后启用。
 
 ## 8. 身份、安全与治理
 

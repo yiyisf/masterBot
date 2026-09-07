@@ -19,7 +19,9 @@
   },
   "dependencies": {
     "@cmaster/agents": "0.0.0",
+    "@cmaster/artifacts": "0.0.0",
     "@cmaster/contracts": "0.0.0",
+    "@cmaster/context": "0.0.0",
     "@cmaster/conversations": "0.0.0",
     "@cmaster/execution": "0.0.0",
     "@cmaster/governance": "0.0.0",

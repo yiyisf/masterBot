@@ -6,7 +6,16 @@ export const textMessagePartSchema = z.object({
   type: z.literal('text'),
   text: z.string().max(32 * 1024).refine((value) => value.trim().length > 0, 'Text is required'),
 });
-export const messagePartsSchema = z.tuple([textMessagePartSchema]);
+export const artifactReferenceMessagePartSchema = z.object({
+  type: z.literal('artifact_reference'),
+  artifactId: uuidSchema,
+  artifactVersionId: uuidSchema,
+});
+export const employeeMessagePartsSchema = z.tuple([textMessagePartSchema]);
+export const messagePartsSchema = z.array(z.discriminatedUnion('type', [
+  textMessagePartSchema,
+  artifactReferenceMessagePartSchema,
+])).min(1);
 
 export const createConversationRequestSchema = z.object({
   title: z.string().trim().min(1).max(200).optional(),
@@ -20,7 +29,7 @@ export const conversationSchema = z.object({
   createdAt: isoDateTimeSchema,
   updatedAt: isoDateTimeSchema,
 });
-export const appendMessageRequestSchema = z.object({ parts: messagePartsSchema });
+export const appendMessageRequestSchema = z.object({ parts: employeeMessagePartsSchema });
 export const messageSchema = z.object({
   id: uuidSchema,
   organizationId: uuidSchema,

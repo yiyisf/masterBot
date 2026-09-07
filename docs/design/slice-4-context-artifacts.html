@@ -1,0 +1,333 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>CMaster Bot Slice 4 — Context & Artifacts 设计</title>
+  <style>
+    :root { color-scheme:light dark; --bg:#f5f7fb; --panel:#fff; --text:#17212f; --muted:#566273; --line:#d5ddea; --brand:#4c51bf; --safe:#137a52; --warn:#9a5b00; --danger:#b42318; --code:#edf1f7; }
+    @media (prefers-color-scheme:dark) { :root { --bg:#101722; --panel:#18212f; --text:#edf2f7; --muted:#aab6c6; --line:#344257; --brand:#9ba7ff; --safe:#6dd4a1; --warn:#f4bd64; --danger:#ff8f87; --code:#222d3c; } }
+    * { box-sizing:border-box; }
+    body { margin:0; font:16px/1.65 system-ui,-apple-system,"Segoe UI",sans-serif; background:var(--bg); color:var(--text); }
+    header,main,footer { width:min(1180px,calc(100% - 32px)); margin:auto; }
+    header { padding:56px 0 26px; }
+    h1 { margin:0 0 14px; font-size:clamp(2.1rem,5vw,3.7rem); line-height:1.08; }
+    h2 { margin-top:44px; padding-bottom:8px; border-bottom:1px solid var(--line); }
+    h3 { margin:22px 0 8px; }
+    a { color:var(--brand); }
+    code,pre { font-family:ui-monospace,SFMono-Regular,Consolas,monospace; }
+    code { padding:.12em .35em; border-radius:5px; background:var(--code); }
+    pre { padding:16px; overflow:auto; border:1px solid var(--line); border-radius:10px; background:var(--code); }
+    .meta,.card,.decision,.notice,.flow { padding:18px 20px; margin:16px 0; border:1px solid var(--line); border-radius:12px; background:var(--panel); }
+    .meta { display:grid; grid-template-columns:repeat(auto-fit,minmax(190px,1fr)); gap:12px; }
+    .meta strong { display:block; color:var(--muted); font-size:.8rem; letter-spacing:.06em; text-transform:uppercase; }
+    .grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(290px,1fr)); gap:16px; }
+    .tag { display:inline-block; margin:2px; padding:2px 9px; border:1px solid var(--line); border-radius:999px; font-size:.82rem; }
+    .decision { border-left:5px solid var(--brand); }
+    .notice { border-left:5px solid var(--warn); }
+    .safe { color:var(--safe); } .warn { color:var(--warn); } .danger { color:var(--danger); }
+    table { display:block; width:100%; margin:16px 0; overflow:auto; border-collapse:collapse; }
+    th,td { padding:10px 12px; border:1px solid var(--line); text-align:left; vertical-align:top; }
+    th { background:var(--code); }
+    ul.tight li,ol.tight li { margin:.25em 0; }
+    .flow ol { margin:0; padding-left:22px; }
+    .flow li { padding:4px 0; }
+    svg { width:100%; height:auto; border:1px solid var(--line); border-radius:12px; background:var(--panel); }
+    svg text { fill:var(--text); font-family:system-ui,sans-serif; }
+    svg .box { fill:var(--code); stroke:var(--line); stroke-width:2; }
+    svg .arrow { fill:none; stroke:var(--brand); stroke-width:2; marker-end:url(#arrow); }
+    footer { padding:48px 0; color:var(--muted); }
+    @media print { :root { color-scheme:light; } body { background:white; } .card,.decision,.notice,.flow { break-inside:avoid; } }
+  </style>
+</head>
+<body>
+<header>
+  <p><span class="tag">Accepted Design</span> <span class="tag">Slice 4</span> <span class="tag">Grill 对齐产物</span></p>
+  <h1>Context &amp; Artifacts</h1>
+  <p>在 Governed Tool Runtime 上建立可审计、可恢复的 Invocation Context，以及内容寻址、版本不可覆盖、可被后续 Run 复用的 Text/Markdown Artifact。</p>
+  <div class="meta">
+    <div><strong>分支</strong><code>refactor/context-artifacts</code></div>
+    <div><strong>日期</strong>2026-09-05</div>
+    <div><strong>基线</strong><code>aae698f</code></div>
+    <div><strong>Feature Flag</strong><code>CMASTER_CONTEXT_ARTIFACTS_ENABLED</code></div>
+  </div>
+</header>
+<main>
+<section>
+  <h2>1. 主验收场景</h2>
+  <div class="flow"><ol>
+    <li>Employee 在已有 Conversation 中发送第二个 Trigger Message，并创建 Run。</li>
+    <li>Worker 领取 Run；Context Builder 只读取截至 Trigger Message 的历史。</li>
+    <li>短历史保留原文；超预算时生成较早历史的 Context Summary，并保留最近完整 Turn。</li>
+    <li>Context Manifest 固定来源、hash、预算和纳入方式；Agent Engine 只消费构建结果。</li>
+    <li>模型经 Governed Tool Runtime 调用 <code>cmaster.artifact.create_text</code>。</li>
+    <li>Artifacts Module 创建私有、不可变 Version 1，ToolOutcome 返回 Artifact Reference。</li>
+    <li>Harness 确定性把引用附加到最终 Assistant Message。</li>
+    <li>刷新或 Worker 重启后，Employee 仍可预览、下载或 Range 读取确切 Version。</li>
+  </ol></div>
+  <div class="notice"><strong>范围原则：</strong>主流程中的 Organization 隔离、Principal 权限、幂等、Worker 恢复、不可变版本和内容安全属于首版正确性；上传、复杂预览、删除、多级摘要等没有当前调用者的能力只记录，不深度设计。</div>
+</section>
+
+<section>
+  <h2>2. 领域语言</h2>
+  <table><thead><tr><th>术语</th><th>本 Slice 含义</th><th>不得混用</th></tr></thead><tbody>
+    <tr><td>Conversation</td><td>完整、员工可见的 Message 历史事实。</td><td>不是模型 Context，也不执行摘要。</td></tr>
+    <tr><td>Invocation Context</td><td>为一次 Invocation 构造的有限、受 Policy 约束、Engine-neutral 投影。</td><td>不是 Conversation History 副本。</td></tr>
+    <tr><td>Context Summary</td><td>对明确来源区间的有损派生压缩。</td><td>不是 Message、Memory、Knowledge 或指令。</td></tr>
+    <tr><td>Context Manifest</td><td>记录一次 Invocation 实际使用哪些来源、hash、预算和纳入方式的不可变记录。</td><td>不保存 Message/Artifact 正文。</td></tr>
+    <tr><td>Artifact</td><td>持久、版本化、可复用的工作输出。</td><td>不是 Tool Outcome 或 Message 附件。</td></tr>
+    <tr><td>Artifact Reference</td><td>指向一个确切 Artifact Version 的稳定引用。</td><td>不是 latest-version link、内容或 storage key。</td></tr>
+  </tbody></table>
+</section>
+
+<section>
+  <h2>3. 范围与非目标</h2>
+  <div class="grid">
+    <article class="card"><h3>本 Slice 交付</h3><ul class="tight">
+      <li>Context Builder、baseline Context Policy、Manifest、Summary</li>
+      <li>Trigger sequence 边界、预算、最近 Turn 与 Artifact 展开</li>
+      <li>Artifact/Version/Content 与本地内容寻址 Adapter</li>
+      <li><code>cmaster.artifact.create_text</code> 产品 Tool</li>
+      <li>Artifact Reference Message Part 与崩溃恢复</li>
+      <li>只读 REST、单 byte Range、最小 Renderer Registry</li>
+      <li>安全 Run Events、PostgreSQL Integration 与 UI Projection 测试</li>
+    </ul></article>
+    <article class="card"><h3>明确延期</h3><ul class="tight">
+      <li>上传、quarantine、病毒扫描</li>
+      <li>PDF/Office/图片、derivatives、缩略图</li>
+      <li>删除、trash、引用 GC</li>
+      <li>共享、团队、管理员读取、公开链接</li>
+      <li>递归/分块/滚动摘要、语义检索、Memory/Knowledge</li>
+      <li>Provider-side compaction、精确 tokenizer、执行中 Tool Result 压缩</li>
+      <li>Artifact 编辑、版本 UI、完整 Artifact 列表与正式视觉稿</li>
+    </ul></article>
+  </div>
+</section>
+
+<section>
+  <h2>4. Module 所有权与依赖</h2>
+  <svg viewBox="0 0 1120 470" role="img" aria-label="Context and Artifact module flow">
+    <defs><marker id="arrow" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto"><path d="M0,0 L0,6 L9,3 z" fill="currentColor"/></marker></defs>
+    <rect class="box" x="30" y="40" width="190" height="100" rx="12"/><text x="55" y="73" font-weight="700">Conversations</text><text x="55" y="100">完整 Message</text><text x="55" y="124">sequence boundary</text>
+    <rect class="box" x="285" y="40" width="190" height="100" rx="12"/><text x="310" y="73" font-weight="700">Context</text><text x="310" y="100">Policy / Summary</text><text x="310" y="124">Manifest / projection</text>
+    <rect class="box" x="540" y="40" width="190" height="100" rx="12"/><text x="565" y="73" font-weight="700">Execution</text><text x="565" y="100">Harness / Checkpoint</text><text x="565" y="124">output_ready</text>
+    <rect class="box" x="795" y="40" width="190" height="100" rx="12"/><text x="820" y="73" font-weight="700">Models</text><text x="820" y="100">summary + agent calls</text><text x="820" y="124">usage / fallback</text>
+    <rect class="box" x="155" y="285" width="210" height="110" rx="12"/><text x="180" y="318" font-weight="700">Artifacts</text><text x="180" y="345">Version / Content</text><text x="180" y="370">Storage + Tool Adapter</text>
+    <rect class="box" x="455" y="285" width="190" height="110" rx="12"/><text x="480" y="318" font-weight="700">Tools</text><text x="480" y="345">Grant / Policy / Ledger</text><text x="480" y="370">dispatch / Outcome</text>
+    <rect class="box" x="735" y="285" width="210" height="110" rx="12"/><text x="760" y="318" font-weight="700">apps/server + web</text><text x="760" y="345">Composition / REST</text><text x="760" y="370">Projection / Renderer</text>
+    <path class="arrow" d="M220 90 H275"/><path class="arrow" d="M475 90 H530"/><path class="arrow" d="M730 90 H785"/>
+    <path class="arrow" d="M380 140 V240 H260 V275"/><path class="arrow" d="M550 285 V220 H260 V275"/><path class="arrow" d="M645 340 H725"/>
+    <path class="arrow" d="M840 285 V220 H635 V150"/>
+  </svg>
+  <table><thead><tr><th>Module</th><th>拥有</th><th>不拥有</th></tr></thead><tbody>
+    <tr><td><code>@cmaster/conversations</code></td><td>完整 Message、Trigger sequence、受控读取</td><td>Context 选择、摘要、token 预算</td></tr>
+    <tr><td><code>@cmaster/context</code></td><td>Context Policy、Summary、Manifest、物化与 provenance</td><td>Message/Artifact 权威存储、Provider 格式</td></tr>
+    <tr><td><code>@cmaster/artifacts</code></td><td>Artifact/Version/Content、存储、读取授权、Artifact Tool Adapter</td><td>Tool Ledger、Run 状态、UI 状态</td></tr>
+    <tr><td><code>@cmaster/tools</code></td><td>通用 Catalog/Runtime、Policy、Ledger、dispatch</td><td>Artifact 表与版本规则</td></tr>
+    <tr><td><code>@cmaster/execution</code></td><td>构建时机、Manifest 固定、Checkpoint 增量、最终 Message parts</td><td>摘要算法、Blob、跨 Module SQL</td></tr>
+    <tr><td><code>@cmaster/models</code></td><td>Profile limits、summary/agent ModelCall、Fallback、usage</td><td>Context source selection</td></tr>
+    <tr><td><code>apps/server/web</code></td><td>组合、REST/Contract mapping、Renderer Registry</td><td>领域不变量</td></tr>
+  </tbody></table>
+</section>
+
+<section>
+  <h2>5. Context 一致性边界</h2>
+  <div class="decision"><strong>决定：</strong>Run 只读取同 Conversation 中 <code>sequence &lt;= triggerMessage.sequence</code> 的 Message。Run 接受后追加的 Message 不改变该 Run，恢复也不重新读取“最新历史”。</div>
+  <p>Context Builder 在 Worker 获得 Lease 后、Agent Engine 开始前执行。Conversations 回答“实际说过什么”，Context Builder 回答“本次 Invocation 应看到什么”。</p>
+  <pre><code>Run A trigger = Message sequence 3
+
+Message 1 ─ Message 2 ─ Message 3 ─ Message 4
+                         ▲           ✕
+                    Run A 上界   属于后续 Run</code></pre>
+  <p><code>(organizationId, invocationId)</code> 对 Context Manifest 唯一。Manifest 先提交、Execution 后记录引用；中间崩溃时恢复返回同一 Manifest，不重复选择或摘要，不使用分布式事务。</p>
+</section>
+
+<section>
+  <h2>6. 预算与压缩算法</h2>
+  <div class="decision"><strong>决定：</strong>采用 Pi/主流 Agent 可验证的基础模式——主动 token 阈值、从后向前保留最近完整 Turn、较早连续历史结构化摘要、完整历史与模型投影分离。</div>
+  <pre><code>usableInput = min(
+  Context Policy limit,
+  Primary context window,
+  Fallback context window (if configured)
+) - enforced maxOutputTokens - safetyMargin</code></pre>
+  <ol>
+    <li>先预算 Agent instructions 和 Tool contracts。</li>
+    <li>完整保留 Trigger Message；放不下则 <code>context_input_too_large</code>，不截断。</li>
+    <li>从最新向前保留完整 Employee/Assistant Turn，并按权限展开其中 Text/Markdown Artifact。</li>
+    <li>把剩余较早连续历史生成一份 Context Summary。</li>
+    <li>极端历史若连一次 Summary 请求也无法容纳，明确失败；不静默丢弃。</li>
+  </ol>
+  <p>首版不引入 tokenizer family。估算使用 UTF-8 bytes、消息结构开销与固定安全余量，Manifest 明示为 estimate；Provider 真实 usage 仍由 Models 记录。</p>
+  <p>Pi 的 chars/4、Coding file tracking、Session 级滚动 compaction、thinking 摘要不直接复制。未来正式 Coding Agent 可通过独立 Summary Profile 参考 Pi 的 Goal、Progress、Key Decisions、Next Steps、Critical Context 和文件操作追踪。</p>
+</section>
+
+<section>
+  <h2>7. Context Summary 与信任边界</h2>
+  <pre><code>## Employee Goal
+## Explicit Constraints
+## Established Facts
+## Decisions and Commitments
+## Relevant Artifacts
+## Unresolved Items</code></pre>
+  <ul>
+    <li>摘要通过 Models Module；禁用 Tool，ModelCall 标记 <code>purpose=context_summary</code>，记录 Profile/usage。</li>
+    <li>首版复用 Run Primary 和受限 Fallback，不增加独立 Summarizer Catalog。</li>
+    <li>Artifact 和 Summary 都是低信任参考资料；其中的命令不能覆盖 Agent Revision 或 Employee 当前请求。</li>
+    <li>不处理或展示 raw Chain-of-Thought，不记录 Credential、Provider raw error 或 Policy 内部细节。</li>
+    <li>Context Manifest/Summary 正文不开放 Browser REST；UI 只看到计数、是否摘要和 Policy version。</li>
+  </ul>
+</section>
+
+<section>
+  <h2>8. Manifest 与 Checkpoint</h2>
+  <pre><code>ContextManifest {
+  id, organizationId, invocationId
+  triggerMessageId, triggerSequence
+  contextPolicyVersion
+  budget, estimatedUsage
+  items[]: {
+    sourceType, sourceId, sourceSequence?
+    contentHash, trustClass
+    inclusionMode: "verbatim" | "summary"
+  }
+  summaryId?
+}</code></pre>
+  <p>Manifest 不保存 Message/Artifact 正文。首次 build 返回内存 Invocation Context；恢复按引用重新读取并校验 hash。Hash 不进入 Browser Event 或普通 telemetry。</p>
+  <div class="decision"><strong>决定：</strong>Checkpoint 保存 <code>contextManifestId</code> 和 Invocation 开始后的模型/Tool 增量；不复制基础 Context。Artifact Tool 增量只保留 Artifact Reference。</div>
+</section>
+
+<section>
+  <h2>9. Artifact 产品入口</h2>
+  <div class="decision"><strong>决定：</strong>首个真实 Artifact 入口是低风险、无需 Employee Confirmation 的 <code>cmaster.artifact.create_text</code>。</div>
+  <pre><code>{
+  title: string;                    // 最多 200 字符
+  format: "plain_text" | "markdown";
+  content: string;                  // UTF-8，最多 48 KiB
+}</code></pre>
+  <p>Server 推导 <code>text/plain; charset=utf-8</code> 或 <code>text/markdown; charset=utf-8</code>。超过限制分类失败，不截断。Capability 仍经过 Principal Entitlement、Agent Grant、active Revision、Policy、Ledger 和输入验证。</p>
+  <p>Artifact Tool Provider Adapter 位于 Artifacts Module并调用其公开创建行为；Tools 不理解 Artifact 表，Server 只注册组合。每次 Tool 只创建新 Artifact + Version 1。<code>createVersion</code> 由 Module Interface/测试证明不覆盖，产品更新 Tool 和编辑 UI 后置。</p>
+</section>
+
+<section>
+  <h2>10. Artifact 写入与恢复</h2>
+  <div class="flow"><ol>
+    <li>exclusive staging write</li>
+    <li>UTF-8、大小、media type 校验</li>
+    <li>计算 SHA-256</li>
+    <li>原子提升到 <code>blobs/sha256/{aa}/{bb}/{hash}</code></li>
+    <li>ArtifactContent、Artifact、Version 在一个 PostgreSQL 事务提交</li>
+  </ol></div>
+  <ul>
+    <li>数据库只记录已正式可用 Content，不暴露 staging 状态。</li>
+    <li>同 Organization、相同 bytes/media type 复用 ArtifactContent/Blob；跨 Organization 物理去重不属于本 Slice Contract。</li>
+    <li><code>(organizationId, sourceToolCallId)</code> 唯一并校验 request hash。Artifact 已提交但 ToolOutcome 未记录时，恢复返回原 Artifact；不同输入冲突。</li>
+    <li>promote 后 metadata 前崩溃最多留下 orphan Blob；完整 GC 后置。过期 staging 在本 Slice 可清理。</li>
+    <li>API/Worker 分角色运行时共享 <code>CMASTER_ARTIFACT_STORAGE_ROOT</code>；路径只存在于 Adapter。</li>
+  </ul>
+</section>
+
+<section>
+  <h2>11. Artifact 权限、引用与最终输出</h2>
+  <ul>
+    <li>Artifact 默认由 initiating Principal 私有；同 Organization 的其他 Principal 也不得读取。</li>
+    <li>Artifact 记录 <code>createdForPrincipalId</code>、<code>createdByInvocationId</code>、<code>sourceToolCallId</code>。</li>
+    <li>Message 固定 <code>artifactId + artifactVersionId</code>，不跟随 current Version，也不复制 title/content/media type。</li>
+    <li>入选历史 Message 的可读 Text/Markdown Artifact 由 Context Builder 受控展开，内容计入预算并保留 provenance。</li>
+    <li>Harness 收集成功 Artifact ToolOutcome，按完成顺序去重，并与最终文本一起固定在 <code>output_ready</code>。</li>
+    <li>不从模型自然语言解析 ID。Worker 在 output_ready 后崩溃仍幂等追加相同 Message Parts。</li>
+    <li>Run 最终失败不创建成功 Assistant Message；已创建 Artifact 与 ToolCall 审计事实保留，失败产物 UI 后置。</li>
+  </ul>
+</section>
+
+<section>
+  <h2>12. REST、Range 与最小 UI</h2>
+  <p>Browser 只开放 Artifact metadata、指定 Version metadata、指定 Version 内容读取；不提供创建、更新或删除 Command。</p>
+  <table><thead><tr><th>请求</th><th>行为</th></tr></thead><tbody>
+    <tr><td>无 Range</td><td>200，完整内容</td></tr>
+    <tr><td><code>bytes=100-199</code></td><td>206，闭区间</td></tr>
+    <tr><td><code>bytes=100-</code> / <code>bytes=-100</code></td><td>206，open-ended / suffix</td></tr>
+    <tr><td>非法、越界、多区间</td><td>416；不生成 multipart</td></tr>
+  </tbody></table>
+  <p>所有读取使用相同权限检查并返回 Accept-Ranges、Content-Range、Content-Length 与安全 Content-Type。Contract 不暴露 hash、storage key 或 path。</p>
+  <p>Slice 4 在现有 Run/Message 页面提供安全 Text、Markdown Renderer 和 unknown fallback/download card。Markdown 禁用 raw HTML、脚本和危险链接。Slice 5 完成 Artifact 列表、导航、版本交互、正式布局与可访问体验。</p>
+</section>
+
+<section>
+  <h2>13. Events、Telemetry 与失败</h2>
+  <table><thead><tr><th>事件/失败</th><th>安全字段或语义</th></tr></thead><tbody>
+    <tr><td><code>invocation.context_built</code></td><td>Invocation/Manifest ID、message/artifact count、summaryUsed、estimatedInputTokens、Policy version</td></tr>
+    <tr><td><code>artifact.created</code></td><td>Invocation/ToolCall/Artifact/Version ID、kind、media type</td></tr>
+    <tr><td><code>context_input_too_large</code></td><td>不可省略输入超预算；non-retryable</td></tr>
+    <tr><td><code>context_build_failed</code></td><td>来源、摘要、hash 或持久化失败；内部分类决定 retryability</td></tr>
+  </tbody></table>
+  <p>Run Event、日志和 Trace 不记录 Prompt、Summary/Artifact 正文、content hash、Tool input、Provider raw error 或 storage key。Artifact 创建由 provenance、Tool Ledger 和 Run Event 追踪；持久逐次下载 Audit Record 留到 Slice 6，读取 telemetry 仅记录安全 ID、结果和字节数。</p>
+</section>
+
+<section>
+  <h2>14. Revision、Profile 与 Feature Flag</h2>
+  <ul>
+    <li>创建新的不可变 Slice 4 Development Agent Revision，固定 baseline Context Policy 并增加 Artifact Tool Grant；不修改 Slice 3 Revision。</li>
+    <li>创建新的不可变 Model Profile IDs，显式固定 <code>contextWindowTokens</code> 与 <code>maxOutputTokens</code>；AI SDK Adapter 实际施加 max output。</li>
+    <li>Primary/Fallback Context Window 都参与最小预算，避免 Fallback 临时改变 Manifest。</li>
+    <li><code>CMASTER_CONTEXT_ARTIFACTS_ENABLED</code> 默认 false，并依赖 Next Architecture + AI SDK Runtime + Tool Runtime。</li>
+    <li>Flag 关闭时不创建 Manifest、不挂载 Artifact 路由，并保持 Slice 3 行为。</li>
+  </ul>
+</section>
+
+<section>
+  <h2>15. 否决方案与理由</h2>
+  <table><thead><tr><th>否决方案</th><th>理由</th></tr></thead><tbody>
+    <tr><td>Conversation 自己摘要</td><td>混淆完整历史事实与一次 Invocation 投影。</td></tr>
+    <tr><td>Agent Engine 临时截断历史</td><td>Manifest 无法审计，恢复/Fallback 输入漂移。</td></tr>
+    <tr><td>Provider-side compaction 为权威</td><td>Provider 锁定且 provenance 不足；未来仅可作 Adapter 优化。</td></tr>
+    <tr><td>Run/Checkpoint 复制历史正文</td><td>多权威写路径、敏感内容扩散、恢复不一致。</td></tr>
+    <tr><td>自动把所有模型文本变成 Artifact</td><td>Artifact 意图不明确，产生噪音；使用显式 governed Tool。</td></tr>
+    <tr><td>模型在自然语言中返回 Artifact ID</td><td>不可靠、不可恢复；Harness 使用结构化 Outcome。</td></tr>
+    <tr><td>Message 指向 latest Artifact</td><td>后续版本会改写历史 Message 含义。</td></tr>
+    <tr><td>同 Organization 即可读取</td><td>无法阻止员工横向访问；首版创建者私有。</td></tr>
+    <tr><td>本 Slice 完整实现 quarantine/derivative/trash</td><td>没有上传、预览、删除调用者，会制造空状态和无验收流程。</td></tr>
+    <tr><td>独立摘要模型与精确 tokenizer</td><td>增加 Catalog/Policy/依赖复杂度；缺少当前成本与质量证据。</td></tr>
+  </tbody></table>
+</section>
+
+<section>
+  <h2>16. 核心测试与验收</h2>
+  <ol>
+    <li><strong>Context Contract：</strong>Trigger 边界、短历史原文、Summary + 最近 Turn、Manifest 引用/hash、不复制正文。</li>
+    <li><strong>Context 恢复：</strong>Manifest 后崩溃，恢复复用同一 Manifest/Summary；新 Message 不污染原 Run。</li>
+    <li><strong>Artifact Contract：</strong>Version 不覆盖、sourceToolCallId 幂等冲突、同 Organization 内容复用。</li>
+    <li><strong>Storage Adapter：</strong>staging/promote/metadata 顺序、重启可读、过期 staging 清理、完整/Range read。</li>
+    <li><strong>Tool/Worker E2E：</strong>Artifact 提交后 ToolOutcome 前崩溃不重复创建；最终 Message 含确切 Version Reference。</li>
+    <li><strong>HTTP/UI：</strong>创建者可读、同组织他人不可读、路径不泄漏、Text/Markdown 与 unknown fallback。</li>
+  </ol>
+  <pre><code>npm run next:check
+npm run next:test:integration</code></pre>
+  <p>真实付费 Summary/Agent Smoke 继续显式启用且默认 skip。测试优先通过 Module public Interface、Adapter Contract、PostgreSQL Integration 和 UI Projection，不断言私有 SQL 或框架内部实现。</p>
+</section>
+
+<section>
+  <h2>17. 实施顺序</h2>
+  <div class="decision"><strong>决定：</strong>一个 <code>refactor/context-artifacts</code> PR，按可审查、持续通过 Build/Test 的提交推进；Slice Flag 在完整可用前保持关闭。</div>
+  <ol>
+    <li>Contract、Package、Migration 与 Revision/Profile limits。</li>
+    <li>Context Builder、Summary、Manifest、预算与恢复。</li>
+    <li>Artifact Module、本地存储、幂等与权限。</li>
+    <li>Artifact Tool、Harness、Checkpoint、output_ready 与 Message Reference。</li>
+    <li>REST、Range、Renderer Registry。</li>
+    <li>PostgreSQL Integration、恢复测试、生成物与文档。</li>
+  </ol>
+</section>
+
+<section>
+  <h2>18. ADR 与文档结论</h2>
+  <p>本设计细化 ADR-0009、0010、0017、0025、0026 与 0040，不新增 ADR：没有引入新的难逆转架构方向。领域词汇新增 Context Summary 与 Artifact Reference；Module Interface、Data Model、Refactor Plan 和 Engineering Guide 与本文同步。</p>
+</section>
+
+<section>
+  <h2>19. Grill 决策索引</h2>
+  <p>逐项确认的核心决定包括：主验收流程、显式 Artifact Tool、Trigger sequence 上界、Context 所有权、Summary 生成与预算、Pi 风格压缩、Version 1 产品范围、storage 子目录延期、sourceToolCallId 幂等、创建者私有、确切 Version Reference、最小 Renderer、只读 REST、48 KiB Tool 输入、Manifest 引用/hash、无需确认、Artifact 受控展开、低信任内容、单 Range、单 Feature Flag、安全 Events、新 Agent Revision、新 Model Profiles/max output、Trigger 不截断、同组织去重、Harness 附加引用、保守估算、通用 Summary、共享 storage root、摘要模型、失败码、只记录可用 Content、有限审计、固定保留顺序、六组测试、单 PR 与文档/ADR 结论。</p>
+</section>
+</main>
+<footer>CMaster Bot · Slice 4 Context &amp; Artifacts · 自包含设计文档</footer>
+</body>
+</html>

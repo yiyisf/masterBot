@@ -2,6 +2,7 @@ import { systemStatusSchema } from '@cmaster/contracts';
 import cors from '@fastify/cors';
 import Fastify, { type FastifyInstance } from 'fastify';
 import { registerAiUiPresenter } from './ai-ui-presenter.js';
+import { registerArtifactApi, type ArtifactApiDependencies } from './artifact-api.js';
 import type { ServerConfig } from './config.js';
 import { EnvironmentFeatureFlags, type FeatureFlags } from './feature-flags.js';
 import type { DatabaseHealth } from './postgres.js';
@@ -13,6 +14,7 @@ export interface ApiDependencies {
   database: DatabaseHealth;
   featureFlags?: FeatureFlags;
   runApi?: RunApiDependencies;
+  artifactApi?: ArtifactApiDependencies;
   toolConfirmationCoordinator?: ToolConfirmationCoordinator;
 }
 
@@ -21,10 +23,14 @@ export function buildApi(dependencies: ApiDependencies): FastifyInstance {
   const featureFlags = dependencies.featureFlags ?? new EnvironmentFeatureFlags({
     nextArchitecture: dependencies.config.features.nextArchitecture,
     toolRuntime: dependencies.config.features.toolRuntime,
+    contextArtifacts: dependencies.config.features.contextArtifacts,
   });
 
   if (featureFlags.isEnabled('toolRuntime') && !dependencies.toolConfirmationCoordinator) {
     throw new Error('Tool Runtime requires a Tool Confirmation Coordinator');
+  }
+  if (featureFlags.isEnabled('contextArtifacts') && !dependencies.artifactApi) {
+    throw new Error('Context and Artifacts require an Artifact API');
   }
 
   void app.register(cors, {
@@ -41,6 +47,9 @@ export function buildApi(dependencies: ApiDependencies): FastifyInstance {
   });
 
   if (featureFlags.isEnabled('nextArchitecture')) {
+    if (featureFlags.isEnabled('contextArtifacts') && dependencies.artifactApi) {
+      registerArtifactApi(app, dependencies.artifactApi);
+    }
     if (dependencies.runApi) {
       registerRunApi(app, {
         ...dependencies.runApi,

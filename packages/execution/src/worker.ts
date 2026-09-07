@@ -1,12 +1,36 @@
 import type { ConversationModule } from '@cmaster/conversations';
-import type { ModelFailure } from '@cmaster/models';
-import { ExecutionLimitExceededError, type AgentEngine, type EngineEvent } from './engine.js';
+import {
+  ContextBuildFailureError,
+  ContextCompressionRequiredError,
+  ContextInputTooLargeError,
+  ContextSourceIntegrityError,
+  contextInvocationId,
+  contextRunId,
+  type ContextBuilder,
+  type InvocationContext,
+} from '@cmaster/context';
+import type { ModelFailure, ModelGateway } from '@cmaster/models';
+import {
+  ExecutionLimitExceededError,
+  type AgentEngine,
+  type EngineEvent,
+  type EngineInvocation,
+} from './engine.js';
 import { PostgresExecutionModule, type RunLease } from './postgres.js';
 import {
   StaleLeaseError,
   type ExecutionProgressEvent,
+  type PreparedRunOutput,
   type RunFailure,
 } from './types.js';
+
+/** Optional Harness composition enabled only for the pinned Context-capable Agent Revision. */
+export interface ContextExecutionRuntime {
+  agentRevisionId: RunLease['agentRevisionId'];
+  builder: ContextBuilder;
+  models: Pick<ModelGateway, 'resolveContextBudget'>;
+  resolveFixedOverheadTokens(input: EngineInvocation): Promise<number>;
+}
 
 export interface RunWorkerConfig {
   workerId: string;
@@ -24,6 +48,7 @@ export class RunWorker {
     private readonly conversations: ConversationModule,
     engines: readonly AgentEngine[],
     private readonly config: RunWorkerConfig,
+    private readonly contextRuntime?: ContextExecutionRuntime,
   ) {
     this.engines = new Map(engines.map((engine) => [`${engine.kind}:${engine.version}`, engine]));
   }
@@ -59,7 +84,13 @@ export class RunWorker {
         conversationId: lease.conversationId,
         sourceRunId: lease.runId,
         sourceInvocationId: lease.invocationId,
-        parts: [{ type: 'text', text: output }],
+        parts: [
+          { type: 'text', text: output.text },
+          ...output.artifactReferences.map((reference) => ({
+            type: 'artifact_reference' as const,
+            ...reference,
+          })),
+        ],
       });
       await this.execution.complete(lease, message.value.id);
       return true;
@@ -72,12 +103,78 @@ export class RunWorker {
     }
   }
 
-  private async executeEngine(lease: RunLease, signal: AbortSignal): Promise<string | undefined> {
+  private async executeEngine(
+    lease: RunLease,
+    signal: AbortSignal,
+  ): Promise<PreparedRunOutput | undefined> {
     // Slice 2 只投影触发它的 Employee Text Message；历史、Memory/Knowledge 由 Context Builder Slice 接管。
     const trigger = await this.conversations.getMessageTrigger(
       lease.organizationId,
       lease.messageId,
     );
+    let invocationContext: InvocationContext | undefined;
+    if (this.contextRuntime?.agentRevisionId === lease.agentRevisionId) {
+      try {
+        if (lease.contextManifestId) {
+          invocationContext = await this.contextRuntime.builder.materialize({
+            organizationId: lease.organizationId,
+            principalId: lease.initiatingPrincipalId,
+            manifestId: lease.contextManifestId,
+          });
+        } else {
+          const modelBudget = await this.contextRuntime.models.resolveContextBudget({
+            organizationId: lease.organizationId,
+            requiresToolCalling: true,
+          });
+          const fixedOverheadTokens = await this.contextRuntime.resolveFixedOverheadTokens({
+            organizationId: lease.organizationId,
+            runId: lease.runId,
+            invocationId: lease.invocationId,
+            agentRevisionId: lease.agentRevisionId,
+            prompt: trigger.prompt,
+          });
+          const built = await this.contextRuntime.builder.build({
+            organizationId: lease.organizationId,
+            principalId: lease.initiatingPrincipalId,
+            invocationId: contextInvocationId(lease.invocationId),
+            conversationId: lease.conversationId,
+            triggerMessageId: lease.messageId,
+            modelBudget,
+            fixedOverheadTokens,
+            summaryExecution: {
+              runId: contextRunId(lease.runId),
+              signal,
+            },
+          });
+          await this.execution.attachContextManifest(lease, {
+            manifestId: built.manifest.id,
+            invocationId: lease.invocationId,
+            itemCount: built.manifest.itemCount,
+            summarized: built.manifest.summarized,
+            estimatedInputTokens: built.manifest.estimatedInputTokens,
+            contextPolicyRevision: built.manifest.contextPolicyRevision,
+          });
+          invocationContext = built.invocationContext;
+        }
+      } catch (error) {
+        if (error instanceof StaleLeaseError) throw error;
+        const inputTooLarge = error instanceof ContextInputTooLargeError;
+        const sourceIntegrityFailure = error instanceof ContextSourceIntegrityError;
+        const compressionRequired = error instanceof ContextCompressionRequiredError;
+        const classifiedBuildFailure = error instanceof ContextBuildFailureError
+          ? error.retryable
+          : undefined;
+        await this.execution.fail(lease, {
+          code: inputTooLarge ? 'context_input_too_large' : 'context_build_failed',
+          message: inputTooLarge
+            ? 'The required Invocation Context exceeds the approved input limit.'
+            : 'The Invocation Context could not be built.',
+          retryable: classifiedBuildFailure
+            ?? (!inputTooLarge && !sourceIntegrityFailure && !compressionRequired),
+        });
+        return undefined;
+      }
+    }
     const engine = this.engines.get(`${lease.engineKind}:${lease.engineVersion}`);
     if (!engine) {
       await this.execution.fail(lease, {
@@ -93,6 +190,7 @@ export class RunWorker {
     let pending = '';
     let outputStarted = false;
     let completed = false;
+    let artifactReferences: PreparedRunOutput['artifactReferences'] = [];
     let interrupted = false;
     let terminalModelFailure: ModelFailure | undefined;
     let lastFlushAt = Date.now();
@@ -128,6 +226,7 @@ export class RunWorker {
         invocationId: lease.invocationId,
         agentRevisionId: lease.agentRevisionId,
         prompt: trigger.prompt,
+        ...(invocationContext ? { invocationContext } : {}),
         outputGeneration: generation,
         ...(lease.checkpoint ? { checkpoint: lease.checkpoint } : {}),
         ...(lease.resumeResponse ? { resumeResponse: lease.resumeResponse } : {}),
@@ -164,7 +263,10 @@ export class RunWorker {
           await record({ type: 'output_reset', generation, reason });
         });
         if (event.type === 'model_failed') terminalModelFailure = event.failure;
-        if (event.type === 'completed') completed = true;
+        if (event.type === 'completed') {
+          completed = true;
+          artifactReferences = event.artifactReferences;
+        }
       }
       await flush();
 
@@ -180,7 +282,7 @@ export class RunWorker {
       }
       if (!completed || output.length === 0) throw new Error('Engine ended without completed text output');
       await record({ type: 'output_completed', generation });
-      return output;
+      return { text: output, artifactReferences };
     } catch (error) {
       if (error instanceof StaleLeaseError) throw error;
       const failure: RunFailure = error instanceof ExecutionLimitExceededError
@@ -206,6 +308,16 @@ export class RunWorker {
     resetOutput: (reason: 'fallback' | 'failure') => Promise<void>,
   ): Promise<void> {
     switch (event.type) {
+      case 'artifact_created':
+        await record({
+          type: 'artifact_created',
+          toolCallId: event.toolCallId,
+          invocationId: lease.invocationId,
+          reference: event.artifact.reference,
+          kind: event.artifact.kind,
+          mediaType: event.artifact.mediaType,
+        });
+        break;
       case 'model_selected':
         await record({
           type: 'model_selected',

@@ -185,6 +185,9 @@ npm run next:server -- --role=all
 # Web :3101
 npm run next:web
 
+# 启动隔离的 Next.js 开发服务器并验证 /workspace 可编译
+npm run next:web-development-smoke
+
 # 显式 PostgreSQL Integration Test（需要 DATABASE_URL）
 npm run next:test:integration
 
@@ -196,7 +199,7 @@ npm run contracts:generate
 npm run contracts:check
 ```
 
-完整配置和启动顺序见 [`docs/engineering/workspace-foundation.md`](./docs/engineering/workspace-foundation.md)、[`docs/engineering/run-walking-skeleton.md`](./docs/engineering/run-walking-skeleton.md) 与 [`docs/engineering/ai-sdk-runtime.md`](./docs/engineering/ai-sdk-runtime.md)。
+完整配置和启动顺序见 [`docs/engineering/workspace-foundation.md`](./docs/engineering/workspace-foundation.md)、[`docs/engineering/run-walking-skeleton.md`](./docs/engineering/run-walking-skeleton.md) 与 [`docs/engineering/ai-sdk-runtime.md`](./docs/engineering/ai-sdk-runtime.md)、[`docs/engineering/governed-tool-runtime.md`](./docs/engineering/governed-tool-runtime.md) 与 [`docs/engineering/context-artifacts.md`](./docs/engineering/context-artifacts.md)。
 
 ### 冻结的 Legacy 验证命令
 

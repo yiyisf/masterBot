@@ -67,7 +67,8 @@ export class Slice3BaselinePolicy implements PolicyModule {
       };
     }
     if (request.capabilityId === 'cmaster.utility.current_time:v1'
-      || request.capabilityId === 'cmaster.utility.text_statistics:v1') {
+      || request.capabilityId === 'cmaster.utility.text_statistics:v1'
+      || request.capabilityId === 'cmaster.artifact.create_text:v1') {
       return {
         effect: 'allow',
         policyVersion: SLICE3_POLICY_VERSION,

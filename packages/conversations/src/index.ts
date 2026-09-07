@@ -1,4 +1,5 @@
 import { createHash, randomUUID } from 'node:crypto';
+import type { ArtifactReference } from '@cmaster/artifacts';
 import type { OrganizationId, PrincipalId, RequestIdentity } from '@cmaster/identity';
 import type { Brand } from '@cmaster/kernel';
 import type { Pool, PoolClient } from 'pg';
@@ -12,7 +13,12 @@ export interface TextMessagePart {
   text: string;
 }
 
-export type MessagePart = TextMessagePart;
+export interface ArtifactReferenceMessagePart extends ArtifactReference {
+  type: 'artifact_reference';
+  text?: never;
+}
+
+export type MessagePart = TextMessagePart | ArtifactReferenceMessagePart;
 
 export interface Conversation {
   id: ConversationId;
@@ -43,6 +49,21 @@ export interface MessageTrigger {
   prompt: string;
 }
 
+/** Immutable ordered history bounded by the verified Employee Trigger Message. */
+export interface ConversationHistory {
+  readonly conversationId: ConversationId;
+  readonly triggerMessageId: MessageId;
+  readonly triggerSequence: number;
+  readonly messages: readonly Message[];
+}
+
+/** Trusted, Organization-scoped Context read; missing or mismatched Trigger throws. */
+export interface ReadConversationHistory {
+  readonly organizationId: OrganizationId;
+  readonly conversationId: ConversationId;
+  readonly triggerMessageId: MessageId;
+}
+
 export interface CommandResult<Value> {
   value: Value;
   replayed: boolean;
@@ -58,6 +79,8 @@ export class IdempotencyConflictError extends Error {}
  * IdempotencyConflictError. Missing or cross-Organization resources throw the corresponding
  * not-found error. Appends serialize on the Conversation and assign a strictly increasing sequence.
  * Message listing uses the (conversationId, sequence) index and is linear in the requested limit.
+ * Controlled history reads verify the Employee Trigger in the same Organization/Conversation and
+ * return ascending immutable Messages only through its sequence; selection and budgeting stay in Context.
  */
 export interface ConversationModule {
   create(
@@ -67,7 +90,7 @@ export interface ConversationModule {
   appendEmployeeMessage(
     identity: RequestIdentity,
     conversationId: ConversationId,
-    command: { commandId: CommandId; parts: MessagePart[] },
+    command: { commandId: CommandId; parts: TextMessagePart[] },
   ): Promise<CommandResult<Message>>;
   appendAssistantMessage(command: {
     organizationId: OrganizationId;
@@ -83,6 +106,7 @@ export interface ConversationModule {
     afterSequence: number,
     limit: number,
   ): Promise<Message[]>;
+  readHistoryThrough(query: ReadConversationHistory): Promise<ConversationHistory>;
   getMessageTrigger(organizationId: OrganizationId, messageId: MessageId): Promise<MessageTrigger>;
 }
 
@@ -127,15 +151,25 @@ function mapConversation(row: ConversationRow): Conversation {
 }
 
 function messageParts(value: unknown): MessagePart[] {
-  if (!Array.isArray(value) || value.length !== 1) throw new Error('Stored Message parts are invalid');
-  const part = value[0];
-  if (!part || typeof part !== 'object' || !('type' in part) || !('text' in part)) {
+  if (!Array.isArray(value) || value.length === 0) throw new Error('Stored Message parts are invalid');
+  return value.map((part): MessagePart => {
+    if (!part || typeof part !== 'object' || !('type' in part)) {
+      throw new Error('Stored Message part is invalid');
+    }
+    if (part.type === 'text' && 'text' in part && typeof part.text === 'string') {
+      return { type: 'text', text: part.text };
+    }
+    if (part.type === 'artifact_reference'
+      && 'artifactId' in part && typeof part.artifactId === 'string'
+      && 'artifactVersionId' in part && typeof part.artifactVersionId === 'string') {
+      return {
+        type: 'artifact_reference',
+        artifactId: part.artifactId as ArtifactReference['artifactId'],
+        artifactVersionId: part.artifactVersionId as ArtifactReference['artifactVersionId'],
+      };
+    }
     throw new Error('Stored Message part is invalid');
-  }
-  if (part.type !== 'text' || typeof part.text !== 'string') {
-    throw new Error('Stored Message part is invalid');
-  }
-  return [{ type: 'text', text: part.text }];
+  });
 }
 
 function mapMessage(row: MessageRow): Message {
@@ -203,8 +237,11 @@ export class PostgresConversationModule implements ConversationModule {
   async appendEmployeeMessage(
     identity: RequestIdentity,
     conversationId: ConversationId,
-    command: { commandId: CommandId; parts: MessagePart[] },
+    command: { commandId: CommandId; parts: TextMessagePart[] },
   ): Promise<CommandResult<Message>> {
+    if (command.parts.length !== 1 || command.parts[0]?.type !== 'text') {
+      throw new Error('Employee Message must contain exactly one Text Part');
+    }
     const requestHash = hash({ conversationId, parts: command.parts });
     const client = await this.pool.connect();
     try {
@@ -332,6 +369,29 @@ export class PostgresConversationModule implements ConversationModule {
     return result.rows.map(mapMessage);
   }
 
+  async readHistoryThrough(query: ReadConversationHistory): Promise<ConversationHistory> {
+    const triggerResult = await this.pool.query<MessageRow>(
+      `SELECT * FROM messages
+       WHERE organization_id = $1 AND conversation_id = $2 AND id = $3
+         AND author_type = 'employee'`,
+      [query.organizationId, query.conversationId, query.triggerMessageId],
+    );
+    const trigger = triggerResult.rows[0];
+    if (!trigger) throw new MessageNotFoundError();
+    const history = await this.pool.query<MessageRow>(
+      `SELECT * FROM messages
+       WHERE organization_id = $1 AND conversation_id = $2 AND sequence <= $3
+       ORDER BY sequence ASC`,
+      [query.organizationId, query.conversationId, trigger.sequence],
+    );
+    return {
+      conversationId: query.conversationId,
+      triggerMessageId: query.triggerMessageId,
+      triggerSequence: trigger.sequence,
+      messages: history.rows.map(mapMessage),
+    };
+  }
+
   async getMessageTrigger(organizationId: OrganizationId, messageId: MessageId): Promise<MessageTrigger> {
     const result = await this.pool.query<MessageRow>(
       `SELECT * FROM messages
@@ -341,11 +401,15 @@ export class PostgresConversationModule implements ConversationModule {
     const row = result.rows[0];
     if (!row) throw new MessageNotFoundError();
     const parts = messageParts(row.parts);
+    const firstPart = parts[0];
+    if (!firstPart || firstPart.type !== 'text') {
+      throw new Error('Employee Message Text Part is unavailable');
+    }
     return {
       messageId: row.id as MessageId,
       conversationId: row.conversation_id as ConversationId,
       organizationId: row.organization_id as OrganizationId,
-      prompt: parts[0]!.text,
+      prompt: firstPart.text,
     };
   }
 }

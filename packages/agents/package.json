@@ -13,6 +13,11 @@
   },
   "files": ["dist", "migrations"],
   "scripts": { "build": "tsc -b", "test": "vitest run" },
-  "dependencies": { "@cmaster/identity": "0.0.0", "@cmaster/kernel": "0.0.0", "pg": "8.23.0" },
+  "dependencies": {
+    "@cmaster/context": "0.0.0",
+    "@cmaster/identity": "0.0.0",
+    "@cmaster/kernel": "0.0.0",
+    "pg": "8.23.0"
+  },
   "devDependencies": { "@types/pg": "8.23.1" }
 }

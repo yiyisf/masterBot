@@ -8,6 +8,7 @@ import {
   type AcceptRunCommand,
   type CancelRunResult,
   type CommandResult,
+  type ContextBuiltMetadata,
   type DispatchAttemptId,
   type ExecutionCheckpoint,
   type ExecutionInterrupt,
@@ -19,6 +20,7 @@ import {
   type InterruptResponse,
   type InvocationId,
   type InvocationStatus,
+  type PreparedRunOutput,
   type RequestInterruptCommand,
   type ResolveInterruptCommand,
   type RunCommandId,
@@ -60,7 +62,7 @@ interface RunRow {
   started_at: Date | null;
   completed_at: Date | null;
   invocation_status: InvocationStatus;
-  prepared_output: { text: string } | null;
+  prepared_output: { text: string; artifactReferences?: PreparedRunOutput['artifactReferences'] } | null;
   output_generation: number;
   has_streamed_output: boolean;
   interrupt_id: string | null;
@@ -68,6 +70,7 @@ interface RunRow {
   interrupt_subject_ref: string | null;
   interrupt_safe_subject_summary: ActiveInterrupt['safeSubjectSummary'] | null;
   interrupt_allowed_responses: ActiveInterrupt['allowedResponses'] | null;
+  context_manifest_id: string | null;
   latest_checkpoint_data: ExecutionCheckpoint | null;
   latest_interrupt_resolution: InterruptResponse | null;
   tool_boundary_id: string | null;
@@ -102,7 +105,8 @@ export interface RunLease {
   attemptNumber: number;
   outputGeneration: number;
   hasStreamedOutput: boolean;
-  preparedOutput?: string;
+  preparedOutput?: PreparedRunOutput;
+  contextManifestId?: ContextBuiltMetadata['manifestId'];
   checkpoint?: ExecutionCheckpoint;
   resumeResponse?: InterruptResponse;
 }
@@ -180,6 +184,7 @@ function mapEvent(row: EventRow): RunEventEnvelope {
 const runSelect = `
   SELECT r.*, i.status AS invocation_status, i.prepared_output,
          i.output_generation, i.has_streamed_output,
+         i.context_manifest_id,
          (r.tool_boundary_id IS NOT NULL
            AND r.tool_boundary_expires_at > clock_timestamp()) AS tool_boundary_active,
          active_interrupt.id AS interrupt_id,
@@ -265,6 +270,23 @@ async function verifyLease(
     [lease.runId, lease.organizationId, lease.leaseToken],
   );
   if (result.rowCount !== 1) throw new StaleLeaseError();
+}
+
+async function verifyCheckpointContext(
+  client: PoolClient,
+  lease: RunLease,
+  checkpoint: ExecutionCheckpoint,
+): Promise<void> {
+  const result = await client.query<{ context_manifest_id: string | null }>(
+    `SELECT context_manifest_id FROM invocations
+     WHERE organization_id = $1 AND id = $2`,
+    [lease.organizationId, lease.invocationId],
+  );
+  const manifestId = result.rows[0]?.context_manifest_id;
+  if (manifestId === undefined) throw new StaleLeaseError();
+  if (manifestId !== (checkpoint.contextManifestId ?? null)) {
+    throw new Error('Checkpoint Context Manifest does not match its Invocation');
+  }
 }
 
 export class PostgresExecutionModule implements ExecutionModule {
@@ -519,6 +541,7 @@ export class PostgresExecutionModule implements ExecutionModule {
     try {
       await client.query('BEGIN');
       await verifyLease(client, lease);
+      await verifyCheckpointContext(client, lease, checkpoint);
       await client.query(
         `UPDATE execution_checkpoints SET consumed_at = clock_timestamp()
          WHERE organization_id = $1 AND run_id = $2 AND consumed_at IS NULL`,
@@ -548,6 +571,7 @@ export class PostgresExecutionModule implements ExecutionModule {
     try {
       await client.query('BEGIN');
       await verifyLease(client, lease);
+      await verifyCheckpointContext(client, lease, command.checkpoint);
       const run = await selectRun(client, lease.organizationId, lease.runId, true);
       if (!run || run.status !== 'running' || run.prepared_output !== null) throw new StaleLeaseError();
       const checkpointId = randomUUID();
@@ -851,12 +875,65 @@ export class PostgresExecutionModule implements ExecutionModule {
         attemptNumber,
         outputGeneration: run.output_generation,
         hasStreamedOutput: run.has_streamed_output,
-        ...(run.prepared_output === null ? {} : { preparedOutput: run.prepared_output.text }),
+        ...(run.prepared_output === null ? {} : {
+          preparedOutput: {
+            text: run.prepared_output.text,
+            artifactReferences: run.prepared_output.artifactReferences ?? [],
+          },
+        }),
+        ...(run.context_manifest_id === null
+          ? {}
+          : { contextManifestId: run.context_manifest_id as ContextBuiltMetadata['manifestId'] }),
         ...(run.latest_checkpoint_data === null ? {} : { checkpoint: run.latest_checkpoint_data }),
         ...(run.latest_interrupt_resolution === null
           ? {}
           : { resumeResponse: run.latest_interrupt_resolution }),
       };
+    } catch (error) {
+      await client.query('ROLLBACK');
+      throw error;
+    } finally {
+      client.release();
+    }
+  }
+
+  async attachContextManifest(
+    lease: RunLease,
+    metadata: ContextBuiltMetadata,
+  ): Promise<void> {
+    if (metadata.invocationId !== lease.invocationId) {
+      throw new Error('Context Manifest belongs to another Invocation');
+    }
+    const client = await this.pool.connect();
+    try {
+      await client.query('BEGIN');
+      await verifyLease(client, lease);
+      const invocation = await client.query<{ context_manifest_id: string | null }>(
+        `SELECT context_manifest_id FROM invocations
+         WHERE organization_id = $1 AND id = $2 FOR UPDATE`,
+        [lease.organizationId, lease.invocationId],
+      );
+      const linkedManifestId = invocation.rows[0]?.context_manifest_id;
+      if (linkedManifestId === undefined) throw new StaleLeaseError();
+      if (linkedManifestId !== null && linkedManifestId !== metadata.manifestId) {
+        throw new Error('Invocation is already linked to another Context Manifest');
+      }
+      if (linkedManifestId === null) {
+        await client.query(
+          `UPDATE invocations SET context_manifest_id = $3
+           WHERE organization_id = $1 AND id = $2`,
+          [lease.organizationId, lease.invocationId, metadata.manifestId],
+        );
+        await appendEvent(
+          client,
+          lease.organizationId,
+          lease.runId,
+          'invocation.context_built',
+          metadata,
+          lease.attemptId,
+        );
+      }
+      await client.query('COMMIT');
     } catch (error) {
       await client.query('ROLLBACK');
       throw error;
@@ -888,6 +965,16 @@ export class PostgresExecutionModule implements ExecutionModule {
 
       for (const event of events) {
         switch (event.type) {
+          case 'artifact_created':
+            await appendEvent(client, lease.organizationId, lease.runId, 'artifact.created', {
+              invocationId: event.invocationId,
+              toolCallId: event.toolCallId,
+              artifactId: event.reference.artifactId,
+              artifactVersionId: event.reference.artifactVersionId,
+              kind: event.kind,
+              mediaType: event.mediaType,
+            }, lease.attemptId);
+            break;
           case 'model_selected':
             await client.query(
               `UPDATE runs SET resolved_model_profile_id = $3,
@@ -1015,7 +1102,13 @@ export class PostgresExecutionModule implements ExecutionModule {
     }
   }
 
-  async saveOutputReady(lease: RunLease, text: string): Promise<'ready' | 'cancelled'> {
+  async saveOutputReady(
+    lease: RunLease,
+    output: PreparedRunOutput | string,
+  ): Promise<'ready' | 'cancelled'> {
+    const preparedOutput: PreparedRunOutput = typeof output === 'string'
+      ? { text: output, artifactReferences: [] }
+      : output;
     const client = await this.pool.connect();
     try {
       await client.query('BEGIN');
@@ -1032,7 +1125,7 @@ export class PostgresExecutionModule implements ExecutionModule {
       await client.query(
         `UPDATE invocations SET prepared_output = $3, output_ready_at = clock_timestamp()
          WHERE organization_id = $1 AND id = $2`,
-        [lease.organizationId, lease.invocationId, JSON.stringify({ text })],
+        [lease.organizationId, lease.invocationId, JSON.stringify(preparedOutput)],
       );
       await client.query(
         `UPDATE execution_checkpoints SET consumed_at = clock_timestamp()
@@ -1041,7 +1134,8 @@ export class PostgresExecutionModule implements ExecutionModule {
       );
       await appendEvent(client, lease.organizationId, lease.runId, 'invocation.output_ready', {
         invocationId: lease.invocationId,
-        text,
+        text: preparedOutput.text,
+        artifactReferences: preparedOutput.artifactReferences,
       }, lease.attemptId);
       await client.query('COMMIT');
       return 'ready';

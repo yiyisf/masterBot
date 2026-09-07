@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { appendMessageRequestSchema } from './conversations.js';
+import { appendMessageRequestSchema, messageSchema } from './conversations.js';
 import { acceptRunResponseSchema, runEventEnvelopeSchema } from './runs.js';
 
 describe('Run Walking Skeleton contracts', () => {
@@ -10,6 +10,21 @@ describe('Run Walking Skeleton contracts', () => {
     expect(appendMessageRequestSchema.safeParse({
       parts: [{ type: 'text', text: '   ' }],
     }).success).toBe(false);
+    const artifactPart = {
+      type: 'artifact_reference',
+      artifactId: '00000000-0000-4000-8000-000000000011',
+      artifactVersionId: '00000000-0000-4000-8000-000000000012',
+    };
+    expect(appendMessageRequestSchema.safeParse({ parts: [artifactPart] }).success).toBe(false);
+    expect(messageSchema.safeParse({
+      id: '00000000-0000-4000-8000-000000000001',
+      organizationId: '00000000-0000-4000-8000-000000000002',
+      conversationId: '00000000-0000-4000-8000-000000000003',
+      sequence: 1,
+      author: 'assistant',
+      parts: [{ type: 'text', text: 'Ready.' }, artifactPart],
+      createdAt: '2026-01-01T00:00:00.000Z',
+    }).success).toBe(true);
   });
 
   it('describes an asynchronously accepted Run with its Event stream URL', () => {

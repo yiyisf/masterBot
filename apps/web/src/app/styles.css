@@ -24,3 +24,8 @@ button:disabled { cursor: not-allowed; opacity: .55; }
 section { margin-top: 36px; }
 .message { margin: 12px 0; padding: 14px; border: 1px solid #34425a; border-radius: 10px; }
 .message p { margin-bottom: 0; }
+.artifact-card { margin-top: 14px; padding: 14px; border: 1px solid #526887; border-radius: 10px; background: #101a2b; }
+.artifact-card h3 { margin-top: 0; }
+.artifact-content { overflow-wrap: anywhere; white-space: pre-wrap; }
+.artifact-content a { color: #8fc0ff; }
+.artifact-content-plain { overflow-x: auto; padding: 12px; background: #09111f; border-radius: 8px; }

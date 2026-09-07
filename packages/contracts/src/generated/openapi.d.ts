@@ -282,6 +282,206 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/artifacts/{artifactId}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Read private Artifact metadata */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    artifactId: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Artifact and immutable Versions */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ArtifactView"];
+                    };
+                };
+                /** @description Invalid request */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/problem+json": components["schemas"]["ProblemDetails"];
+                    };
+                };
+                /** @description Not found */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/problem+json": components["schemas"]["ProblemDetails"];
+                    };
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/artifacts/{artifactId}/versions/{artifactVersionId}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Read exact private Artifact Version metadata */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    artifactId: string;
+                    artifactVersionId: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Exact Artifact Version */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ArtifactVersion"];
+                    };
+                };
+                /** @description Invalid request */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/problem+json": components["schemas"]["ProblemDetails"];
+                    };
+                };
+                /** @description Not found */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/problem+json": components["schemas"]["ProblemDetails"];
+                    };
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/artifacts/{artifactId}/versions/{artifactVersionId}/content": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Read complete or single-range exact Artifact Version content */
+        get: {
+            parameters: {
+                query?: never;
+                header?: {
+                    range?: string;
+                };
+                path: {
+                    artifactId: string;
+                    artifactVersionId: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Complete Artifact content */
+                200: {
+                    headers: {
+                        "accept-ranges": "bytes";
+                        "content-length": string;
+                        "content-type": string;
+                        "content-range"?: string;
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "text/plain": string;
+                        "text/markdown": string;
+                    };
+                };
+                /** @description Single byte range */
+                206: {
+                    headers: {
+                        "accept-ranges": "bytes";
+                        "content-length": string;
+                        "content-type": string;
+                        "content-range"?: string;
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "text/plain": string;
+                        "text/markdown": string;
+                    };
+                };
+                /** @description Invalid request */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/problem+json": components["schemas"]["ProblemDetails"];
+                    };
+                };
+                /** @description Not found */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/problem+json": components["schemas"]["ProblemDetails"];
+                    };
+                };
+                /** @description Invalid or unsatisfiable byte range */
+                416: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/problem+json": components["schemas"]["ProblemDetails"];
+                    };
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/runs": {
         parameters: {
             query?: never;
@@ -769,6 +969,48 @@ export interface components {
             detail: string;
             instance: string;
         };
+        Artifact: {
+            /** Format: uuid */
+            id: string;
+            title: string;
+            kind: string;
+            currentVersionNumber: number;
+            /** Format: date-time */
+            createdAt: string;
+        };
+        ArtifactVersion: {
+            /** Format: uuid */
+            id: string;
+            /** Format: uuid */
+            artifactId: string;
+            versionNumber: number;
+            mediaType: string;
+            sizeBytes: number;
+            /** Format: date-time */
+            createdAt: string;
+        };
+        ArtifactView: {
+            artifact: {
+                /** Format: uuid */
+                id: string;
+                title: string;
+                kind: string;
+                currentVersionNumber: number;
+                /** Format: date-time */
+                createdAt: string;
+            };
+            versions: {
+                /** Format: uuid */
+                id: string;
+                /** Format: uuid */
+                artifactId: string;
+                versionNumber: number;
+                mediaType: string;
+                sizeBytes: number;
+                /** Format: date-time */
+                createdAt: string;
+            }[];
+        };
         Conversation: {
             /** Format: uuid */
             id: string;
@@ -793,13 +1035,18 @@ export interface components {
             sequence: number;
             /** @enum {string} */
             author: "employee" | "assistant";
-            parts: [
-                {
-                    /** @enum {string} */
-                    type: "text";
-                    text: string;
-                }
-            ];
+            parts: ({
+                /** @enum {string} */
+                type: "text";
+                text: string;
+            } | {
+                /** @enum {string} */
+                type: "artifact_reference";
+                /** Format: uuid */
+                artifactId: string;
+                /** Format: uuid */
+                artifactVersionId: string;
+            })[];
             /** Format: date-time */
             createdAt: string;
             /** Format: uuid */
@@ -818,13 +1065,18 @@ export interface components {
                 sequence: number;
                 /** @enum {string} */
                 author: "employee" | "assistant";
-                parts: [
-                    {
-                        /** @enum {string} */
-                        type: "text";
-                        text: string;
-                    }
-                ];
+                parts: ({
+                    /** @enum {string} */
+                    type: "text";
+                    text: string;
+                } | {
+                    /** @enum {string} */
+                    type: "artifact_reference";
+                    /** Format: uuid */
+                    artifactId: string;
+                    /** Format: uuid */
+                    artifactVersionId: string;
+                })[];
                 /** Format: date-time */
                 createdAt: string;
                 /** Format: uuid */
@@ -884,7 +1136,7 @@ export interface components {
             };
             failure?: {
                 /** @enum {string} */
-                code: "engine_failed" | "model_failed" | "dispatch_attempts_exhausted" | "output_delivery_failed";
+                code: "engine_failed" | "model_failed" | "context_input_too_large" | "context_build_failed" | "dispatch_attempts_exhausted" | "output_delivery_failed";
                 message: string;
                 retryable: boolean;
             };
@@ -988,7 +1240,7 @@ export interface components {
                 };
                 failure?: {
                     /** @enum {string} */
-                    code: "engine_failed" | "model_failed" | "dispatch_attempts_exhausted" | "output_delivery_failed";
+                    code: "engine_failed" | "model_failed" | "context_input_too_large" | "context_build_failed" | "dispatch_attempts_exhausted" | "output_delivery_failed";
                     message: string;
                     retryable: boolean;
                 };
@@ -1067,7 +1319,7 @@ export interface components {
                 };
                 failure?: {
                     /** @enum {string} */
-                    code: "engine_failed" | "model_failed" | "dispatch_attempts_exhausted" | "output_delivery_failed";
+                    code: "engine_failed" | "model_failed" | "context_input_too_large" | "context_build_failed" | "dispatch_attempts_exhausted" | "output_delivery_failed";
                     message: string;
                     retryable: boolean;
                 };
@@ -1146,7 +1398,7 @@ export interface components {
                 };
                 failure?: {
                     /** @enum {string} */
-                    code: "engine_failed" | "model_failed" | "dispatch_attempts_exhausted" | "output_delivery_failed";
+                    code: "engine_failed" | "model_failed" | "context_input_too_large" | "context_build_failed" | "dispatch_attempts_exhausted" | "output_delivery_failed";
                     message: string;
                     retryable: boolean;
                 };

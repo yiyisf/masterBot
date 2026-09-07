@@ -220,6 +220,10 @@ _Avoid_: Memory, model context
 The temporary, policy-filtered projection of Messages, Working State, Memory, Knowledge, Skill content, Artifacts, and Agent instructions selected for one Invocation.
 _Avoid_: Conversation history, Context Snapshot
 
+**Context Summary**:
+A derived, lossy compression of an identified span of source content for use in an Invocation Context. It does not replace Messages and is not Memory or Knowledge.
+_Avoid_: Conversation summary, Memory, authoritative history
+
 **UI Projection**:
 A presentation-oriented view derived from Run Events, Output Deltas, and other canonical records for a particular employee experience.
 _Avoid_: Domain model, event store
@@ -241,3 +245,7 @@ _Avoid_: Employee Workspace, employee settings
 **Artifact**:
 A durable, versioned work output produced or used by a Run, such as a document, table, chart, file, workflow, or code bundle. A Message may reference an Artifact but does not own it.
 _Avoid_: Attachment, tool result, message part
+
+**Artifact Reference**:
+A stable reference to one exact Artifact Version without embedding its content or storage location.
+_Avoid_: Attachment payload, latest-version link, storage key

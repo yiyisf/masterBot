@@ -9,7 +9,11 @@ export {
   type EngineInvocation,
 } from './engine.js';
 export { PostgresExecutionModule, type RunLease } from './postgres.js';
-export { RunWorker, type RunWorkerConfig } from './worker.js';
+export {
+  RunWorker,
+  type ContextExecutionRuntime,
+  type RunWorkerConfig,
+} from './worker.js';
 export {
   RunIdempotencyConflictError,
   RunNotFoundError,
@@ -20,6 +24,7 @@ export {
   type AcceptRunCommand,
   type ActiveInterrupt,
   type CancelRunResult,
+  type ContextBuiltMetadata,
   type ExecutionCheckpoint,
   type ExecutionInterrupt,
   type DispatchAttemptId,

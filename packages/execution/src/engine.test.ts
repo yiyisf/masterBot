@@ -1,4 +1,5 @@
 import type { AgentRevisionId } from '@cmaster/agents';
+import type { ContextManifestId } from '@cmaster/context';
 import type { OrganizationId } from '@cmaster/identity';
 import type {
   ModelGateway,
@@ -28,11 +29,8 @@ const selection: ModelSelection = {
   displayName: 'Test Model',
 };
 
-class ToolLoopModelGateway implements ModelGateway {
+class ToolLoopModelGateway implements Pick<ModelGateway, 'stream'> {
   readonly requests: ModelInvocationRequest[] = [];
-
-  async provision(): Promise<void> {}
-  async listCalls(): Promise<[]> { return []; }
 
   async *stream(request: ModelInvocationRequest) {
     this.requests.push(request);
@@ -62,12 +60,10 @@ class ToolLoopModelGateway implements ModelGateway {
   }
 }
 
-class RepeatingToolModelGateway implements ModelGateway {
+class RepeatingToolModelGateway implements Pick<ModelGateway, 'stream'> {
   calls = 0;
 
   constructor(private readonly requestsPerStep: number) {}
-  async provision(): Promise<void> {}
-  async listCalls(): Promise<[]> { return []; }
 
   async *stream() {
     this.calls += 1;
@@ -123,7 +119,7 @@ describe('EchoAgentEngine', () => {
     }
     expect(events).toEqual([
       { type: 'text_delta', text: 'hello' },
-      { type: 'completed' },
+      { type: 'completed', artifactReferences: [] },
     ]);
   });
 });
@@ -148,7 +144,15 @@ describe('AiSdkAgentEngine Tool Loop', () => {
           outcomeKind: 'success',
           toolCallId: 'tool-call-1',
           modelOutput: { iso: '2026-01-02T12:00:00Z' },
-          safeSummary: { title: 'Current time read', details: {} },
+          safeSummary: { title: 'Artifact created', details: {} },
+          artifact: {
+            reference: {
+              artifactId: '00000000-0000-4000-8000-000000000061' as never,
+              artifactVersionId: '00000000-0000-4000-8000-000000000062' as never,
+            },
+            kind: 'text',
+            mediaType: 'text/plain; charset=utf-8',
+          },
         };
       },
       async recover() {
@@ -182,7 +186,152 @@ describe('AiSdkAgentEngine Tool Loop', () => {
       usage: { inputTokens: 5, outputTokens: 3, totalTokens: 8 },
       fallbackUsed: false,
     });
-    expect(events.at(-1)).toEqual({ type: 'completed' });
+    expect(events).toContainEqual({
+      type: 'artifact_created',
+      toolCallId: 'tool-call-1',
+      artifact: {
+        reference: {
+          artifactId: '00000000-0000-4000-8000-000000000061',
+          artifactVersionId: '00000000-0000-4000-8000-000000000062',
+        },
+        kind: 'text',
+        mediaType: 'text/plain; charset=utf-8',
+      },
+    });
+    expect(events.at(-1)).toEqual({
+      type: 'completed',
+      artifactReferences: [{
+        artifactId: '00000000-0000-4000-8000-000000000061',
+        artifactVersionId: '00000000-0000-4000-8000-000000000062',
+      }],
+    });
+  });
+
+  it('fixes successful Artifact references in completion order and removes duplicates', async () => {
+    let modelStep = 0;
+    const models = {
+      async *stream() {
+        modelStep += 1;
+        yield {
+          type: 'model_selected' as const,
+          callId: `call-${modelStep}` as never,
+          profile: selection,
+          fallback: false,
+        };
+        if (modelStep === 1) {
+          yield {
+            type: 'model_completed' as const,
+            callId: 'call-1' as never,
+            profile: selection,
+            usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+            fallbackUsed: false,
+          };
+          for (let index = 0; index < 3; index += 1) {
+            yield {
+              type: 'tool_requested' as const,
+              request: { requestId: `artifact-${index}`, name: 'create_text_artifact', input: {} },
+            };
+          }
+          return;
+        }
+        yield { type: 'text_delta' as const, text: 'Artifacts are ready.' };
+        yield {
+          type: 'model_completed' as const,
+          callId: 'call-2' as never,
+          profile: selection,
+          usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+          fallbackUsed: false,
+        };
+      },
+    };
+    let toolNumber = 0;
+    const references = [
+      {
+        artifactId: '00000000-0000-4000-8000-000000000071' as never,
+        artifactVersionId: '00000000-0000-4000-8000-000000000072' as never,
+      },
+      {
+        artifactId: '00000000-0000-4000-8000-000000000073' as never,
+        artifactVersionId: '00000000-0000-4000-8000-000000000074' as never,
+      },
+    ];
+    const engine = new AiSdkAgentEngine(models, {
+      async list() {
+        return [{ name: 'create_text_artifact', description: 'create', inputSchema: {}, outputSchema: {} }];
+      },
+      async invoke() {
+        const reference = references[toolNumber === 2 ? 0 : toolNumber];
+        toolNumber += 1;
+        if (!reference) throw new Error('Artifact reference is unavailable');
+        return {
+          kind: 'completed' as const,
+          outcomeKind: 'success' as const,
+          toolCallId: `tool-${toolNumber}`,
+          modelOutput: reference,
+          safeSummary: { title: 'Artifact created', details: {} },
+          artifact: {
+            reference,
+            kind: 'text' as const,
+            mediaType: 'text/plain; charset=utf-8' as const,
+          },
+        };
+      },
+      async recover() { throw new Error('not expected'); },
+    });
+    const events = [];
+    for await (const event of engine.execute(invocation, new AbortController().signal)) {
+      events.push(event);
+    }
+
+    expect(events.at(-1)).toEqual({ type: 'completed', artifactReferences: references });
+    const checkpoints = events.filter((event) => event.type === 'checkpoint_reached');
+    expect(checkpoints.at(-1)).toMatchObject({
+      checkpoint: { toolLoop: { artifactReferences: references } },
+    });
+  });
+});
+
+describe('AiSdkAgentEngine Invocation Context', () => {
+  it('supplies complete base history while Checkpoints retain only post-invocation deltas', async () => {
+    const models = new ToolLoopModelGateway();
+    const invokes = { value: 0 };
+    const contextualInvocation: EngineInvocation = {
+      ...invocation,
+      invocationContext: {
+        manifestId: '00000000-0000-4000-8000-000000000099' as ContextManifestId,
+        messages: [
+          { role: 'reference', text: 'bounded summary', trustClass: 'reference' },
+          { role: 'user', text: 'earlier request', trustClass: 'conversation' },
+          { role: 'assistant', text: 'earlier answer', trustClass: 'conversation' },
+          { role: 'user', text: 'trigger request', trustClass: 'conversation' },
+        ],
+      },
+    };
+    let checkpoint: ExecutionCheckpoint | undefined;
+    for await (const event of new AiSdkAgentEngine(
+      models,
+      completingTools(invokes),
+    ).execute(contextualInvocation, new AbortController().signal)) {
+      if (event.type === 'checkpoint_reached') {
+        checkpoint = event.checkpoint;
+        break;
+      }
+    }
+    if (!checkpoint) throw new Error('Context-aware checkpoint expected');
+
+    expect(models.requests[0]?.transcript?.slice(0, 4)).toEqual([
+      { role: 'reference', text: 'bounded summary' },
+      { role: 'user', text: 'earlier request' },
+      { role: 'assistant', text: 'earlier answer', toolRequests: [] },
+      { role: 'user', text: 'trigger request' },
+    ]);
+    expect(checkpoint.contextManifestId).toBe(contextualInvocation.invocationContext?.manifestId);
+    expect(JSON.stringify(checkpoint.toolLoop?.providerNeutralTranscript))
+      .not.toContain('bounded summary');
+    expect(JSON.stringify(checkpoint.toolLoop?.providerNeutralTranscript))
+      .not.toContain('earlier request');
+    expect(JSON.stringify(checkpoint.toolLoop?.providerNeutralTranscript))
+      .not.toContain('trigger request');
   });
 });
 
@@ -268,7 +417,7 @@ describe('AiSdkAgentEngine interrupt recovery', () => {
       name: 'current_time',
       output: { iso: '2026-01-02T12:00:00Z' },
     });
-    expect(resumedEvents.at(-1)).toEqual({ type: 'completed' });
+    expect(resumedEvents.at(-1)).toEqual({ type: 'completed', artifactReferences: [] });
   });
 
   it('resumes from a completed Tool checkpoint without invoking or recovering that ToolCall', async () => {
@@ -316,6 +465,6 @@ describe('AiSdkAgentEngine interrupt recovery', () => {
     expect(invokes).toBe(1);
     expect(recovers).toBe(0);
     expect(models.requests).toHaveLength(2);
-    expect(resumed.at(-1)).toEqual({ type: 'completed' });
+    expect(resumed.at(-1)).toEqual({ type: 'completed', artifactReferences: [] });
   });
 });

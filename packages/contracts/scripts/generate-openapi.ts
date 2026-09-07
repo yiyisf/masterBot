@@ -9,6 +9,7 @@ import {
 import { z } from 'zod';
 
 extendZodWithOpenApi(z);
+const artifacts = await import('../src/artifacts.js');
 const conversations = await import('../src/conversations.js');
 const runs = await import('../src/runs.js');
 const { problemDetailsSchema } = await import('../src/problem.js');
@@ -16,6 +17,9 @@ const { systemStatusSchema } = await import('../src/system-status.js');
 
 const registry = new OpenAPIRegistry();
 const problem = registry.register('ProblemDetails', problemDetailsSchema);
+registry.register('Artifact', artifacts.artifactSchema);
+const artifactVersion = registry.register('ArtifactVersion', artifacts.artifactVersionSchema);
+const artifactView = registry.register('ArtifactView', artifacts.artifactViewSchema);
 const conversation = registry.register('Conversation', conversations.conversationSchema);
 const message = registry.register('Message', conversations.messageSchema);
 const messagePage = registry.register('MessagePage', conversations.messagePageSchema);
@@ -77,6 +81,49 @@ registry.registerPath({
     query: z.object({ afterSequence: z.coerce.number().int().nonnegative().default(0), limit: z.coerce.number().int().min(1).max(200).default(100) }),
   },
   responses: { 200: { description: 'Message page', content: { 'application/json': { schema: messagePage } } }, 400: problemResponse('Invalid request'), 404: problemResponse('Not found') },
+});
+registry.registerPath({
+  method: 'get', path: '/api/v1/artifacts/{artifactId}', summary: 'Read private Artifact metadata',
+  request: { params: idPath('artifactId') },
+  responses: {
+    200: { description: 'Artifact and immutable Versions', content: { 'application/json': { schema: artifactView } } },
+    400: problemResponse('Invalid request'), 404: problemResponse('Not found'),
+  },
+});
+registry.registerPath({
+  method: 'get', path: '/api/v1/artifacts/{artifactId}/versions/{artifactVersionId}',
+  summary: 'Read exact private Artifact Version metadata',
+  request: { params: z.object({ artifactId: z.uuid(), artifactVersionId: z.uuid() }) },
+  responses: {
+    200: { description: 'Exact Artifact Version', content: { 'application/json': { schema: artifactVersion } } },
+    400: problemResponse('Invalid request'), 404: problemResponse('Not found'),
+  },
+});
+registry.registerPath({
+  method: 'get', path: '/api/v1/artifacts/{artifactId}/versions/{artifactVersionId}/content',
+  summary: 'Read complete or single-range exact Artifact Version content',
+  request: {
+    params: z.object({ artifactId: z.uuid(), artifactVersionId: z.uuid() }),
+    headers: z.object({ range: z.string().optional() }),
+  },
+  responses: {
+    200: {
+      description: 'Complete Artifact content', headers: artifacts.artifactContentHeadersSchema,
+      content: {
+        'text/plain': { schema: z.string() },
+        'text/markdown': { schema: z.string() },
+      },
+    },
+    206: {
+      description: 'Single byte range', headers: artifacts.artifactContentHeadersSchema,
+      content: {
+        'text/plain': { schema: z.string() },
+        'text/markdown': { schema: z.string() },
+      },
+    },
+    400: problemResponse('Invalid request'), 404: problemResponse('Not found'),
+    416: problemResponse('Invalid or unsatisfiable byte range'),
+  },
 });
 registry.registerPath({
   method: 'post', path: '/api/v1/runs', summary: 'Accept a Run',
