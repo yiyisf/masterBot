@@ -8,6 +8,7 @@ import { EnvironmentFeatureFlags, type FeatureFlags } from './feature-flags.js';
 import type { DatabaseHealth } from './postgres.js';
 import type { ToolConfirmationCoordinator } from './tool-confirmation-coordinator.js';
 import { registerRunApi, type RunApiDependencies } from './run-api.js';
+import { registerWorkspaceApi, type WorkspaceApiDependencies } from './workspace-api.js';
 
 export interface ApiDependencies {
   config: ServerConfig;
@@ -15,6 +16,7 @@ export interface ApiDependencies {
   featureFlags?: FeatureFlags;
   runApi?: RunApiDependencies;
   artifactApi?: ArtifactApiDependencies;
+  workspaceApi?: WorkspaceApiDependencies;
   toolConfirmationCoordinator?: ToolConfirmationCoordinator;
 }
 
@@ -24,6 +26,7 @@ export function buildApi(dependencies: ApiDependencies): FastifyInstance {
     nextArchitecture: dependencies.config.features.nextArchitecture,
     toolRuntime: dependencies.config.features.toolRuntime,
     contextArtifacts: dependencies.config.features.contextArtifacts,
+    employeeWorkspace: dependencies.config.features.employeeWorkspace,
   });
 
   if (featureFlags.isEnabled('toolRuntime') && !dependencies.toolConfirmationCoordinator) {
@@ -31,6 +34,9 @@ export function buildApi(dependencies: ApiDependencies): FastifyInstance {
   }
   if (featureFlags.isEnabled('contextArtifacts') && !dependencies.artifactApi) {
     throw new Error('Context and Artifacts require an Artifact API');
+  }
+  if (featureFlags.isEnabled('employeeWorkspace') && !dependencies.workspaceApi) {
+    throw new Error('Employee Workspace requires a Workspace API');
   }
 
   void app.register(cors, {
@@ -49,6 +55,9 @@ export function buildApi(dependencies: ApiDependencies): FastifyInstance {
   if (featureFlags.isEnabled('nextArchitecture')) {
     if (featureFlags.isEnabled('contextArtifacts') && dependencies.artifactApi) {
       registerArtifactApi(app, dependencies.artifactApi);
+    }
+    if (featureFlags.isEnabled('employeeWorkspace') && dependencies.workspaceApi) {
+      registerWorkspaceApi(app, dependencies.workspaceApi);
     }
     if (dependencies.runApi) {
       registerRunApi(app, {

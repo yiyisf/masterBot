@@ -108,10 +108,10 @@ export class RunWorker {
     signal: AbortSignal,
   ): Promise<PreparedRunOutput | undefined> {
     // Slice 2 只投影触发它的 Employee Text Message；历史、Memory/Knowledge 由 Context Builder Slice 接管。
-    const trigger = await this.conversations.getMessageTrigger(
-      lease.organizationId,
-      lease.messageId,
-    );
+    const trigger = await this.conversations.getMessageTrigger({
+      organizationId: lease.organizationId,
+      principalId: lease.initiatingPrincipalId,
+    }, lease.messageId);
     let invocationContext: InvocationContext | undefined;
     if (this.contextRuntime?.agentRevisionId === lease.agentRevisionId) {
       try {

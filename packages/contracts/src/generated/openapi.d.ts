@@ -40,6 +40,108 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/workspace/summary": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Read bounded Employee Workspace summary */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Private Workspace summary */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["WorkspaceSummary"];
+                    };
+                };
+                /** @description Workspace is unavailable */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/problem+json": components["schemas"]["ProblemDetails"];
+                    };
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/workspace/conversations": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List private recent Conversations */
+        get: {
+            parameters: {
+                query?: {
+                    cursor?: string;
+                    limit?: number;
+                };
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Private Conversation page */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["WorkspaceConversationPage"];
+                    };
+                };
+                /** @description Invalid request */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/problem+json": components["schemas"]["ProblemDetails"];
+                    };
+                };
+                /** @description Workspace is unavailable */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/problem+json": components["schemas"]["ProblemDetails"];
+                    };
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/conversations": {
         parameters: {
             query?: never;
@@ -1438,6 +1540,38 @@ export interface components {
             /** @enum {string} */
             postgres: "available" | "unavailable";
             nextArchitectureEnabled: boolean;
+        };
+        WorkspaceConversationPage: {
+            items: {
+                /** Format: uuid */
+                id: string;
+                title: string | null;
+                preview: {
+                    /** @enum {string} */
+                    kind: "text";
+                    text: string;
+                } | {
+                    /** @enum {string} */
+                    kind: "artifact";
+                } | {
+                    /** @enum {string} */
+                    kind: "empty";
+                };
+                /** Format: date-time */
+                updatedAt: string;
+                activity: {
+                    activeRunCount: number;
+                    pendingActionCount: number;
+                    /** @enum {string} */
+                    latestRunStatus?: "accepted" | "queued" | "running" | "waiting" | "succeeded" | "failed" | "cancelled";
+                };
+            }[];
+            nextCursor: string | null;
+        };
+        WorkspaceSummary: {
+            conversationCount: number;
+            activeRunCount: number;
+            pendingActionCount: number;
         };
     };
     responses: never;

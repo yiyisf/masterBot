@@ -51,4 +51,13 @@ export {
   type ServerRole,
   type SystemStatus,
 } from '#internal/system-status';
+export {
+  workspaceConversationPageSchema,
+  workspaceConversationPreviewSchema,
+  workspaceConversationSummarySchema,
+  workspaceSummarySchema,
+  type WorkspaceConversationPageContract,
+  type WorkspaceConversationSummaryContract,
+  type WorkspaceSummaryContract,
+} from '#internal/workspace';
 export type { paths } from './generated/openapi.js';

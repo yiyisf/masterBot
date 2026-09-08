@@ -3,7 +3,7 @@
 import { createContractClient, type SystemStatus } from '@cmaster/contracts';
 import { useEffect, useState } from 'react';
 
-const apiUrl = process.env.NEXT_PUBLIC_CMASTER_API_URL ?? 'http://localhost:3100';
+const apiUrl = process.env.NEXT_PUBLIC_CMASTER_API_URL ?? '';
 
 export default function SystemStatusPage() {
   const [status, setStatus] = useState<SystemStatus>();

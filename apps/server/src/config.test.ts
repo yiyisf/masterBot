@@ -140,6 +140,35 @@ describe('loadServerConfig', () => {
     }, [])).toThrow('Agent Revision ID must be distinct');
   });
 
+  it('keeps Employee Workspace disabled by default and requires every Slice 4 prerequisite', () => {
+    expect(loadServerConfig({
+      DATABASE_URL: 'postgresql://localhost/cmaster',
+    }, []).features.employeeWorkspace).toBe(false);
+
+    expect(() => loadServerConfig({
+      DATABASE_URL: 'postgresql://localhost/cmaster',
+      NEXT_ARCHITECTURE_ENABLED: 'true',
+      CMASTER_EMPLOYEE_WORKSPACE_ENABLED: 'true',
+    }, [])).toThrow('Employee Workspace requires Context and Artifacts');
+  });
+
+  it('enables Employee Workspace only on the complete Slice 4 runtime', () => {
+    const config = loadServerConfig({
+      DATABASE_URL: 'postgresql://localhost/cmaster',
+      NEXT_ARCHITECTURE_ENABLED: 'true',
+      CMASTER_AI_SDK_RUNTIME_ENABLED: 'true',
+      CMASTER_TOOL_RUNTIME_ENABLED: 'true',
+      CMASTER_CONTEXT_ARTIFACTS_ENABLED: 'true',
+      CMASTER_EMPLOYEE_WORKSPACE_ENABLED: 'true',
+      CMASTER_PRIMARY_MODEL_BASE_URL: 'https://models.example.test/v1',
+      CMASTER_PRIMARY_MODEL_ID: 'primary-model',
+      CMASTER_PRIMARY_MODEL_API_KEY: 'secret',
+      CMASTER_PRIMARY_MODEL_CONTEXT_WINDOW_TOKENS: '131072',
+    }, []);
+
+    expect(config.features.employeeWorkspace).toBe(true);
+  });
+
   it('keeps Context and Artifacts disabled by default and requires Tool Runtime', () => {
     expect(loadServerConfig({
       DATABASE_URL: 'postgresql://localhost/cmaster',

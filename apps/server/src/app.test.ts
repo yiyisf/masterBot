@@ -52,6 +52,24 @@ describe('next API skeleton', () => {
     })).toThrow('Tool Runtime requires a Tool Confirmation Coordinator');
   });
 
+  it('keeps Workspace Projection routes unmounted while its Slice flag is disabled', async () => {
+    const app = buildApi({ config, database: database(true) });
+    expect((await app.inject({
+      method: 'GET', url: '/api/v1/workspace/conversations',
+    })).statusCode).toBe(404);
+    await app.close();
+  });
+
+  it('fails closed when Employee Workspace is enabled without its Experience Adapter', () => {
+    expect(() => buildApi({
+      config,
+      database: database(true),
+      featureFlags: new InMemoryFeatureFlags({
+        nextArchitecture: true, employeeWorkspace: true,
+      }),
+    })).toThrow('Employee Workspace requires a Workspace API');
+  });
+
   it('mounts the versioned status contract only when enabled', async () => {
     const disabled = buildApi({
       config,

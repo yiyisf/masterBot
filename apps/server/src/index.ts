@@ -222,6 +222,9 @@ const api = config.role === 'worker' ? undefined : buildApi({
   database,
   ...(config.features.nextArchitecture ? {
     runApi: { identity, agents, conversations, execution, notifier },
+    ...(config.features.employeeWorkspace
+      ? { workspaceApi: { identity, conversations, execution } }
+      : {}),
     ...(artifacts ? { artifactApi: { identity, artifacts } } : {}),
     ...(toolConfirmationCoordinator ? { toolConfirmationCoordinator } : {}),
   } : {}),
