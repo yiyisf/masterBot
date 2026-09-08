@@ -37,9 +37,11 @@ Conversation 1 ── * Message
 ```
 
 - Message 是员工可见内容的不可变事实。
+- Conversation 默认由 `createdByPrincipalId` 标识的创建 Principal 私有；Organization 隔离不等于共享授权，未来共享需要显式参与者或 Policy 模型。
 - Conversation 可包含多次 Run 的输入与输出。
 - Employee 外部输入仍只有 Text Part；Slice 4 的 Assistant Message 可包含 Text Part 和指向确切 Artifact Version 的 Artifact Reference Part，旧 Message 不随 Artifact 新版本变化。
 - 后一次 Run 的 Context Manifest 引用历史 Message ID，不复制 Message 内容到 Run；Message Trigger 的 sequence 是该 Run 可见历史的固定上界。
+- Slice 5 的 Conversation title 在首条 Employee Message 后确定性初始化一次并可显式重命名；它不是 Context Summary。Conversation list preview 是查询派生值，不单独持久化；archive/delete/read receipt 不进入首版状态模型。
 
 ### Run / Trigger
 
@@ -49,7 +51,7 @@ Run 是一次被 Principal 授权的工作尝试。Trigger 是带类型的来源
 message | task | webhook | schedule | api | parent_run
 ```
 
-`conversationId` 可空；Message Trigger 时必须存在并属于同一 Organization。
+`conversationId` 可空；Message Trigger 时必须存在并属于同一 Organization 且 initiating Principal 必须可访问对应 Conversation。同一 Message 可以触发多个明确的 Run attempts；网络恢复以相同 Command ID 收敛到原 Run，只有新的 Employee 意图才创建新 attempt。
 
 建议持久化字段组：
 
@@ -122,6 +124,10 @@ Checkpoint 保存安全恢复所需 Working State、Engine Adapter/version、Con
 ContextManifest 是一次 Invocation 实际 Context 选择的不可变、Organization-scoped 记录，`(organizationId, invocationId)` 唯一。它保存 Trigger Message sequence、Context Policy version、预算/估算用量，以及有序来源项的 source ID/sequence、content hash、分类与 `verbatim | summary` 纳入方式；不复制 Message 或 Artifact 正文。
 
 ContextSummary 是对一个明确连续来源区间的有损派生内容。首版使用固定的 Employee Goal、Explicit Constraints、Established Facts、Decisions and Commitments、Relevant Artifacts、Unresolved Items 结构；它不是 Message、Memory 或 Knowledge，也不能提升来源内容的指令权限。恢复通过 Manifest 重新读取权威来源并校验 hash；已完成 Manifest 不重新选择或摘要。
+
+### UI Projection
+
+Slice 5 的 Run UI Projection Snapshot 与 sequence stream 是从 Run 状态、Interrupt 和 Run Event 派生的 Presentation Model，不是新的业务事实。首版按需构造并对 Timeline 分页，不增加物化 Projection 表；Assistant Draft 只包含当前 output generation，最终 Assistant Message 仍是 Conversation 权威事实。
 
 ### Outbox 与状态表
 

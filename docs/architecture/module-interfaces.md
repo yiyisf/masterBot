@@ -53,11 +53,13 @@ interface ConversationModule {
 ```
 
 - Message 追加后不可修改；修订通过新 Message 或显式元数据表达。
+- Conversation 默认创建者私有；所有 get/list/Message 读写同时使用 trusted Organization 与 Principal，跨 Principal 与不存在使用相同 not-found 语义。
 - Run 只引用 Message，不由 Conversation Module 执行。
 - Context Builder 通过受控读接口获取历史，不能直查表。
 - Slice 1 的 Browser Command 明确拆分为创建 Conversation、追加 Employee Message、以 Message Trigger 创建 Run；不提供重新耦合三者的 `/chat` Command。
 - Message 使用 Conversation 内严格递增 sequence；Employee 外部输入仍只接受一个 Provider-neutral Text Part。Slice 4 的 Assistant Message 可追加指向确切 Artifact Version 的 Artifact Reference Part，不复制 Artifact metadata 或内容。
 - Slice 4 为 Context Builder 提供受控历史读取：只返回同 Organization、截至 Trigger Message sequence 的不可变 Message；Conversation Module 不做选择、预算或摘要。
+- Slice 5 补齐 creator-private Conversation 分页、最新/向前 Message page、确定性首条 Message 标题、有界 preview 与 rename。列表 cursor 稳定且对 Browser opaque；不引入 archive/delete/read receipt/search 生命周期。
 
 ## 4. Execution
 
@@ -85,6 +87,7 @@ interface RunQueries {
 - Run start 在返回前必须持久化接受事实和 Dispatch/Outbox。
 - Run Event 按 Run 严格 sequence，传输为 at-least-once。
 - Harness 只通过 Agent Engine、Tool Runtime、Context Builder、Policy、Artifact 等公开 Interface 协作。
+- Slice 5 的 Execution Query 提供按 Conversation 的 Run summaries、按 Trigger Message 的 attempts、按 initiating Principal 的 active Interrupts 与分页 Event 读取；它不读取 Conversation 正文或 Artifact 内容。
 - Checkpoint 只在声明的安全点产生；不兼容 Engine version 必须显式失败或迁移。
 
 Slice 2 使用 `accepted | queued | running | succeeded | failed | cancelled`；Slice 3 增加非终态 `waiting`，具体原因由持久化 Interrupt 表达，Invocation 等待时为 `interrupted` 且不持有 Worker Lease。`output_ready` 是取消边界：若取消先提交则丢弃后续 Engine 输出；若输出先提交则取消太晚，继续幂等追加 Assistant Message。Tool Provider in-flight 期间暂时不可取消，Tool boundary 持久化后恢复可取消，不引入 `cancelling/completing`。Slice 2 在此 Interface 内增加按 generation 排序的聚合 output events；Slice 3 在 Tool/Interrupt 安全点写 Engine-neutral Checkpoint，Lease 恢复不得重复已完成 ToolCall。Slice 4 在 Agent Engine 前构建并固定 Context Manifest；Checkpoint 只保存 `contextManifestId` 和 Invocation 开始后的执行增量，不复制 Manifest 引用的 Message 或 Artifact 内容。最终 `output_ready` 同时固定文本和 Harness 收集的 Artifact References，以便崩溃后幂等交付同一 Assistant Message。
@@ -217,6 +220,7 @@ interface ArtifactContentStore {
 - `(organizationId, sourceToolCallId)` 唯一且校验 request hash；恢复同一 ToolCall 返回原 Artifact，不同内容冲突。同 Organization、相同 bytes 和 media type 复用 ArtifactContent/Blob。
 - Slice 4 只实现 Blob、staging 清理、完整读取和单一 byte Range；quarantine、derivatives、trash、删除与完整 GC 延后，且不创建空状态或 Port。
 - Browser 只开放 metadata 与指定 Version 内容读取，不提供创建、编辑或删除 Command。删除最终仍由引用检查和 GC 完成。
+- Slice 5 补齐 private Artifact list、Version list/current exact Version ID 与安全 download disposition；Library 与 Message 预览始终导航到确切 Version，不暴露浮动 latest 内容 URL。
 
 ## 10. Governance
 
@@ -289,7 +293,9 @@ interface StreamEnvelope<T> {
 - Run Event、Output Delta 和 UI Projection 是不同模型。
 - assistant-ui/AI SDK UI/AG-UI 可替换，不改变 Harness 或历史数据。
 - Slice 4 增加 `invocation.context_built` 与 `artifact.created` 安全事件，只携带 ID、计数、策略/媒体类型和估算用量，不携带正文、hash、Prompt 或 storage key。Context Manifest/Summary 正文不提供 Browser REST。
-- Artifact 内容端点支持完整读取和单一 `bytes` Range（含 open-ended/suffix）；非法、越界或多区间请求返回 416。最小 Registry 提供安全 Text/Markdown Renderer 与未知类型 Fallback，完整体验留给 Slice 5。
+- Artifact 内容端点支持完整读取和单一 `bytes` Range（含 open-ended/suffix）；非法、越界或多区间请求返回 416。最小 Registry 提供安全 Text/Markdown Renderer 与未知类型 Fallback。
+- Slice 5 增加只读 Workspace Summary/Conversation/Pending/Artifact Projection，以及按需构造的 Run UI Projection Snapshot 和 sequence stream。Server Experience Adapter 只组合 Module 公开 Query，不拥有表或跨 Module SQL；Command 继续走领域 REST，不建立 `/chat` 或 Next.js Server Action 写路径。
+- Workspace React Feature 只消费 CMaster-owned Projection Contract；AI Elements、AI SDK UI 或其他框架类型在 Web Adapter 终止。
 
 ## 13. Persistence、Messaging 与 Observability Ports
 

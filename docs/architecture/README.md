@@ -15,6 +15,7 @@
 - [架构决策](../adr/) — 关键取舍及原因
 - [Slice 3 Governed Tool Runtime 设计](../design/slice-3-governed-tool-runtime.html) — Grill 对齐后的自包含实施设计
 - [Slice 4 Context & Artifacts 设计](../design/slice-4-context-artifacts.html) — Context 压缩、Manifest、Artifact 存储与最小消费闭环
+- [Slice 5 Employee Workspace 设计](../design/slice-5-employee-workspace.html) — Conversation-centric Workspace、UI Projection、治理交互与可访问体验
 
 ## 架构图
 

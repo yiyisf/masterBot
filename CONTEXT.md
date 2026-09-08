@@ -55,8 +55,8 @@ _Avoid_: Authentication claim, Tool Grant, mutable rule configuration
 ## Conversations and Execution
 
 **Conversation**:
-A continuing employee-visible exchange that contains an ordered history of Messages. It is not an execution lifecycle.
-_Avoid_: Chat session, thread session
+A continuing employee-visible exchange that contains an ordered history of Messages. It is not an execution lifecycle. A Conversation is private to its creating Principal by default; access by another Principal requires an explicit future sharing or Policy decision.
+_Avoid_: Chat session, thread session, Organization-wide chat
 
 **Message**:
 An immutable employee-visible item in a Conversation, authored by an employee or the Enterprise Assistant.

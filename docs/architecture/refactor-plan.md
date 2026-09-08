@@ -174,29 +174,41 @@
 
 ## 7. Slice 5 — Employee Workspace
 
-**分支**：`refactor/employee-workspace`
+**详细设计**：[`docs/design/slice-5-employee-workspace.html`](../design/slice-5-employee-workspace.html)
+
+**实施追踪**：[#118](https://github.com/yiyisf/masterBot/issues/118)
+
+**交付方式**：一个 Parent Spec 与多个 blockers-first 短期垂直分支/PR；不建立长期总集成分支。
 
 ### 目标
 
-完成第一条员工可用体验。
+完成第一条以 Conversation 为中心、可恢复、可访问的员工可用体验。Run、Tool、Approval 与 Artifact 是 Conversation 内的执行透明度和工作输出，不成为平铺的平台导航。
 
 ### 交付
 
-- Employee/Admin 两套导航壳，首期聚焦 Employee
-- Conversation list/thread/composer
-- Run Timeline、Invocation、Tool Activity、Approval、Artifact
-- Query Cache、Streaming Projection、Local UI State 分层
-- Tool/Artifact/Run Renderer Registry 与 Fallback
-- Design Token、i18n、Light/Dark、WCAG AA
-- 桌面完整、移动 Conversation/状态/审批/下载
-- 展示执行透明度，不展示 raw chain-of-thought
+- 独立 Workspace 首页，Conversation list/thread/composer，首条 Message 确定性标题和 rename
+- Conversation 默认创建者私有；同 Organization 跨 Principal 的 Conversation/Message/Run/Projection 使用 not-found 语义
+- Conversation 下可寻址 Run Detail；Message→Run 分阶段幂等恢复和明确的新 Run attempts
+- TanStack Query Server State、CMaster-owned Run UI Projection Snapshot/sequence stream、Local UI State 分层
+- Assistant Draft 与最终 Message 分离；Timeline、Tool Activity、Confirmation、Uncertain Outcome 和 Cancel 交互
+- “待处理”Presentation 聚合，不创建新领域实体或第二写路径
+- private Artifact Library、exact Version route、按需 Text/Markdown preview、安全 download disposition 和未知 Fallback
+- AI Elements + shadcn/ui 薄适配；框架类型停留在 Experience 层，不接管 Message/Run/Approval/Artifact 状态
+- System/Light/Dark、zh-CN/en-US、自然非机器化文案、WCAG 2.2 AA
+- 桌面完整三栏；移动交付 Conversation/Run/处理/Artifact 下载最小核心
+- same-origin `/api/v1` 与开发 rewrite；业务写操作只走生成 Contract Client，不使用 Next.js Server Actions
+- 临时 `CMASTER_EMPLOYEE_WORKSPACE_ENABLED`，显式依赖 Slice 4；迁移 Flags 在 Slice 6 完成后统一删除
 
 ### 验收/退出
 
-- 长对话流式更新不整树重渲染
-- 刷新后 Snapshot + Event 恢复同一 UI
-- 键盘、Focus、非颜色状态和 reduced motion 验收
-- 未知 Renderer 类型不导致页面崩溃
+- 两次 Conversation Run、流式 Draft、Tool、Artifact exact Version、预览/下载形成生产形状 Browser 闭环
+- Message 已保存但 Run 未启动、SSE gap/刷新、retryable failure 新 attempt 均确定性恢复且不重复事实
+- Confirmation 与 Uncertain Outcome 严格区分；取消不承诺撤销 Tool effect
+- 长对话流式更新不整树重渲染；1,000 Message 与 2,000 Timeline Fixture 通过防回归门禁
+- Snapshot + sequence 恢复相同 Draft、Timeline、Interrupt 和最终 Message
+- Playwright + axe 覆盖桌面完整与移动核心；键盘、Focus、非颜色状态和 reduced motion 通过
+- zh-CN/en-US 与 Light/Dark 的核心流程通过；未知 Renderer/Projection 类型不导致页面崩溃
+- Contract drift、Module boundaries、PostgreSQL/HTTP privacy 和完整 Browser E2E 通过
 
 ## 8. Slice 6 — Production Starter
 
