@@ -123,6 +123,7 @@ data/artifacts/
 - 内部 OIDC Provider 通过 Authorization Code + PKCE 接入；浏览器使用 HttpOnly/Secure/SameSite Session Cookie。
 - API 从可信 Session 建立 `organizationId/principalId/roles/correlationId`，不接受客户端自行声明。
 - Agent 代表 Principal 受限 Delegation；子 Invocation 只能保持或缩小权限。
+- Conversation 默认由创建 Principal 私有；Organization scope 不构成共享授权，未来协作必须通过显式参与者或 Policy 引入。
 - 有效权限是 Organization Policy、Principal Entitlement、Agent Grant、Tool Policy 和 Invocation 限制的交集。
 - Policy Module 返回 allow/deny 及 approval、redaction、model restriction、network restriction 等 obligation；首版进程内实现，OPA/Cedar 后置。
 - Connector 只保存 Credential Reference；完整企业 Credential Broker 实现优先级较低，但接口不可绕过。
@@ -141,9 +142,11 @@ data/artifacts/
 - OTel 统一 Trace/Metric/Log，但 Run Event 不等于 Trace。
 - Prompt、Tool 参数和 Artifact 内容默认不进入遥测。
 - Eval Suite 覆盖 Contract、Regression、Capability、Safety、Cost 和 Performance；Revision 经过 Evidence、Review 和 Canary 后激活。
-- 前端按 Feature 组织，区分 Query Cache、Streaming Projection 和 Local UI State。
+- 前端按 Feature 组织，区分 Query Cache、Streaming Projection 和 Local UI State；Server State 首版使用 TanStack Query，Run UI Projection 使用 Snapshot + sequence stream 恢复。
+- Employee Workspace 使用 CMaster-owned、版本化 UI Projection Contract；canonical Run Event 和 AI SDK UI 类型都不成为 React Feature Contract。
+- 首个 Conversation presentation 实现选择 AI Elements + shadcn/ui 薄适配，框架类型停留在 Experience 层，Message/Run/Approval/Artifact 状态仍由 CMaster 拥有。
 - Renderer Registry 扩展 Tool/Artifact/Run 视图，未知类型使用通用 Fallback。
-- 员工端桌面完整、移动端覆盖核心流程；管理端桌面优先；目标 WCAG 2.2 AA 和 i18n。
+- 员工端桌面完整、移动端覆盖核心流程；管理端桌面优先；实际交付 zh-CN/en-US、System/Light/Dark，并以 WCAG 2.2 AA 为验收。
 
 ## 11. Production Starter 基线
 
