@@ -3,8 +3,15 @@ import type { paths } from './generated/openapi.js';
 
 export type ContractClient = ReturnType<typeof createClient<paths>>;
 
-export function createContractClient(baseUrl: string): ContractClient {
-  return createClient<paths>({ baseUrl, credentials: 'include' });
+export function createContractClient(
+  baseUrl: string,
+  fetchImplementation: typeof globalThis.fetch = globalThis.fetch,
+): ContractClient {
+  return createClient<paths>({
+    baseUrl,
+    credentials: 'include',
+    fetch: fetchImplementation,
+  });
 }
 
 export async function readArtifactVersionContent(

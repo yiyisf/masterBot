@@ -2,6 +2,7 @@
 
 import { createContractClient } from '@cmaster/contracts';
 import { useQuery } from '@tanstack/react-query';
+import Link from 'next/link';
 import { resolveLocale, resolveTheme } from './preferences';
 import { useWorkspacePreferences } from './workspace-providers';
 
@@ -14,14 +15,14 @@ const copy = {
     conversations: '最近的 Conversation', active: '进行中', pending: '待处理', emptyTitle: '还没有 Conversation',
     emptyBody: '首次发送消息时会创建一个 Conversation。', artifact: '包含一个工作产出', noMessages: '尚无消息',
     untitled: '未命名 Conversation', loadError: '暂时无法读取工作区。请稍后重试。', language: '语言', theme: '主题',
-    system: '跟随系统', light: '浅色', dark: '深色', statuses: { accepted: '已接受', queued: '排队中', running: '进行中', waiting: '等待处理', succeeded: '已完成', failed: '失败', cancelled: '已取消' },
+    newConversation: '新建 Conversation', system: '跟随系统', light: '浅色', dark: '深色', statuses: { accepted: '已接受', queued: '排队中', running: '进行中', waiting: '等待处理', succeeded: '已完成', failed: '失败', cancelled: '已取消' },
   },
   'en-US': {
     eyebrow: 'Employee Workspace', title: 'Continue recent work', description: 'Conversations keep the complete message and work history.',
     conversations: 'Recent conversations', active: 'Active', pending: 'Pending', emptyTitle: 'No conversations yet',
     emptyBody: 'A conversation is created when you send your first message.', artifact: 'Contains a work output', noMessages: 'No messages yet',
     untitled: 'Untitled conversation', loadError: 'The workspace is unavailable right now. Try again shortly.', language: 'Language', theme: 'Theme',
-    system: 'System', light: 'Light', dark: 'Dark', statuses: { accepted: 'Accepted', queued: 'Queued', running: 'Active', waiting: 'Waiting', succeeded: 'Completed', failed: 'Failed', cancelled: 'Cancelled' },
+    newConversation: 'New conversation', system: 'System', light: 'Light', dark: 'Dark', statuses: { accepted: 'Accepted', queued: 'Queued', running: 'Active', waiting: 'Waiting', succeeded: 'Completed', failed: 'Failed', cancelled: 'Cancelled' },
   },
 } as const;
 
@@ -55,6 +56,7 @@ export function EmployeeWorkspaceHome() {
           <p className="eyebrow">{text.eyebrow}</p>
           <h1>{text.title}</h1>
           <p>{text.description}</p>
+          <Link className="button" href="/workspace/conversations/new">{text.newConversation}</Link>
         </div>
         <div className="workspace-preferences" aria-label="Workspace preferences">
           <label>{text.language}
@@ -88,7 +90,7 @@ export function EmployeeWorkspaceHome() {
             {conversations.data?.items.map((conversation) => (
               <article className="conversation-summary" key={conversation.id}>
                 <div>
-                  <h3>{conversation.title ?? text.untitled}</h3>
+                  <h3><Link href={`/workspace/conversations/${conversation.id}`}>{conversation.title ?? text.untitled}</Link></h3>
                   <p>{conversation.preview.kind === 'text' ? conversation.preview.text
                     : conversation.preview.kind === 'artifact' ? text.artifact : text.noMessages}</p>
                 </div>

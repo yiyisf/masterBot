@@ -1,6 +1,7 @@
 import {
   acceptRunResponseSchema,
   appendMessageRequestSchema,
+  conversationRunPageSchema,
   conversationSchema,
   createConversationRequestSchema,
   createRunRequestSchema,
@@ -160,6 +161,18 @@ export function registerRunApi(app: FastifyInstance, dependencies: RunApiDepende
     }
   });
 
+  app.get('/api/v1/conversations/by-command/:commandId', async (request, reply) => {
+    try {
+      const params = z.object({ commandId: uuidSchema }).parse(request.params);
+      const value = await dependencies.conversations.getCreatedByCommand(
+        dependencies.identity.resolveRequest(), commandId(params.commandId),
+      );
+      return reply.send(conversationContract(value));
+    } catch (error) {
+      return sendRunApiError(error, request, reply);
+    }
+  });
+
   app.get('/api/v1/conversations/:conversationId', async (request, reply) => {
     try {
       const params = z.object({ conversationId: uuidSchema }).parse(request.params);
@@ -183,6 +196,18 @@ export function registerRunApi(app: FastifyInstance, dependencies: RunApiDepende
       );
       reply.header('Idempotency-Replayed', String(result.replayed));
       return reply.status(201).send(messageContract(result.value));
+    } catch (error) {
+      return sendRunApiError(error, request, reply);
+    }
+  });
+
+  app.get('/api/v1/messages/by-command/:commandId', async (request, reply) => {
+    try {
+      const params = z.object({ commandId: uuidSchema }).parse(request.params);
+      const value = await dependencies.conversations.getEmployeeMessageByCommand(
+        dependencies.identity.resolveRequest(), commandId(params.commandId),
+      );
+      return reply.send(messageContract(value));
     } catch (error) {
       return sendRunApiError(error, request, reply);
     }
@@ -226,6 +251,39 @@ export function registerRunApi(app: FastifyInstance, dependencies: RunApiDepende
       return reply.status(202).send(acceptRunResponseSchema.parse({
         runId: result.value.id,
         eventsUrl: `/api/v1/runs/${result.value.id}/events`,
+      }));
+    } catch (error) {
+      return sendRunApiError(error, request, reply);
+    }
+  });
+
+  app.get('/api/v1/runs/by-command/:commandId', async (request, reply) => {
+    try {
+      const params = z.object({ commandId: uuidSchema }).parse(request.params);
+      const value = await dependencies.execution.getRunByCommand(
+        dependencies.identity.resolveRequest(), runCommandId(params.commandId),
+      );
+      return reply.send(runContract(value));
+    } catch (error) {
+      return sendRunApiError(error, request, reply);
+    }
+  });
+
+  app.get('/api/v1/conversations/:conversationId/runs', async (request, reply) => {
+    try {
+      const params = z.object({ conversationId: uuidSchema }).parse(request.params);
+      const identity = dependencies.identity.resolveRequest();
+      const id = conversationId(params.conversationId);
+      await dependencies.conversations.get(identity, id);
+      const values = await dependencies.execution.listConversationRuns(identity, id, 51);
+      return reply.send(conversationRunPageSchema.parse({
+        items: values.slice(0, 50).map((value) => ({
+          id: value.id,
+          triggerMessageId: value.triggerMessageId,
+          status: value.status,
+          createdAt: value.createdAt.toISOString(),
+        })),
+        truncated: values.length > 50,
       }));
     } catch (error) {
       return sendRunApiError(error, request, reply);

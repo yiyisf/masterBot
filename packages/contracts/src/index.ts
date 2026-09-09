@@ -28,6 +28,13 @@ export {
   type ConversationContract,
   type MessageContract,
 } from '#internal/conversations';
+export {
+  conversationRunPageSchema,
+  conversationRunSummarySchema,
+  operationCommandParamsSchema,
+  type ConversationRunPageContract,
+  type ConversationRunSummaryContract,
+} from '#internal/composer';
 export { problemDetailsSchema, type ProblemDetails } from '#internal/problem';
 export {
   acceptRunResponseSchema,

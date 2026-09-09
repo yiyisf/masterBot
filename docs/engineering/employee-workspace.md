@@ -40,7 +40,7 @@ Conversation is private to its creating Principal by default. Conversation, Mess
 | Active Run status, Assistant Draft, Timeline, Tool Activity, Interrupt | CMaster Run UI Projection reducer/store |
 | Draft, selected panel/tab, local disclosure | React/route state; Draft is temporarily recoverable in `sessionStorage` |
 
-AI Elements + shadcn/ui provide selected presentation source for Conversation, Message, Prompt Input, Tool, and Confirmation. CMaster Feature components own business composition. AI Elements, AI SDK, React, and framework types do not enter Domain, Module Interface, or public CMaster Projection Contracts.
+AI Elements + shadcn/ui provide selected presentation source for Conversation, Message, Prompt Input, Tool, and Confirmation. The first Prompt Input adaptation is pinned to AI Elements registry source 1.9.0 and retains its form/IME semantics while omitting attachment and AI SDK UI-part state that Slice 5.2 does not use. CMaster Feature components own business composition. AI Elements, AI SDK, React, and framework types do not enter Domain, Module Interface, or public CMaster Projection Contracts.
 
 ## Run UI Projection
 
@@ -70,7 +70,7 @@ The new Conversation route is local until first submit. One logical submit keeps
 create Conversation → append Employee Message → create Run
 ```
 
-Unknown responses are resolved by querying Server facts before resending the same Command ID. A persisted Message with no Run remains visible and can resume Run creation. An explicit Employee “run again” uses a new Command ID and creates another Run attempt for the same Trigger Message; this is distinct from transport recovery.
+Unknown responses are resolved by querying Server facts before resending the same Command ID. Slice 5.2 exposes creator-private reconciliation reads at `GET /api/v1/conversations/by-command/{commandId}`, `GET /api/v1/messages/by-command/{commandId}`, and `GET /api/v1/runs/by-command/{commandId}`; a 404 permits the same Command ID to be sent, while an unknown reconciliation result never permits a blind retry. A persisted Message with no Run remains visible and can resume Run creation. An explicit Employee “run again” uses a new Command ID and creates another Run attempt for the same Trigger Message; this is distinct from transport recovery.
 
 Within the Employee UI, one Conversation allows one non-terminal Run at a time. This is not a Server Domain invariant: externally created concurrent Runs remain visible. Drafts are stored only in per-tab `sessionStorage`, excluded from Query Cache, logs, telemetry, and Server data, and cleared after successful submission.
 

@@ -120,6 +120,8 @@ export interface ConversationModule {
     parts: MessagePart[];
   }): Promise<CommandResult<Message>>;
   get(identity: RequestIdentity, conversationId: ConversationId): Promise<Conversation>;
+  getCreatedByCommand(identity: RequestIdentity, commandId: CommandId): Promise<Conversation>;
+  getEmployeeMessageByCommand(identity: RequestIdentity, commandId: CommandId): Promise<Message>;
   list(
     identity: RequestIdentity,
     query: { readonly cursor?: string; readonly limit: number },
@@ -450,6 +452,35 @@ export class PostgresConversationModule implements ConversationModule {
     );
     if (!result.rows[0]) throw new ConversationNotFoundError();
     return mapConversation(result.rows[0]);
+  }
+
+  async getCreatedByCommand(
+    identity: RequestIdentity,
+    commandId: CommandId,
+  ): Promise<Conversation> {
+    const result = await this.pool.query<ConversationRow>(
+      `SELECT * FROM conversations
+       WHERE organization_id = $1 AND created_by_principal_id = $2 AND idempotency_key = $3`,
+      [identity.organizationId, identity.principalId, commandId],
+    );
+    if (!result.rows[0]) throw new ConversationNotFoundError();
+    return mapConversation(result.rows[0]);
+  }
+
+  async getEmployeeMessageByCommand(
+    identity: RequestIdentity,
+    commandId: CommandId,
+  ): Promise<Message> {
+    const result = await this.pool.query<MessageRow>(
+      `SELECT m.* FROM messages m
+       JOIN conversations c
+         ON c.organization_id = m.organization_id AND c.id = m.conversation_id
+       WHERE m.organization_id = $1 AND c.created_by_principal_id = $2
+         AND m.idempotency_key = $3 AND m.author_type = 'employee'`,
+      [identity.organizationId, identity.principalId, commandId],
+    );
+    if (!result.rows[0]) throw new MessageNotFoundError();
+    return mapMessage(result.rows[0]);
   }
 
   async list(
