@@ -3,6 +3,8 @@ import {
   commandId,
   conversationId,
   ConversationNotFoundError,
+  IdempotencyConflictError,
+  InvalidConversationTitleError,
   messageId,
   MessageNotFoundError,
   PostgresConversationModule,
@@ -93,6 +95,73 @@ describe('creator-private Conversation queries', () => {
       limit: 1, cursor: first.nextCursor,
     });
     expect(second.items.map((item) => item.id)).not.toContain(colleagueConversation.value.id);
+  });
+
+  it('loads the latest Messages first and pages backward in ascending sequence order', async () => {
+    const created = await conversations.create(creator.resolveRequest(), {
+      commandId: commandId(randomUUID()), title: 'Long Conversation',
+    });
+    for (let sequence = 1; sequence <= 55; sequence += 1) {
+      await conversations.appendEmployeeMessage(
+        creator.resolveRequest(), created.value.id,
+        {
+          commandId: commandId(randomUUID()),
+          parts: [{ type: 'text', text: `Message ${sequence}` }],
+        },
+      );
+    }
+
+    const latest = await conversations.listMessagePage(
+      creator.resolveRequest(), created.value.id, { limit: 50 },
+    );
+    expect(latest.items.map((message) => message.sequence)).toEqual(
+      Array.from({ length: 50 }, (_, index) => index + 6),
+    );
+    expect(latest.beforeSequence).toBe(6);
+    if (!latest.beforeSequence) throw new Error('Expected an older Message page');
+
+    const older = await conversations.listMessagePage(
+      creator.resolveRequest(), created.value.id,
+      { limit: 50, beforeSequence: latest.beforeSequence },
+    );
+    expect(older.items.map((message) => message.sequence)).toEqual([1, 2, 3, 4, 5]);
+    expect(older.beforeSequence).toBeUndefined();
+  });
+
+  it('renames idempotently without modifying Message history', async () => {
+    const created = await conversations.create(creator.resolveRequest(), {
+      commandId: commandId(randomUUID()), title: 'Original title',
+    });
+    const appended = await conversations.appendEmployeeMessage(
+      creator.resolveRequest(), created.value.id,
+      {
+        commandId: commandId(randomUUID()),
+        parts: [{ type: 'text', text: 'Keep this Message' }],
+      },
+    );
+    const renameCommandId = commandId(randomUUID());
+
+    const renamed = await conversations.rename(creator.resolveRequest(), created.value.id, {
+      commandId: renameCommandId, title: 'Release plan',
+    });
+    const replayed = await conversations.rename(creator.resolveRequest(), created.value.id, {
+      commandId: renameCommandId, title: 'Release plan',
+    });
+
+    expect(renamed).toMatchObject({ replayed: false, value: { title: 'Release plan' } });
+    expect(replayed).toMatchObject({ replayed: true, value: { title: 'Release plan' } });
+    await expect(conversations.rename(creator.resolveRequest(), created.value.id, {
+      commandId: renameCommandId, title: 'Different title',
+    })).rejects.toBeInstanceOf(IdempotencyConflictError);
+    await expect(conversations.rename(creator.resolveRequest(), created.value.id, {
+      commandId: commandId(randomUUID()), title: '   ',
+    })).rejects.toBeInstanceOf(InvalidConversationTitleError);
+    await expect(conversations.rename(colleague.resolveRequest(), created.value.id, {
+      commandId: renameCommandId, title: 'Release plan',
+    })).rejects.toBeInstanceOf(ConversationNotFoundError);
+    await expect(conversations.listMessages(
+      creator.resolveRequest(), created.value.id, 0, 50,
+    )).resolves.toMatchObject([{ id: appended.value.id, sequence: 1 }]);
   });
 
   it('makes cross-Principal and unknown Conversation reads indistinguishable', async () => {

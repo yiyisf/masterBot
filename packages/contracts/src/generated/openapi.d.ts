@@ -314,6 +314,121 @@ export interface paths {
         delete?: never;
         options?: never;
         head?: never;
+        /** Rename a Conversation */
+        patch: {
+            parameters: {
+                query?: never;
+                header: {
+                    "idempotency-key": string;
+                };
+                path: {
+                    conversationId: string;
+                };
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": {
+                        title: string;
+                    };
+                };
+            };
+            responses: {
+                /** @description Conversation renamed or replayed */
+                200: {
+                    headers: {
+                        "Idempotency-Replayed": "true" | "false";
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Conversation"];
+                    };
+                };
+                /** @description Invalid command */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/problem+json": components["schemas"]["ProblemDetails"];
+                    };
+                };
+                /** @description Not found */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/problem+json": components["schemas"]["ProblemDetails"];
+                    };
+                };
+                /** @description Idempotency conflict */
+                409: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/problem+json": components["schemas"]["ProblemDetails"];
+                    };
+                };
+            };
+        };
+        trace?: never;
+    };
+    "/api/v1/conversations/{conversationId}/rename-commands/{commandId}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Reconcile a rename-Conversation Command */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    conversationId: string;
+                    commandId: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Renamed Conversation */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Conversation"];
+                    };
+                };
+                /** @description Invalid request */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/problem+json": components["schemas"]["ProblemDetails"];
+                    };
+                };
+                /** @description Command result not found */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/problem+json": components["schemas"]["ProblemDetails"];
+                    };
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
         patch?: never;
         trace?: never;
     };
@@ -329,6 +444,7 @@ export interface paths {
             parameters: {
                 query?: {
                     afterSequence?: number | null;
+                    beforeSequence?: number;
                     limit?: number;
                 };
                 header?: never;
@@ -836,10 +952,13 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** List bounded Run attempts for a private Conversation */
+        /** Page through Run attempts for a private Conversation */
         get: {
             parameters: {
-                query?: never;
+                query?: {
+                    cursor?: string;
+                    limit?: number;
+                };
                 header?: never;
                 path: {
                     conversationId: string;
@@ -1359,10 +1478,11 @@ export interface components {
                 triggerMessageId: string;
                 /** @enum {string} */
                 status: "accepted" | "queued" | "running" | "waiting" | "succeeded" | "failed" | "cancelled";
+                retryable: boolean;
                 /** Format: date-time */
                 createdAt: string;
             }[];
-            truncated: boolean;
+            nextCursor?: string;
         };
         Message: {
             /** Format: uuid */
@@ -1424,6 +1544,7 @@ export interface components {
                 sourceInvocationId?: string;
             }[];
             nextSequence: number;
+            beforeSequence?: number;
         };
         RunSnapshot: {
             /** Format: uuid */

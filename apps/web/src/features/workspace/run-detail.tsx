@@ -6,18 +6,37 @@ import {
   type MessageContract,
   type RunSnapshotContract,
 } from '@cmaster/contracts';
-import { useParams } from 'next/navigation';
-import { useCallback, useEffect, useReducer, useState } from 'react';
-import { ArtifactCard } from '../../../../features/artifacts/artifact-card';
-import { applyRunEvent, projectionFromSnapshot, type RunProjection } from '../../../../lib/run-projection';
+import Link from 'next/link';
+import { useCallback, useEffect, useReducer, useRef, useState } from 'react';
+import { ArtifactCard } from '../artifacts/artifact-card';
+import { applyRunEvent, projectionFromSnapshot, type RunProjection } from '../../lib/run-projection';
+import { useWorkspacePreferences } from './workspace-providers';
 
 const apiUrl = process.env.NEXT_PUBLIC_CMASTER_API_URL ?? '';
 
 type DisplayMessage = MessageContract;
+const copy = {
+  'zh-CN': {
+    back: '返回 Conversation', loading: '正在加载…', stream: '连接', connecting: '连接中', connected: '已连接', reconnecting: '正在重连', closed: '已关闭',
+    cancel: '取消 Run', cancelLate: '结果已经生成，无法取消。', confirmFailed: '无法保存 Tool 确认结果。', reviewFailed: '无法保存不确定结果处理决定。',
+    confirm: '确认执行', reject: '拒绝', uncertain: '外部副作用是否发生无法确定。继续不会重试原 ToolCall。', continue: '带着不确定性继续',
+    model: 'Model', messages: 'Messages', timeline: 'Timeline', notFound: '无法读取这个 Run。',
+  },
+  'en-US': {
+    back: 'Back to conversation', loading: 'Loading…', stream: 'Connection', connecting: 'Connecting', connected: 'Connected', reconnecting: 'Reconnecting', closed: 'Closed',
+    cancel: 'Cancel run', cancelLate: 'The result has already been generated, so this run cannot be cancelled.', confirmFailed: 'The tool confirmation could not be saved.', reviewFailed: 'The uncertain-outcome decision could not be saved.',
+    confirm: 'Confirm', reject: 'Reject', uncertain: 'Whether the external effect occurred is unknown. Continuing will not retry the original ToolCall.', continue: 'Continue with uncertainty',
+    model: 'Model', messages: 'Messages', timeline: 'Timeline', notFound: 'This run could not be loaded.',
+  },
+} as const;
 
-export default function RunPage() {
-  const params = useParams<{ runId: string }>();
-  const runId = params.runId;
+export function RunDetail({
+  conversationId,
+  runId,
+}: Readonly<{ conversationId: string; runId: string }>) {
+  const headingRef = useRef<HTMLHeadingElement>(null);
+  const { locale } = useWorkspacePreferences();
+  const text = copy[locale];
   const [snapshot, setSnapshot] = useState<RunSnapshotContract>();
   const [messages, setMessages] = useState<DisplayMessage[]>([]);
   const [projection, dispatch] = useReducer(
@@ -27,27 +46,43 @@ export default function RunPage() {
     },
     undefined,
   );
-  const [connection, setConnection] = useState('connecting');
+  const [connection, setConnection] = useState<'connecting' | 'connected' | 'reconnecting' | 'closed'>('connecting');
   const [error, setError] = useState<string>();
   const [resolvingInterrupt, setResolvingInterrupt] = useState(false);
 
-  const loadMessages = useCallback(async (conversationId: string) => {
+  const loadMessages = useCallback(async (
+    conversationId: string,
+    triggerMessageId: string,
+  ) => {
     const client = createContractClient(apiUrl);
-    const result = await client.GET('/api/v1/conversations/{conversationId}/messages', {
-      params: { path: { conversationId }, query: { afterSequence: 0, limit: 200 } },
-    });
-    if (result.data) setMessages(result.data.items);
+    let beforeSequence: number | undefined;
+    let loaded: DisplayMessage[] = [];
+    do {
+      const result = await client.GET('/api/v1/conversations/{conversationId}/messages', {
+        params: {
+          path: { conversationId },
+          query: { limit: 50, ...(beforeSequence === undefined ? {} : { beforeSequence }) },
+        },
+      });
+      if (!result.data) return;
+      loaded = [...result.data.items, ...loaded];
+      beforeSequence = result.data.beforeSequence;
+    } while (beforeSequence !== undefined
+      && !loaded.some((message) => message.id === triggerMessageId));
+    setMessages(loaded);
   }, []);
 
   const loadSnapshot = useCallback(async (resetProjection = true) => {
     const client = createContractClient(apiUrl);
     const result = await client.GET('/api/v1/runs/{runId}', { params: { path: { runId } } });
-    if (!result.data) throw new Error('Run was not found');
+    if (!result.data || result.data.conversationId !== conversationId) {
+      throw new Error('Run was not found');
+    }
     setSnapshot(result.data);
     if (resetProjection) dispatch(projectionFromSnapshot(result.data));
-    await loadMessages(result.data.conversationId);
+    await loadMessages(result.data.conversationId, result.data.trigger.messageId);
     return result.data;
-  }, [loadMessages, runId]);
+  }, [conversationId, loadMessages, runId]);
 
   useEffect(() => {
     let source: EventSource | undefined;
@@ -79,7 +114,7 @@ export default function RunPage() {
         }
         dispatch(parsed.data);
         if (parsed.data.type === 'assistant_message.appended') {
-          void loadMessages(initial.conversationId);
+          void loadMessages(initial.conversationId, initial.trigger.messageId);
         }
         if (parsed.data.type === 'interrupt.requested'
           || parsed.data.type === 'interrupt.resolved') {
@@ -91,12 +126,12 @@ export default function RunPage() {
           void loadSnapshot(false);
         }
       });
-    }).catch((cause: unknown) => setError(cause instanceof Error ? cause.message : 'Unable to load Run'));
+    }).catch(() => setError(text.notFound));
     return () => {
       disposed = true;
       source?.close();
     };
-  }, [loadMessages, loadSnapshot, runId]);
+  }, [loadMessages, loadSnapshot, runId, text.notFound]);
 
   useEffect(() => {
     // A detected transport gap requires replacing the projection from Server State.
@@ -112,7 +147,7 @@ export default function RunPage() {
         header: { 'idempotency-key': crypto.randomUUID() },
       },
     });
-    if (result.error) setError('结果已经生成，无法取消。');
+    if (result.error) setError(text.cancelLate);
     await loadSnapshot();
   }
 
@@ -129,7 +164,7 @@ export default function RunPage() {
       },
       body: { response },
     });
-    if (result.error) setError('无法保存 Tool 确认结果。');
+    if (result.error) setError(text.confirmFailed);
     await loadSnapshot();
     setResolvingInterrupt(false);
   }
@@ -147,18 +182,24 @@ export default function RunPage() {
       },
       body: { response: 'continue_with_uncertainty' },
     });
-    if (result.error) setError('无法保存不确定结果处理决定。');
+    if (result.error) setError(text.reviewFailed);
     await loadSnapshot();
     setResolvingInterrupt(false);
   }
 
   const status = projection?.status ?? snapshot?.status;
+  useEffect(() => {
+    if (status) headingRef.current?.focus();
+  }, [status]);
   return (
     <main>
+      <Link href={`/workspace/conversations/${conversationId}`} className="workspace-back">
+        ← {text.back}
+      </Link>
       <p className="eyebrow">Run {runId}</p>
-      <h1>{status ?? '正在加载…'}</h1>
-      <p>SSE: {connection}</p>
-      {projection?.cancellable ? <button className="button" onClick={() => void cancel()}>取消 Run</button> : null}
+      <h1 ref={headingRef} tabIndex={-1}>{status ?? text.loading}</h1>
+      <p>{text.stream}: {text[connection]}</p>
+      {projection?.cancellable ? <button className="button" onClick={() => void cancel()}>{text.cancel}</button> : null}
       {error ? <p className="error" role="alert">{error}</p> : null}
       {snapshot?.activeInterrupt ? (
         <section aria-labelledby="tool-interrupt-title">
@@ -174,21 +215,21 @@ export default function RunPage() {
                 className="button"
                 disabled={resolvingInterrupt}
                 onClick={() => void resolveConfirmation('confirm')}
-              >确认执行</button>{' '}
+              >{text.confirm}</button>{' '}
               <button
                 className="button"
                 disabled={resolvingInterrupt}
                 onClick={() => void resolveConfirmation('reject')}
-              >拒绝</button>
+              >{text.reject}</button>
             </p>
           ) : (
             <div>
-              <p role="alert">外部副作用是否发生无法确定。继续不会重试原 ToolCall。</p>
+              <p role="alert">{text.uncertain}</p>
               <button
                 className="button"
                 disabled={resolvingInterrupt}
                 onClick={() => void continueWithUncertainty()}
-              >带着不确定性继续</button>
+              >{text.continue}</button>
             </div>
           )}
         </section>
@@ -198,7 +239,7 @@ export default function RunPage() {
       ) : null}
       {snapshot?.model ? (
         <section>
-          <h2>Model</h2>
+          <h2>{text.model}</h2>
           <p>{snapshot.model.displayName}{snapshot.model.fallbackUsed ? '（已降级）' : ''}</p>
           {snapshot.usage ? (
             <p>Tokens: {snapshot.usage.inputTokens} in / {snapshot.usage.outputTokens} out / {snapshot.usage.totalTokens} total</p>
@@ -206,7 +247,7 @@ export default function RunPage() {
         </section>
       ) : null}
       <section>
-        <h2>Messages</h2>
+        <h2>{text.messages}</h2>
         {messages.map((message) => (
           <article className="message" key={message.id}>
             <strong>{message.author}</strong>
@@ -224,7 +265,7 @@ export default function RunPage() {
         ))}
       </section>
       <section>
-        <h2>Timeline</h2>
+        <h2>{text.timeline}</h2>
         <ol>{projection?.events.map((event) => <li key={event.eventId}>{event.sequence}: {event.type}</li>)}</ol>
       </section>
     </main>

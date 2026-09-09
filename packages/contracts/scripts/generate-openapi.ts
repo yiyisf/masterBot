@@ -97,6 +97,26 @@ registry.registerPath({
   responses: { 200: { description: 'Conversation', content: { 'application/json': { schema: conversation } } }, 400: problemResponse('Invalid request'), 404: problemResponse('Not found') },
 });
 registry.registerPath({
+  method: 'patch', path: '/api/v1/conversations/{conversationId}', summary: 'Rename a Conversation',
+  request: {
+    params: idPath('conversationId'), headers: idempotencyHeaders,
+    body: { required: true, content: { 'application/json': { schema: conversations.renameConversationRequestSchema } } },
+  },
+  responses: {
+    200: { description: 'Conversation renamed or replayed', headers: idempotencyReplayHeaders, content: { 'application/json': { schema: conversation } } },
+    400: problemResponse('Invalid command'), 404: problemResponse('Not found'), 409: problemResponse('Idempotency conflict'),
+  },
+});
+registry.registerPath({
+  method: 'get', path: '/api/v1/conversations/{conversationId}/rename-commands/{commandId}',
+  summary: 'Reconcile a rename-Conversation Command',
+  request: { params: z.object({ conversationId: z.uuid(), commandId: z.uuid() }) },
+  responses: {
+    200: { description: 'Renamed Conversation', content: { 'application/json': { schema: conversation } } },
+    400: problemResponse('Invalid request'), 404: problemResponse('Command result not found'),
+  },
+});
+registry.registerPath({
   method: 'post', path: '/api/v1/conversations/{conversationId}/messages', summary: 'Append an Employee Message',
   request: {
     params: idPath('conversationId'), headers: idempotencyHeaders,
@@ -117,7 +137,11 @@ registry.registerPath({
   method: 'get', path: '/api/v1/conversations/{conversationId}/messages', summary: 'Read ordered Messages',
   request: {
     params: idPath('conversationId'),
-    query: z.object({ afterSequence: z.coerce.number().int().nonnegative().default(0), limit: z.coerce.number().int().min(1).max(200).default(100) }),
+    query: z.object({
+      afterSequence: z.coerce.number().int().nonnegative().optional(),
+      beforeSequence: z.coerce.number().int().positive().optional(),
+      limit: z.coerce.number().int().min(1).max(200).default(50),
+    }),
   },
   responses: { 200: { description: 'Message page', content: { 'application/json': { schema: messagePage } } }, 400: problemResponse('Invalid request'), 404: problemResponse('Not found') },
 });
@@ -180,8 +204,14 @@ registry.registerPath({
 });
 registry.registerPath({
   method: 'get', path: '/api/v1/conversations/{conversationId}/runs',
-  summary: 'List bounded Run attempts for a private Conversation',
-  request: { params: idPath('conversationId') },
+  summary: 'Page through Run attempts for a private Conversation',
+  request: {
+    params: idPath('conversationId'),
+    query: z.object({
+      cursor: z.string().min(1).optional(),
+      limit: z.coerce.number().int().min(1).max(50).default(50),
+    }),
+  },
   responses: { 200: { description: 'Conversation Run attempts', content: { 'application/json': { schema: conversationRunPage } } }, 400: problemResponse('Invalid request'), 404: problemResponse('Conversation not found') },
 });
 registry.registerPath({

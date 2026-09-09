@@ -9,6 +9,7 @@ import {
   type CancelRunResult,
   type CommandResult,
   type ConversationRunActivity,
+  type ConversationRunPage,
   type ConversationRunSummary,
   type ContextBuiltMetadata,
   type DispatchAttemptId,
@@ -31,6 +32,7 @@ import {
   type RunEventType,
   type RunFailure,
   type RunId,
+  InvalidRunCursorError,
   RunIdempotencyConflictError,
   RunNotFoundError,
   type RunSnapshot,
@@ -116,6 +118,33 @@ export interface RunLease {
 
 function digest(value: unknown): string {
   return createHash('sha256').update(JSON.stringify(value)).digest('hex');
+}
+
+interface RunCursor {
+  readonly createdAt: string;
+  readonly id: string;
+}
+
+const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu;
+
+function encodeRunCursor(cursor: RunCursor): string {
+  return Buffer.from(JSON.stringify(cursor), 'utf8').toString('base64url');
+}
+
+function decodeRunCursor(value: string): RunCursor {
+  try {
+    const parsed: unknown = JSON.parse(Buffer.from(value, 'base64url').toString('utf8'));
+    if (!parsed || typeof parsed !== 'object'
+      || !('createdAt' in parsed) || typeof parsed.createdAt !== 'string'
+      || !('id' in parsed) || typeof parsed.id !== 'string'
+      || Number.isNaN(Date.parse(parsed.createdAt)) || !uuidPattern.test(parsed.id)) {
+      throw new InvalidRunCursorError();
+    }
+    return { createdAt: parsed.createdAt, id: parsed.id };
+  } catch (error) {
+    if (error instanceof InvalidRunCursorError) throw error;
+    throw new InvalidRunCursorError();
+  }
 }
 
 function mapRun(row: RunRow): RunSnapshot {
@@ -384,25 +413,42 @@ export class PostgresExecutionModule implements ExecutionModule {
   async listConversationRuns(
     identity: RequestIdentity,
     conversationId: ConversationId,
-    limit: number,
-  ): Promise<readonly ConversationRunSummary[]> {
+    query: { readonly cursor?: string; readonly limit: number },
+  ): Promise<ConversationRunPage> {
+    if (!Number.isInteger(query.limit) || query.limit < 1 || query.limit > 50) {
+      throw new InvalidRunCursorError();
+    }
+    const cursor = query.cursor ? decodeRunCursor(query.cursor) : undefined;
     const result = await this.pool.query<{
       id: string;
       trigger_ref: string;
       status: RunStatus;
+      failure: RunFailure | null;
       created_at: Date;
     }>(
-      `SELECT id, trigger_ref, status, created_at FROM runs
+      `SELECT id, trigger_ref, status, failure, created_at FROM runs
        WHERE organization_id = $1 AND initiating_principal_id = $2 AND conversation_id = $3
-       ORDER BY created_at DESC, id DESC LIMIT $4`,
-      [identity.organizationId, identity.principalId, conversationId, limit],
+         AND ($4::timestamptz IS NULL OR (created_at, id) < ($4::timestamptz, $5::uuid))
+       ORDER BY created_at DESC, id DESC LIMIT $6`,
+      [identity.organizationId, identity.principalId, conversationId,
+        cursor?.createdAt ?? null, cursor?.id ?? null, query.limit + 1],
     );
-    return result.rows.map((row) => ({
+    const pageRows = result.rows.slice(0, query.limit);
+    const items: ConversationRunSummary[] = pageRows.map((row) => ({
       id: row.id as RunId,
       triggerMessageId: row.trigger_ref as MessageId,
       status: row.status,
+      retryable: row.status === 'cancelled'
+        || (row.status === 'failed' && row.failure?.retryable === true),
       createdAt: row.created_at,
     }));
+    const last = pageRows.at(-1);
+    return {
+      items,
+      ...(result.rows.length > query.limit && last
+        ? { nextCursor: encodeRunCursor({ createdAt: last.created_at.toISOString(), id: last.id }) }
+        : {}),
+    };
   }
 
   async listConversationActivity(

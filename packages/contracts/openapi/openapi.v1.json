@@ -265,6 +265,9 @@
                     "cancelled"
                   ]
                 },
+                "retryable": {
+                  "type": "boolean"
+                },
                 "createdAt": {
                   "type": "string",
                   "format": "date-time"
@@ -274,18 +277,19 @@
                 "id",
                 "triggerMessageId",
                 "status",
+                "retryable",
                 "createdAt"
               ]
             },
             "maxItems": 50
           },
-          "truncated": {
-            "type": "boolean"
+          "nextCursor": {
+            "type": "string",
+            "minLength": 1
           }
         },
         "required": [
-          "items",
-          "truncated"
+          "items"
         ]
       },
       "Message": {
@@ -497,6 +501,10 @@
           "nextSequence": {
             "type": "integer",
             "minimum": 0
+          },
+          "beforeSequence": {
+            "type": "integer",
+            "exclusiveMinimum": 0
           }
         },
         "required": [
@@ -2197,6 +2205,160 @@
             }
           }
         }
+      },
+      "patch": {
+        "summary": "Rename a Conversation",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "required": true,
+            "name": "conversationId",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "required": true,
+            "name": "idempotency-key",
+            "in": "header"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "title": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 200
+                  }
+                },
+                "required": [
+                  "title"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Conversation renamed or replayed",
+            "headers": {
+              "Idempotency-Replayed": {
+                "schema": {
+                  "type": "string",
+                  "enum": [
+                    "true",
+                    "false"
+                  ]
+                },
+                "required": true
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Conversation"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid command",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Idempotency conflict",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/conversations/{conversationId}/rename-commands/{commandId}": {
+      "get": {
+        "summary": "Reconcile a rename-Conversation Command",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "required": true,
+            "name": "conversationId",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "required": true,
+            "name": "commandId",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Renamed Conversation",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Conversation"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Command result not found",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          }
+        }
       }
     },
     "/api/v1/conversations/{conversationId}/messages": {
@@ -2334,8 +2496,7 @@
                 "integer",
                 "null"
               ],
-              "minimum": 0,
-              "default": 0
+              "minimum": 0
             },
             "required": false,
             "name": "afterSequence",
@@ -2344,9 +2505,18 @@
           {
             "schema": {
               "type": "integer",
+              "exclusiveMinimum": 0
+            },
+            "required": false,
+            "name": "beforeSequence",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "integer",
               "minimum": 1,
               "maximum": 200,
-              "default": 100
+              "default": 50
             },
             "required": false,
             "name": "limit",
@@ -2855,7 +3025,7 @@
     },
     "/api/v1/conversations/{conversationId}/runs": {
       "get": {
-        "summary": "List bounded Run attempts for a private Conversation",
+        "summary": "Page through Run attempts for a private Conversation",
         "parameters": [
           {
             "schema": {
@@ -2865,6 +3035,26 @@
             "required": true,
             "name": "conversationId",
             "in": "path"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1
+            },
+            "required": false,
+            "name": "cursor",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 50,
+              "default": 50
+            },
+            "required": false,
+            "name": "limit",
+            "in": "query"
           }
         ],
         "responses": {
