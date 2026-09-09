@@ -6,6 +6,7 @@ import {
   PostgresConversationModule,
 } from '@cmaster/conversations';
 import {
+  InvalidRunCursorError,
   PostgresExecutionModule,
   runCommandId,
   RunNotFoundError,
@@ -76,11 +77,25 @@ describe('Composer Command recovery queries', () => {
       .resolves.toMatchObject({ id: message.id });
     await expect(execution.getRunByCommand(identity, firstRunCommandId))
       .resolves.toMatchObject({ id: first.id });
-    await expect(execution.listConversationRuns(identity, conversation.id, 50))
-      .resolves.toEqual(expect.arrayContaining([
+    const firstAttemptPage = await execution.listConversationRuns(
+      identity, conversation.id, { limit: 1 },
+    );
+    expect(firstAttemptPage.items).toHaveLength(1);
+    expect(firstAttemptPage.nextCursor).toEqual(expect.any(String));
+    if (!firstAttemptPage.nextCursor) throw new Error('Expected another Run attempt page');
+    expect(firstAttemptPage.nextCursor).not.toContain(firstAttemptPage.items[0]?.id ?? '');
+    const secondAttemptPage = await execution.listConversationRuns(
+      identity, conversation.id, { limit: 1, cursor: firstAttemptPage.nextCursor },
+    );
+    expect([...firstAttemptPage.items, ...secondAttemptPage.items]).toEqual(
+      expect.arrayContaining([
         expect.objectContaining({ id: first.id, triggerMessageId: message.id }),
         expect.objectContaining({ id: second.id, triggerMessageId: message.id }),
-      ]));
+      ]),
+    );
+    await expect(execution.listConversationRuns(
+      identity, conversation.id, { limit: 1, cursor: 'not-a-cursor' },
+    )).rejects.toBeInstanceOf(InvalidRunCursorError);
 
     const app = buildApi({
       config,
@@ -100,10 +115,19 @@ describe('Composer Command recovery queries', () => {
       expect(response.json()).toMatchObject({ id: expectedId });
     }
     const attempts = await app.inject({
-      method: 'GET', url: `/api/v1/conversations/${conversation.id}/runs`,
+      method: 'GET', url: `/api/v1/conversations/${conversation.id}/runs?limit=1`,
     });
     expect(attempts.statusCode).toBe(200);
-    expect(attempts.json<{ items: unknown[] }>().items).toHaveLength(2);
+    const attemptsPage = attempts.json<{ items: unknown[]; nextCursor?: string }>();
+    expect(attemptsPage.items).toHaveLength(1);
+    expect(attemptsPage.nextCursor).toEqual(expect.any(String));
+    if (!attemptsPage.nextCursor) throw new Error('Expected another HTTP Run attempt page');
+    const olderAttempts = await app.inject({
+      method: 'GET',
+      url: `/api/v1/conversations/${conversation.id}/runs?limit=1&cursor=${encodeURIComponent(attemptsPage.nextCursor)}`,
+    });
+    expect(olderAttempts.statusCode).toBe(200);
+    expect(olderAttempts.json<{ items: unknown[] }>().items).toHaveLength(1);
     await app.close();
 
     const colleagueApi = buildApi({

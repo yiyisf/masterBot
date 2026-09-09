@@ -8,6 +8,7 @@ import {
   messagePageSchema,
   messageSchema,
   problemDetailsSchema,
+  renameConversationRequestSchema,
   resolveInterruptRequestSchema,
   resolveInterruptResponseSchema,
   resolveToolConfirmationRequestSchema,
@@ -22,6 +23,7 @@ import {
   ConversationNotFoundError,
   IdempotencyConflictError,
   InvalidConversationCursorError,
+  InvalidConversationTitleError,
   messageId,
   MessageNotFoundError,
   type Conversation,
@@ -30,6 +32,7 @@ import {
 } from '@cmaster/conversations';
 import {
   interruptId,
+  InvalidRunCursorError,
   runCommandId,
   runId,
   RunIdempotencyConflictError,
@@ -129,7 +132,8 @@ export function sendRunApiError(
   request: FastifyRequest,
   reply: FastifyReply,
 ): FastifyReply {
-  if (error instanceof ZodError || error instanceof InvalidConversationCursorError) {
+  if (error instanceof ZodError || error instanceof InvalidConversationCursorError
+    || error instanceof InvalidConversationTitleError || error instanceof InvalidRunCursorError) {
     return problem(reply, request, 400, 'invalid_request', 'Invalid request', 'The request does not match the API contract.');
   }
   if (error instanceof ConversationNotFoundError || error instanceof MessageNotFoundError || error instanceof RunNotFoundError) {
@@ -185,6 +189,36 @@ export function registerRunApi(app: FastifyInstance, dependencies: RunApiDepende
     }
   });
 
+  app.patch('/api/v1/conversations/:conversationId', async (request, reply) => {
+    try {
+      const params = z.object({ conversationId: uuidSchema }).parse(request.params);
+      const body = renameConversationRequestSchema.parse(request.body);
+      const result = await dependencies.conversations.rename(
+        dependencies.identity.resolveRequest(), conversationId(params.conversationId), {
+          commandId: commandId(idempotencyKey(request)), title: body.title,
+        },
+      );
+      reply.header('Idempotency-Replayed', String(result.replayed));
+      return reply.send(conversationContract(result.value));
+    } catch (error) {
+      return sendRunApiError(error, request, reply);
+    }
+  });
+
+  app.get('/api/v1/conversations/:conversationId/rename-commands/:commandId', async (request, reply) => {
+    try {
+      const params = z.object({ conversationId: uuidSchema, commandId: uuidSchema })
+        .parse(request.params);
+      const value = await dependencies.conversations.getRenamedByCommand(
+        dependencies.identity.resolveRequest(), conversationId(params.conversationId),
+        commandId(params.commandId),
+      );
+      return reply.send(conversationContract(value));
+    } catch (error) {
+      return sendRunApiError(error, request, reply);
+    }
+  });
+
   app.post('/api/v1/conversations/:conversationId/messages', async (request, reply) => {
     try {
       const params = z.object({ conversationId: uuidSchema }).parse(request.params);
@@ -217,16 +251,33 @@ export function registerRunApi(app: FastifyInstance, dependencies: RunApiDepende
     try {
       const params = z.object({ conversationId: uuidSchema }).parse(request.params);
       const query = z.object({
-        afterSequence: z.coerce.number().int().nonnegative().default(0),
-        limit: z.coerce.number().int().min(1).max(200).default(100),
-      }).parse(request.query);
-      const items = await dependencies.conversations.listMessages(
-        dependencies.identity.resolveRequest(), conversationId(params.conversationId),
-        query.afterSequence, query.limit,
+        afterSequence: z.coerce.number().int().nonnegative().optional(),
+        beforeSequence: z.coerce.number().int().positive().optional(),
+        limit: z.coerce.number().int().min(1).max(200).default(50),
+      }).refine(
+        (value) => value.afterSequence === undefined || value.beforeSequence === undefined,
+        'Only one Message cursor may be supplied',
+      ).parse(request.query);
+      if (query.afterSequence !== undefined) {
+        const items = await dependencies.conversations.listMessages(
+          dependencies.identity.resolveRequest(), conversationId(params.conversationId),
+          query.afterSequence, query.limit,
+        );
+        return reply.send(messagePageSchema.parse({
+          items: items.map(messageContract),
+          nextSequence: items.at(-1)?.sequence ?? query.afterSequence,
+        }));
+      }
+      const page = await dependencies.conversations.listMessagePage(
+        dependencies.identity.resolveRequest(), conversationId(params.conversationId), {
+          limit: query.limit,
+          ...(query.beforeSequence === undefined ? {} : { beforeSequence: query.beforeSequence }),
+        },
       );
       return reply.send(messagePageSchema.parse({
-        items: items.map(messageContract),
-        nextSequence: items.at(-1)?.sequence ?? query.afterSequence,
+        items: page.items.map(messageContract),
+        nextSequence: page.items.at(-1)?.sequence ?? 0,
+        ...(page.beforeSequence === undefined ? {} : { beforeSequence: page.beforeSequence }),
       }));
     } catch (error) {
       return sendRunApiError(error, request, reply);
@@ -272,18 +323,26 @@ export function registerRunApi(app: FastifyInstance, dependencies: RunApiDepende
   app.get('/api/v1/conversations/:conversationId/runs', async (request, reply) => {
     try {
       const params = z.object({ conversationId: uuidSchema }).parse(request.params);
+      const query = z.object({
+        cursor: z.string().min(1).optional(),
+        limit: z.coerce.number().int().min(1).max(50).default(50),
+      }).parse(request.query);
       const identity = dependencies.identity.resolveRequest();
       const id = conversationId(params.conversationId);
       await dependencies.conversations.get(identity, id);
-      const values = await dependencies.execution.listConversationRuns(identity, id, 51);
+      const page = await dependencies.execution.listConversationRuns(identity, id, {
+        limit: query.limit,
+        ...(query.cursor === undefined ? {} : { cursor: query.cursor }),
+      });
       return reply.send(conversationRunPageSchema.parse({
-        items: values.slice(0, 50).map((value) => ({
+        items: page.items.map((value) => ({
           id: value.id,
           triggerMessageId: value.triggerMessageId,
           status: value.status,
+          retryable: value.retryable,
           createdAt: value.createdAt.toISOString(),
         })),
-        truncated: values.length > 50,
+        ...(page.nextCursor ? { nextCursor: page.nextCursor } : {}),
       }));
     } catch (error) {
       return sendRunApiError(error, request, reply);

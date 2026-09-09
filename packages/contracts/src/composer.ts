@@ -8,12 +8,13 @@ export const conversationRunSummarySchema = z.object({
   id: uuidSchema,
   triggerMessageId: uuidSchema,
   status: runStatusSchema,
+  retryable: z.boolean(),
   createdAt: isoDateTimeSchema,
 });
 
 export const conversationRunPageSchema = z.object({
   items: z.array(conversationRunSummarySchema).max(50),
-  truncated: z.boolean(),
+  nextCursor: z.string().min(1).optional(),
 });
 
 export type ConversationRunSummaryContract = z.infer<typeof conversationRunSummarySchema>;

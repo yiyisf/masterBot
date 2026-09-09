@@ -100,6 +100,8 @@ Browser URLs use same-origin `/api/v1`. Development uses a transparent Next rewr
 - A bounded plain-text last-Message preview is derived at query time and is not a new persisted fact.
 - There is no read receipt, archive, delete, share, folder/tag, export, or server full-text search in Slice 5.
 
+Slice 5.3 keeps Message pages ascending while loading the newest 50 first and paging backward with the exclusive `beforeSequence` cursor. Run attempts use a separate opaque cursor and remain grouped under their immutable Trigger Message. Explicit “run again” creates a fresh Run Command; response-loss recovery reconciles and reuses the pending Command instead. Rename is an idempotent `PATCH /api/v1/conversations/{conversationId}` Command with creator-private receipt reconciliation. Formal Run Detail lives only at `/workspace/conversations/{conversationId}/runs/{runId}`; the former top-level Workspace Run route is intentionally absent.
+
 ## Pending interactions
 
 “Pending” is a Presentation aggregation of active Interrupts, not a Domain aggregate. It distinguishes Employee Confirmation from Uncertain Tool Outcome Review. The former confirms/rejects one immutable Approval Subject; the latter can only continue with uncertainty and never relabel or retry the Tool effect. Both use existing Run/Interrupt Commands. Cancel uses one accessible confirmation Dialog and does not promise rollback.

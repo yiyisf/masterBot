@@ -82,6 +82,19 @@ section { margin-top: 36px; }
 .run-attempt-list li { display: flex; justify-content: space-between; gap: 16px; padding: 12px; border: 1px solid var(--border); border-radius: 9px; background: var(--surface); }
 .run-attempt-list li.selected { outline: 2px solid var(--accent); }
 .conversation-summary a { color: inherit; }
+.button.secondary { margin: 4px 0; padding: 8px 12px; border: 1px solid var(--border); background: var(--surface-muted); color: var(--text); }
+.conversation-overview header { padding-bottom: 18px; border-bottom: 1px solid var(--border); }
+.conversation-overview header h1 { display: inline-block; margin-right: 16px; }
+.conversation-overview input { min-height: 42px; padding: 8px 10px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface); color: var(--text); font: inherit; }
+.conversation-thread-scroll { position: relative; max-height: 58vh; overflow-y: auto; overscroll-behavior: contain; padding: 0 4px 16px; scroll-behavior: smooth; }
+.conversation-thread-scroll > section { margin-top: 16px; }
+.message section { margin-top: 16px; }
+.message .run-attempt-list a { color: var(--accent); }
+.new-content { position: sticky; bottom: 12px; margin: 12px auto 0; padding: 10px 16px; border-radius: 999px; background: var(--accent); color: var(--surface); box-shadow: 0 4px 18px rgb(0 0 0 / 22%); }
+
+@media (prefers-reduced-motion: reduce) {
+  .conversation-thread-scroll { scroll-behavior: auto; }
+}
 
 @media (max-width: 700px) {
   .workspace-header { flex-direction: column; padding: 28px 20px 22px; }

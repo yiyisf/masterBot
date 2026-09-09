@@ -15,6 +15,7 @@ export {
   type RunWorkerConfig,
 } from './worker.js';
 export {
+  InvalidRunCursorError,
   RunIdempotencyConflictError,
   RunNotFoundError,
   StaleLeaseError,
@@ -25,6 +26,7 @@ export {
   type ActiveInterrupt,
   type CancelRunResult,
   type ConversationRunActivity,
+  type ConversationRunPage,
   type ConversationRunSummary,
   type ContextBuiltMetadata,
   type ExecutionCheckpoint,

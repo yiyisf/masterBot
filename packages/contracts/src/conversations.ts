@@ -29,6 +29,9 @@ export const conversationSchema = z.object({
   createdAt: isoDateTimeSchema,
   updatedAt: isoDateTimeSchema,
 });
+export const renameConversationRequestSchema = z.object({
+  title: z.string().trim().min(1).max(200),
+});
 export const appendMessageRequestSchema = z.object({ parts: employeeMessagePartsSchema });
 export const messageSchema = z.object({
   id: uuidSchema,
@@ -44,7 +47,9 @@ export const messageSchema = z.object({
 export const messagePageSchema = z.object({
   items: z.array(messageSchema),
   nextSequence: z.number().int().nonnegative(),
+  beforeSequence: z.number().int().positive().optional(),
 });
 
 export type ConversationContract = z.infer<typeof conversationSchema>;
 export type MessageContract = z.infer<typeof messageSchema>;
+export type MessagePageContract = z.infer<typeof messagePageSchema>;

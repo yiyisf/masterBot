@@ -232,7 +232,13 @@ export interface ConversationRunSummary {
   readonly id: RunId;
   readonly triggerMessageId: MessageId;
   readonly status: RunStatus;
+  readonly retryable: boolean;
   readonly createdAt: Date;
+}
+
+export interface ConversationRunPage {
+  readonly items: readonly ConversationRunSummary[];
+  readonly nextCursor?: string;
 }
 
 /**
@@ -254,8 +260,9 @@ export interface ToolExecutionBoundary {
  * Commands are Organization-scoped and idempotent; key reuse with another payload throws
  * RunIdempotencyConflictError. Employee queries require both trusted Organization and initiating
  * Principal; missing and unauthorized resources throw the same RunNotFoundError. Conversation
- * activity queries are bounded by caller-supplied IDs, while Principal summary uses indexed scope
- * filters. Event reads are indexed by (runId, sequence), return strict ascending order, and are
+ * activity queries are bounded by caller-supplied IDs, Conversation Run attempts use an opaque
+ * stable cursor, and Principal summary uses indexed scope filters. Event reads are indexed by
+ * (runId, sequence), return strict ascending order, and are
  * linear in the page read.
  */
 export interface ExecutionModule extends ToolExecutionBoundary {
@@ -265,8 +272,8 @@ export interface ExecutionModule extends ToolExecutionBoundary {
   listConversationRuns(
     identity: RequestIdentity,
     conversationId: ConversationId,
-    limit: number,
-  ): Promise<readonly ConversationRunSummary[]>;
+    query: { readonly cursor?: string; readonly limit: number },
+  ): Promise<ConversationRunPage>;
   listConversationActivity(
     identity: RequestIdentity,
     conversationIds: readonly ConversationId[],
@@ -289,6 +296,7 @@ export interface ExecutionModule extends ToolExecutionBoundary {
 
 export class RunNotFoundError extends Error {}
 export class RunIdempotencyConflictError extends Error {}
+export class InvalidRunCursorError extends Error {}
 export class StaleLeaseError extends Error {}
 
 export function runId(value: string): RunId {

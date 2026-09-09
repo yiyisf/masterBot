@@ -17,9 +17,9 @@ describe('recoverable Composer contracts', () => {
         id,
         triggerMessageId: '00000000-0000-4000-8000-000000000102',
         status: 'running',
+        retryable: false,
         createdAt: '2026-09-09T00:00:00.000Z',
       }],
-      truncated: false,
     }).items).toHaveLength(1);
   });
 });

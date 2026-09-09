@@ -4,6 +4,7 @@ import type {
   SubmissionApi,
   SubmissionStore,
 } from './conversation-submission';
+import { isBrowserRunStatus, isBrowserUuid } from './browser-state-validation';
 
 const operationStorageKey = 'cmaster.workspace.new-conversation.operation.v1';
 const draftStorageKey = 'cmaster.workspace.new-conversation.draft.v1';
@@ -71,27 +72,22 @@ export function createBrowserSubmissionApi(
   };
 }
 
-const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu;
-const runStatuses = new Set([
-  'accepted', 'queued', 'running', 'waiting', 'succeeded', 'failed', 'cancelled',
-]);
-
 function optionalUuid(value: unknown): boolean {
-  return value === undefined || (typeof value === 'string' && uuidPattern.test(value));
+  return value === undefined || isBrowserUuid(value);
 }
 
 function isOperation(value: unknown): value is ConversationSubmissionOperation {
   if (!value || typeof value !== 'object') return false;
   const record = value as Record<string, unknown>;
   const validShape = record.schemaVersion === 1
-    && typeof record.conversationCommandId === 'string' && uuidPattern.test(record.conversationCommandId)
-    && typeof record.messageCommandId === 'string' && uuidPattern.test(record.messageCommandId)
-    && typeof record.runCommandId === 'string' && uuidPattern.test(record.runCommandId)
+    && isBrowserUuid(record.conversationCommandId)
+    && isBrowserUuid(record.messageCommandId)
+    && isBrowserUuid(record.runCommandId)
     && optionalUuid(record.conversationId)
     && optionalUuid(record.messageId)
     && optionalUuid(record.runId)
     && (record.runStatus === undefined
-      || (typeof record.runStatus === 'string' && runStatuses.has(record.runStatus)));
+      || isBrowserRunStatus(record.runStatus));
   if (!validShape) return false;
   if (record.messageId !== undefined && record.conversationId === undefined) return false;
   if (record.runId !== undefined && record.messageId === undefined) return false;

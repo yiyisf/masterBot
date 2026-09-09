@@ -23,10 +23,12 @@ export {
   messagePageSchema,
   messagePartsSchema,
   messageSchema,
+  renameConversationRequestSchema,
   textMessagePartSchema,
   uuidSchema,
   type ConversationContract,
   type MessageContract,
+  type MessagePageContract,
 } from '#internal/conversations';
 export {
   conversationRunPageSchema,

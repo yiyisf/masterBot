@@ -41,7 +41,7 @@ export interface CompletedConversationSubmission {
   readonly runStatus: NonNullable<ConversationSubmissionOperation['runStatus']>;
 }
 
-async function recoverCommand<Value>(
+export async function recoverCommand<Value>(
   find: () => Promise<Value | undefined>,
   execute: () => Promise<Value>,
 ): Promise<Value> {

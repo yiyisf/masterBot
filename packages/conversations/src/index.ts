@@ -82,6 +82,12 @@ export interface ConversationPage {
   readonly nextCursor?: string;
 }
 
+export interface MessagePage {
+  readonly items: readonly Message[];
+  /** Pass this exclusive sequence cursor to retrieve the preceding page. */
+  readonly beforeSequence?: number;
+}
+
 export interface CommandResult<Value> {
   value: Value;
   replayed: boolean;
@@ -91,14 +97,16 @@ export class ConversationNotFoundError extends Error {}
 export class MessageNotFoundError extends Error {}
 export class IdempotencyConflictError extends Error {}
 export class InvalidConversationCursorError extends Error {}
+export class InvalidConversationTitleError extends Error {}
 
 /**
  * Owns immutable, Organization-scoped Conversations and ordered Messages.
- * Creation and Employee append commands are idempotent; key reuse with another payload throws
- * IdempotencyConflictError. Missing, cross-Organization, and cross-Principal resources throw the
- * same corresponding not-found error. Appends serialize on the Conversation and assign a strictly
- * increasing sequence. Recent listing uses a stable opaque `(updatedAt, conversationId)` cursor;
- * Message listing uses the (conversationId, sequence) index and is linear in the requested limit.
+ * Creation, rename, and Employee append commands are idempotent; key reuse with another payload
+ * throws IdempotencyConflictError. Missing, cross-Organization, and cross-Principal resources throw
+ * the same corresponding not-found error. Appends serialize on the Conversation and assign a
+ * strictly increasing sequence. Recent listing uses a stable opaque `(updatedAt, conversationId)`
+ * cursor. Message pages load either the latest bounded suffix or an exclusive `beforeSequence`
+ * window, remain ascending, and are linear in the requested limit.
  * Controlled history reads verify the Employee Trigger in the same Organization/Conversation and
  * return ascending immutable Messages only through its sequence; selection and budgeting stay in Context.
  */
@@ -112,6 +120,11 @@ export interface ConversationModule {
     conversationId: ConversationId,
     command: { commandId: CommandId; parts: TextMessagePart[] },
   ): Promise<CommandResult<Message>>;
+  rename(
+    identity: RequestIdentity,
+    conversationId: ConversationId,
+    command: { commandId: CommandId; title: string },
+  ): Promise<CommandResult<Conversation>>;
   appendAssistantMessage(command: {
     organizationId: OrganizationId;
     conversationId: ConversationId;
@@ -121,6 +134,11 @@ export interface ConversationModule {
   }): Promise<CommandResult<Message>>;
   get(identity: RequestIdentity, conversationId: ConversationId): Promise<Conversation>;
   getCreatedByCommand(identity: RequestIdentity, commandId: CommandId): Promise<Conversation>;
+  getRenamedByCommand(
+    identity: RequestIdentity,
+    conversationId: ConversationId,
+    commandId: CommandId,
+  ): Promise<Conversation>;
   getEmployeeMessageByCommand(identity: RequestIdentity, commandId: CommandId): Promise<Message>;
   list(
     identity: RequestIdentity,
@@ -133,6 +151,11 @@ export interface ConversationModule {
     afterSequence: number,
     limit: number,
   ): Promise<Message[]>;
+  listMessagePage(
+    identity: RequestIdentity,
+    conversationId: ConversationId,
+    query: { readonly beforeSequence?: number; readonly limit: number },
+  ): Promise<MessagePage>;
   readHistoryThrough(query: ReadConversationHistory): Promise<ConversationHistory>;
   getMessageTrigger(
     identity: Pick<RequestIdentity, 'organizationId' | 'principalId'>,
@@ -149,6 +172,10 @@ interface ConversationRow {
   created_at: Date;
   updated_at: Date;
   request_hash?: string;
+}
+
+interface RenameReceiptRow extends ConversationRow {
+  rename_request_hash: string;
 }
 
 interface MessageRow {
@@ -390,6 +417,61 @@ export class PostgresConversationModule implements ConversationModule {
     }
   }
 
+  async rename(
+    identity: RequestIdentity,
+    conversationId: ConversationId,
+    command: { commandId: CommandId; title: string },
+  ): Promise<CommandResult<Conversation>> {
+    const title = command.title.trim();
+    if (!title || title.length > 200) throw new InvalidConversationTitleError();
+    const requestHash = hash({ conversationId, title });
+    const client = await this.pool.connect();
+    try {
+      await client.query('BEGIN');
+      await lockCommand(client, identity.organizationId, command.commandId);
+      const existing = await client.query<RenameReceiptRow>(
+        `SELECT c.*, r.request_hash AS rename_request_hash
+         FROM conversation_rename_receipts r
+         JOIN conversations c
+           ON c.organization_id = r.organization_id AND c.id = r.conversation_id
+         WHERE r.organization_id = $1 AND r.command_id = $2`,
+        [identity.organizationId, command.commandId],
+      );
+      const previous = existing.rows[0];
+      if (previous) {
+        if (previous.created_by_principal_id !== identity.principalId) {
+          throw new ConversationNotFoundError();
+        }
+        if (previous.rename_request_hash !== requestHash) throw new IdempotencyConflictError();
+        await client.query('COMMIT');
+        return { value: mapConversation(previous), replayed: true };
+      }
+
+      const renamed = await client.query<ConversationRow>(
+        `UPDATE conversations
+         SET title = $4, updated_at = clock_timestamp()
+         WHERE organization_id = $1 AND id = $2 AND created_by_principal_id = $3
+         RETURNING *`,
+        [identity.organizationId, conversationId, identity.principalId, title],
+      );
+      const value = renamed.rows[0];
+      if (!value) throw new ConversationNotFoundError();
+      await client.query(
+        `INSERT INTO conversation_rename_receipts (
+           organization_id, command_id, conversation_id, request_hash
+         ) VALUES ($1, $2, $3, $4)`,
+        [identity.organizationId, command.commandId, conversationId, requestHash],
+      );
+      await client.query('COMMIT');
+      return { value: mapConversation(value), replayed: false };
+    } catch (error) {
+      await client.query('ROLLBACK');
+      throw error;
+    } finally {
+      client.release();
+    }
+  }
+
   async appendAssistantMessage(command: {
     organizationId: OrganizationId;
     conversationId: ConversationId;
@@ -462,6 +544,23 @@ export class PostgresConversationModule implements ConversationModule {
       `SELECT * FROM conversations
        WHERE organization_id = $1 AND created_by_principal_id = $2 AND idempotency_key = $3`,
       [identity.organizationId, identity.principalId, commandId],
+    );
+    if (!result.rows[0]) throw new ConversationNotFoundError();
+    return mapConversation(result.rows[0]);
+  }
+
+  async getRenamedByCommand(
+    identity: RequestIdentity,
+    conversationId: ConversationId,
+    commandId: CommandId,
+  ): Promise<Conversation> {
+    const result = await this.pool.query<ConversationRow>(
+      `SELECT c.* FROM conversation_rename_receipts r
+       JOIN conversations c
+         ON c.organization_id = r.organization_id AND c.id = r.conversation_id
+       WHERE r.organization_id = $1 AND r.conversation_id = $2 AND r.command_id = $3
+         AND c.created_by_principal_id = $4`,
+      [identity.organizationId, conversationId, commandId, identity.principalId],
     );
     if (!result.rows[0]) throw new ConversationNotFoundError();
     return mapConversation(result.rows[0]);
@@ -546,6 +645,35 @@ export class PostgresConversationModule implements ConversationModule {
       [identity.organizationId, conversationId, afterSequence, limit],
     );
     return result.rows.map(mapMessage);
+  }
+
+  async listMessagePage(
+    identity: RequestIdentity,
+    conversationId: ConversationId,
+    query: { readonly beforeSequence?: number; readonly limit: number },
+  ): Promise<MessagePage> {
+    if (!Number.isInteger(query.limit) || query.limit < 1 || query.limit > 200
+      || (query.beforeSequence !== undefined
+        && (!Number.isInteger(query.beforeSequence) || query.beforeSequence < 1))) {
+      throw new InvalidConversationCursorError();
+    }
+    await this.get(identity, conversationId);
+    const result = await this.pool.query<MessageRow>(
+      `SELECT * FROM (
+         SELECT * FROM messages
+         WHERE organization_id = $1 AND conversation_id = $2
+           AND ($3::integer IS NULL OR sequence < $3)
+         ORDER BY sequence DESC LIMIT $4
+       ) recent_messages
+       ORDER BY sequence ASC`,
+      [identity.organizationId, conversationId, query.beforeSequence ?? null, query.limit + 1],
+    );
+    const hasEarlier = result.rows.length > query.limit;
+    const pageRows = hasEarlier ? result.rows.slice(1) : result.rows;
+    return {
+      items: pageRows.map(mapMessage),
+      ...(hasEarlier && pageRows[0] ? { beforeSequence: pageRows[0].sequence } : {}),
+    };
   }
 
   async readHistoryThrough(query: ReadConversationHistory): Promise<ConversationHistory> {
