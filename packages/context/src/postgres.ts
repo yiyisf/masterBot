@@ -5,11 +5,13 @@ import {
   type ArtifactModule,
   type ArtifactVersionId,
 } from '@cmaster/artifacts';
-import type {
-  ConversationId,
-  ConversationModule,
-  Message,
-  MessageId,
+import {
+  MessageNotFoundError,
+  type ConversationHistory,
+  type ConversationId,
+  type ConversationModule,
+  type Message,
+  type MessageId,
 } from '@cmaster/conversations';
 import type { OrganizationId, PrincipalId, RequestIdentity } from '@cmaster/identity';
 import type {
@@ -448,6 +450,7 @@ export class PostgresContextBuilder implements ContextBuilder {
       } else {
         const history = await this.conversations.readHistoryThrough({
           organizationId: request.organizationId,
+          principalId: request.principalId,
           conversationId: request.conversationId,
           triggerMessageId: request.triggerMessageId,
         });
@@ -666,11 +669,20 @@ export class PostgresContextBuilder implements ContextBuilder {
       id: request.manifestId,
     });
     if (!manifest) throw new ContextSourceIntegrityError('Context Manifest was not found');
-    const history = await this.conversations.readHistoryThrough({
-      organizationId: request.organizationId,
-      conversationId: manifest.conversationId,
-      triggerMessageId: manifest.triggerMessageId,
-    });
+    let history: ConversationHistory;
+    try {
+      history = await this.conversations.readHistoryThrough({
+        organizationId: request.organizationId,
+        principalId: request.principalId,
+        conversationId: manifest.conversationId,
+        triggerMessageId: manifest.triggerMessageId,
+      });
+    } catch (error) {
+      if (error instanceof MessageNotFoundError) {
+        throw new ContextSourceIntegrityError('Conversation Context source was not found');
+      }
+      throw error;
+    }
     const messagesById = new Map(history.messages.map((message) => [message.id, message]));
     const messages: InvocationContextMessage[] = [];
     const summarySourceReferences: Array<

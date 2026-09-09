@@ -60,8 +60,26 @@ export interface ConversationHistory {
 /** Trusted, Organization-scoped Context read; missing or mismatched Trigger throws. */
 export interface ReadConversationHistory {
   readonly organizationId: OrganizationId;
+  readonly principalId: PrincipalId;
   readonly conversationId: ConversationId;
   readonly triggerMessageId: MessageId;
+}
+
+export type ConversationPreview =
+  | { readonly kind: 'text'; readonly text: string }
+  | { readonly kind: 'artifact' }
+  | { readonly kind: 'empty' };
+
+export interface ConversationSummary {
+  readonly id: ConversationId;
+  readonly title?: string;
+  readonly preview: ConversationPreview;
+  readonly updatedAt: Date;
+}
+
+export interface ConversationPage {
+  readonly items: readonly ConversationSummary[];
+  readonly nextCursor?: string;
 }
 
 export interface CommandResult<Value> {
@@ -72,12 +90,14 @@ export interface CommandResult<Value> {
 export class ConversationNotFoundError extends Error {}
 export class MessageNotFoundError extends Error {}
 export class IdempotencyConflictError extends Error {}
+export class InvalidConversationCursorError extends Error {}
 
 /**
  * Owns immutable, Organization-scoped Conversations and ordered Messages.
  * Creation and Employee append commands are idempotent; key reuse with another payload throws
- * IdempotencyConflictError. Missing or cross-Organization resources throw the corresponding
- * not-found error. Appends serialize on the Conversation and assign a strictly increasing sequence.
+ * IdempotencyConflictError. Missing, cross-Organization, and cross-Principal resources throw the
+ * same corresponding not-found error. Appends serialize on the Conversation and assign a strictly
+ * increasing sequence. Recent listing uses a stable opaque `(updatedAt, conversationId)` cursor;
  * Message listing uses the (conversationId, sequence) index and is linear in the requested limit.
  * Controlled history reads verify the Employee Trigger in the same Organization/Conversation and
  * return ascending immutable Messages only through its sequence; selection and budgeting stay in Context.
@@ -100,6 +120,11 @@ export interface ConversationModule {
     parts: MessagePart[];
   }): Promise<CommandResult<Message>>;
   get(identity: RequestIdentity, conversationId: ConversationId): Promise<Conversation>;
+  list(
+    identity: RequestIdentity,
+    query: { readonly cursor?: string; readonly limit: number },
+  ): Promise<ConversationPage>;
+  count(identity: RequestIdentity): Promise<number>;
   listMessages(
     identity: RequestIdentity,
     conversationId: ConversationId,
@@ -107,7 +132,10 @@ export interface ConversationModule {
     limit: number,
   ): Promise<Message[]>;
   readHistoryThrough(query: ReadConversationHistory): Promise<ConversationHistory>;
-  getMessageTrigger(organizationId: OrganizationId, messageId: MessageId): Promise<MessageTrigger>;
+  getMessageTrigger(
+    identity: Pick<RequestIdentity, 'organizationId' | 'principalId'>,
+    messageId: MessageId,
+  ): Promise<MessageTrigger>;
 }
 
 interface ConversationRow {
@@ -136,6 +164,63 @@ interface MessageRow {
 
 function hash(value: unknown): string {
   return createHash('sha256').update(JSON.stringify(value)).digest('hex');
+}
+
+const initialTitleCodeUnits = 80;
+const previewCodeUnits = 160;
+const graphemeSegmenter = new Intl.Segmenter('und', { granularity: 'grapheme' });
+
+function normalizeVisibleText(value: string): string {
+  return value.trim().replace(/\s+/gu, ' ');
+}
+
+function boundUnicode(value: string, maximumCodeUnits: number): string {
+  let bounded = '';
+  for (const { segment } of graphemeSegmenter.segment(value)) {
+    if (bounded.length + segment.length > maximumCodeUnits) break;
+    bounded += segment;
+  }
+  return bounded;
+}
+
+function initialTitle(text: string): string {
+  return boundUnicode(normalizeVisibleText(text), initialTitleCodeUnits);
+}
+
+function previewFromParts(parts: readonly MessagePart[]): ConversationPreview {
+  const text = normalizeVisibleText(parts
+    .filter((part): part is TextMessagePart => part.type === 'text')
+    .map((part) => part.text)
+    .join(' '));
+  if (text) return { kind: 'text', text: boundUnicode(text, previewCodeUnits) };
+  if (parts.some((part) => part.type === 'artifact_reference')) return { kind: 'artifact' };
+  return { kind: 'empty' };
+}
+
+interface ConversationCursor {
+  readonly updatedAt: string;
+  readonly id: string;
+}
+
+const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu;
+
+function encodeCursor(cursor: ConversationCursor): string {
+  return Buffer.from(JSON.stringify(cursor), 'utf8').toString('base64url');
+}
+
+function decodeCursor(value: string): ConversationCursor {
+  try {
+    const parsed: unknown = JSON.parse(Buffer.from(value, 'base64url').toString('utf8'));
+    if (!parsed || typeof parsed !== 'object'
+      || !('updatedAt' in parsed) || typeof parsed.updatedAt !== 'string'
+      || !('id' in parsed) || typeof parsed.id !== 'string'
+      || !uuidPattern.test(parsed.id)
+      || Number.isNaN(Date.parse(parsed.updatedAt))) throw new InvalidConversationCursorError();
+    return { updatedAt: parsed.updatedAt, id: parsed.id };
+  } catch (error) {
+    if (error instanceof InvalidConversationCursorError) throw error;
+    throw new InvalidConversationCursorError();
+  }
 }
 
 function mapConversation(row: ConversationRow): Conversation {
@@ -211,6 +296,9 @@ export class PostgresConversationModule implements ConversationModule {
       );
       const previous = existing.rows[0];
       if (previous) {
+        if (previous.created_by_principal_id !== identity.principalId) {
+          throw new ConversationNotFoundError();
+        }
         if (previous.request_hash !== requestHash) throw new IdempotencyConflictError();
         await client.query('COMMIT');
         return { value: mapConversation(previous), replayed: true };
@@ -253,14 +341,22 @@ export class PostgresConversationModule implements ConversationModule {
       );
       const previous = existing.rows[0];
       if (previous) {
+        const ownedConversation = await client.query(
+          `SELECT 1 FROM conversations
+           WHERE organization_id = $1 AND id = $2 AND created_by_principal_id = $3`,
+          [identity.organizationId, previous.conversation_id, identity.principalId],
+        );
+        if (ownedConversation.rowCount !== 1) throw new ConversationNotFoundError();
         if (previous.request_hash !== requestHash) throw new IdempotencyConflictError();
         await client.query('COMMIT');
         return { value: mapMessage(previous), replayed: true };
       }
 
       const conversation = await client.query<ConversationRow>(
-        `SELECT * FROM conversations WHERE organization_id = $1 AND id = $2 FOR UPDATE`,
-        [identity.organizationId, conversationId],
+        `SELECT * FROM conversations
+         WHERE organization_id = $1 AND id = $2 AND created_by_principal_id = $3
+         FOR UPDATE`,
+        [identity.organizationId, conversationId, identity.principalId],
       );
       const row = conversation.rows[0];
       if (!row) throw new ConversationNotFoundError();
@@ -276,9 +372,11 @@ export class PostgresConversationModule implements ConversationModule {
       );
       await client.query(
         `UPDATE conversations
-         SET last_message_sequence = $2, updated_at = clock_timestamp()
+         SET last_message_sequence = $2,
+             title = CASE WHEN $2 = 1 AND title IS NULL THEN $3 ELSE title END,
+             updated_at = clock_timestamp()
          WHERE id = $1`,
-        [conversationId, sequence],
+        [conversationId, sequence, initialTitle(command.parts[0].text)],
       );
       await client.query('COMMIT');
       return { value: mapMessage(inserted.rows[0]!), replayed: false };
@@ -346,11 +444,61 @@ export class PostgresConversationModule implements ConversationModule {
 
   async get(identity: RequestIdentity, conversationId: ConversationId): Promise<Conversation> {
     const result = await this.pool.query<ConversationRow>(
-      `SELECT * FROM conversations WHERE organization_id = $1 AND id = $2`,
-      [identity.organizationId, conversationId],
+      `SELECT * FROM conversations
+       WHERE organization_id = $1 AND id = $2 AND created_by_principal_id = $3`,
+      [identity.organizationId, conversationId, identity.principalId],
     );
     if (!result.rows[0]) throw new ConversationNotFoundError();
     return mapConversation(result.rows[0]);
+  }
+
+  async list(
+    identity: RequestIdentity,
+    query: { readonly cursor?: string; readonly limit: number },
+  ): Promise<ConversationPage> {
+    if (!Number.isInteger(query.limit) || query.limit < 1 || query.limit > 50) {
+      throw new InvalidConversationCursorError();
+    }
+    const cursor = query.cursor ? decodeCursor(query.cursor) : undefined;
+    const result = await this.pool.query<ConversationRow & { last_message_parts: unknown | null }>(
+      `SELECT c.*, last_message.parts AS last_message_parts
+       FROM conversations c
+       LEFT JOIN LATERAL (
+         SELECT parts FROM messages
+         WHERE organization_id = c.organization_id AND conversation_id = c.id
+         ORDER BY sequence DESC LIMIT 1
+       ) last_message ON true
+       WHERE c.organization_id = $1 AND c.created_by_principal_id = $2
+         AND ($3::timestamptz IS NULL OR (c.updated_at, c.id) < ($3::timestamptz, $4::uuid))
+       ORDER BY c.updated_at DESC, c.id DESC LIMIT $5`,
+      [identity.organizationId, identity.principalId, cursor?.updatedAt ?? null,
+        cursor?.id ?? null, query.limit + 1],
+    );
+    const pageRows = result.rows.slice(0, query.limit);
+    const items = pageRows.map((row): ConversationSummary => ({
+      id: row.id as ConversationId,
+      ...(row.title === null ? {} : { title: row.title }),
+      preview: row.last_message_parts === null
+        ? { kind: 'empty' }
+        : previewFromParts(messageParts(row.last_message_parts)),
+      updatedAt: row.updated_at,
+    }));
+    const last = pageRows.at(-1);
+    return {
+      items,
+      ...(result.rows.length > query.limit && last
+        ? { nextCursor: encodeCursor({ updatedAt: last.updated_at.toISOString(), id: last.id }) }
+        : {}),
+    };
+  }
+
+  async count(identity: RequestIdentity): Promise<number> {
+    const result = await this.pool.query<{ count: string }>(
+      `SELECT count(*)::text AS count FROM conversations
+       WHERE organization_id = $1 AND created_by_principal_id = $2`,
+      [identity.organizationId, identity.principalId],
+    );
+    return Number(result.rows[0]?.count ?? 0);
   }
 
   async listMessages(
@@ -371,10 +519,12 @@ export class PostgresConversationModule implements ConversationModule {
 
   async readHistoryThrough(query: ReadConversationHistory): Promise<ConversationHistory> {
     const triggerResult = await this.pool.query<MessageRow>(
-      `SELECT * FROM messages
-       WHERE organization_id = $1 AND conversation_id = $2 AND id = $3
-         AND author_type = 'employee'`,
-      [query.organizationId, query.conversationId, query.triggerMessageId],
+      `SELECT m.* FROM messages m
+       JOIN conversations c
+         ON c.organization_id = m.organization_id AND c.id = m.conversation_id
+       WHERE m.organization_id = $1 AND m.conversation_id = $2 AND m.id = $3
+         AND m.author_type = 'employee' AND c.created_by_principal_id = $4`,
+      [query.organizationId, query.conversationId, query.triggerMessageId, query.principalId],
     );
     const trigger = triggerResult.rows[0];
     if (!trigger) throw new MessageNotFoundError();
@@ -392,11 +542,17 @@ export class PostgresConversationModule implements ConversationModule {
     };
   }
 
-  async getMessageTrigger(organizationId: OrganizationId, messageId: MessageId): Promise<MessageTrigger> {
+  async getMessageTrigger(
+    identity: Pick<RequestIdentity, 'organizationId' | 'principalId'>,
+    messageId: MessageId,
+  ): Promise<MessageTrigger> {
     const result = await this.pool.query<MessageRow>(
-      `SELECT * FROM messages
-       WHERE organization_id = $1 AND id = $2 AND author_type = 'employee'`,
-      [organizationId, messageId],
+      `SELECT m.* FROM messages m
+       JOIN conversations c
+         ON c.organization_id = m.organization_id AND c.id = m.conversation_id
+       WHERE m.organization_id = $1 AND m.id = $2 AND m.author_type = 'employee'
+         AND c.created_by_principal_id = $3`,
+      [identity.organizationId, messageId, identity.principalId],
     );
     const row = result.rows[0];
     if (!row) throw new MessageNotFoundError();

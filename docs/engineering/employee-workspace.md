@@ -90,7 +90,7 @@ GET /api/v1/workspace/runs/{runId}/stream
 
 The Server Experience Adapter composes only Module public queries and owns no tables. Commands remain on Conversations/Execution/Artifacts routes. All Browser backend access uses the generated Contract Client. Next.js Server Actions do not create a second business write path.
 
-Browser URLs use same-origin `/api/v1`. Development uses a transparent Next rewrite to the Fastify API; production uses the reverse proxy. The rewrite is not a BFF and contains no authorization or business logic.
+Browser URLs use same-origin `/api/v1`. Development uses a transparent Next rewrite to the Fastify API; production uses the reverse proxy. `CMASTER_API_ORIGIN` configures only the development rewrite target and defaults to `http://localhost:3100`; `NEXT_PUBLIC_CMASTER_API_URL` stays empty unless an explicit cross-origin test requires it. The rewrite is not a BFF and contains no authorization or business logic.
 
 ## Conversation lists
 

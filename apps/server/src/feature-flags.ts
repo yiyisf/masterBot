@@ -1,4 +1,4 @@
-export type FeatureFlag = 'nextArchitecture' | 'toolRuntime' | 'contextArtifacts';
+export type FeatureFlag = 'nextArchitecture' | 'toolRuntime' | 'contextArtifacts' | 'employeeWorkspace';
 
 export interface FeatureFlags {
   isEnabled(flag: FeatureFlag): boolean;
@@ -13,9 +13,9 @@ export class EnvironmentFeatureFlags implements FeatureFlags {
 }
 
 export class InMemoryFeatureFlags implements FeatureFlags {
-  constructor(private readonly values: Readonly<Record<FeatureFlag, boolean>>) {}
+  constructor(private readonly values: Readonly<Partial<Record<FeatureFlag, boolean>>>) {}
 
   isEnabled(flag: FeatureFlag): boolean {
-    return this.values[flag];
+    return this.values[flag] ?? false;
   }
 }

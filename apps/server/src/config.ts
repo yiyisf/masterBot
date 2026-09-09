@@ -39,6 +39,7 @@ const environmentSchema = z.object({
   CMASTER_AI_SDK_RUNTIME_ENABLED: z.enum(['true', 'false']).default('false').transform((value) => value === 'true'),
   CMASTER_TOOL_RUNTIME_ENABLED: z.enum(['true', 'false']).default('false').transform((value) => value === 'true'),
   CMASTER_CONTEXT_ARTIFACTS_ENABLED: z.enum(['true', 'false']).default('false').transform((value) => value === 'true'),
+  CMASTER_EMPLOYEE_WORKSPACE_ENABLED: z.enum(['true', 'false']).default('false').transform((value) => value === 'true'),
   CMASTER_ARTIFACT_STORAGE_ROOT: z.string().min(1).default('data/artifacts'),
   CMASTER_HTTP_FETCH_ALLOWED_HOSTS: z.string().default(''),
   CMASTER_RUNTIME_ENV: z.enum(['development', 'test', 'production']).default('development'),
@@ -88,6 +89,7 @@ export interface ServerConfig {
     aiSdkRuntime: boolean;
     toolRuntime: boolean;
     contextArtifacts: boolean;
+    employeeWorkspace: boolean;
   };
   runtimeEnvironment: 'development' | 'test' | 'production';
   artifactStorageRoot: string;
@@ -236,6 +238,9 @@ export function loadServerConfig(
   if (parsed.CMASTER_CONTEXT_ARTIFACTS_ENABLED && !parsed.CMASTER_TOOL_RUNTIME_ENABLED) {
     throw new Error('Context and Artifacts require Tool Runtime');
   }
+  if (parsed.CMASTER_EMPLOYEE_WORKSPACE_ENABLED && !parsed.CMASTER_CONTEXT_ARTIFACTS_ENABLED) {
+    throw new Error('Employee Workspace requires Context and Artifacts');
+  }
   const primaryValues = [
     parsed.CMASTER_PRIMARY_MODEL_BASE_URL,
     parsed.CMASTER_PRIMARY_MODEL_ID,
@@ -348,6 +353,7 @@ export function loadServerConfig(
       aiSdkRuntime: parsed.CMASTER_AI_SDK_RUNTIME_ENABLED,
       toolRuntime: parsed.CMASTER_TOOL_RUNTIME_ENABLED,
       contextArtifacts: parsed.CMASTER_CONTEXT_ARTIFACTS_ENABLED,
+      employeeWorkspace: parsed.CMASTER_EMPLOYEE_WORKSPACE_ENABLED,
     },
     runtimeEnvironment: parsed.CMASTER_RUNTIME_ENV,
     artifactStorageRoot: parsed.CMASTER_ARTIFACT_STORAGE_ROOT,

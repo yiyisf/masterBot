@@ -12,6 +12,7 @@ extendZodWithOpenApi(z);
 const artifacts = await import('../src/artifacts.js');
 const conversations = await import('../src/conversations.js');
 const runs = await import('../src/runs.js');
+const workspace = await import('../src/workspace.js');
 const { problemDetailsSchema } = await import('../src/problem.js');
 const { systemStatusSchema } = await import('../src/system-status.js');
 
@@ -34,6 +35,10 @@ const resolveToolConfirmationResponse = registry.register(
   'ResolveToolConfirmationResponse', runs.resolveToolConfirmationResponseSchema,
 );
 const systemStatus = registry.register('SystemStatus', systemStatusSchema);
+const workspaceConversationPage = registry.register(
+  'WorkspaceConversationPage', workspace.workspaceConversationPageSchema,
+);
+const workspaceSummary = registry.register('WorkspaceSummary', workspace.workspaceSummarySchema);
 
 const idempotencyHeaders = z.object({ 'idempotency-key': z.uuid() });
 const idempotencyReplayHeaders = z.object({ 'Idempotency-Replayed': z.enum(['true', 'false']) });
@@ -49,6 +54,26 @@ const problemResponse = (description: string) => ({
 registry.registerPath({
   method: 'get', path: '/api/v1/system/status', summary: 'Read system status',
   responses: { 200: { description: 'Current status', content: { 'application/json': { schema: systemStatus } } } },
+});
+registry.registerPath({
+  method: 'get', path: '/api/v1/workspace/summary', summary: 'Read bounded Employee Workspace summary',
+  responses: {
+    200: { description: 'Private Workspace summary', content: { 'application/json': { schema: workspaceSummary } } },
+    404: problemResponse('Workspace is unavailable'),
+  },
+});
+registry.registerPath({
+  method: 'get', path: '/api/v1/workspace/conversations', summary: 'List private recent Conversations',
+  request: {
+    query: z.object({
+      cursor: z.string().min(1).optional(),
+      limit: z.coerce.number().int().min(1).max(50).default(20),
+    }),
+  },
+  responses: {
+    200: { description: 'Private Conversation page', content: { 'application/json': { schema: workspaceConversationPage } } },
+    400: problemResponse('Invalid request'), 404: problemResponse('Workspace is unavailable'),
+  },
 });
 registry.registerPath({
   method: 'post', path: '/api/v1/conversations', summary: 'Create a Conversation',

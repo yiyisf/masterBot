@@ -147,6 +147,7 @@ describe('governed Invocation Context', () => {
 
     await expect(conversations.readHistoryThrough({
       organizationId: requestIdentity.organizationId,
+      principalId: requestIdentity.principalId,
       conversationId: conversation.id,
       triggerMessageId: trigger.id,
     })).resolves.toEqual({
@@ -159,6 +160,7 @@ describe('governed Invocation Context', () => {
     const otherOrganization = await provisionIdentity();
     await expect(conversations.readHistoryThrough({
       organizationId: otherOrganization.resolveRequest().organizationId,
+      principalId: otherOrganization.resolveRequest().principalId,
       conversationId: conversation.id,
       triggerMessageId: trigger.id,
     })).rejects.toBeInstanceOf(MessageNotFoundError);

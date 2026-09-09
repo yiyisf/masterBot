@@ -11,7 +11,7 @@ import { useCallback, useEffect, useReducer, useState } from 'react';
 import { ArtifactCard } from '../../../../features/artifacts/artifact-card';
 import { applyRunEvent, projectionFromSnapshot, type RunProjection } from '../../../../lib/run-projection';
 
-const apiUrl = process.env.NEXT_PUBLIC_CMASTER_API_URL ?? 'http://localhost:3100';
+const apiUrl = process.env.NEXT_PUBLIC_CMASTER_API_URL ?? '';
 
 type DisplayMessage = MessageContract;
 

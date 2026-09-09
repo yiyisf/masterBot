@@ -216,6 +216,18 @@ export interface ToolBoundaryLease {
   expiresAt: Date;
 }
 
+export interface ConversationRunActivity {
+  readonly conversationId: ConversationId;
+  readonly activeRunCount: number;
+  readonly pendingActionCount: number;
+  readonly latestRunStatus?: RunStatus;
+}
+
+export interface PrincipalRunActivity {
+  readonly activeRunCount: number;
+  readonly pendingActionCount: number;
+}
+
 /**
  * 串行化 Run cancellation 与 Provider I/O。进程丢失后 Lease 可过期；只有当前持有者可清除
  * boundary，过期持有者不能覆盖后继者。
@@ -233,12 +245,20 @@ export interface ToolExecutionBoundary {
  * Owns durable Run acceptance, cancellation, snapshots, and ordered Event replay.
  * Acceptance atomically persists the Run, root Invocation, initial Events, and Outbox entry before returning.
  * Commands are Organization-scoped and idempotent; key reuse with another payload throws
- * RunIdempotencyConflictError. Missing or cross-Organization resources throw RunNotFoundError.
- * Event reads are indexed by (runId, sequence), return strict ascending order, and are linear in the page read.
+ * RunIdempotencyConflictError. Employee queries require both trusted Organization and initiating
+ * Principal; missing and unauthorized resources throw the same RunNotFoundError. Conversation
+ * activity queries are bounded by caller-supplied IDs, while Principal summary uses indexed scope
+ * filters. Event reads are indexed by (runId, sequence), return strict ascending order, and are
+ * linear in the page read.
  */
 export interface ExecutionModule extends ToolExecutionBoundary {
   acceptRun(identity: RequestIdentity, command: AcceptRunCommand): Promise<CommandResult<RunSnapshot>>;
   getRun(identity: RequestIdentity, runId: RunId): Promise<RunSnapshot>;
+  listConversationActivity(
+    identity: RequestIdentity,
+    conversationIds: readonly ConversationId[],
+  ): Promise<readonly ConversationRunActivity[]>;
+  summarizePrincipalActivity(identity: RequestIdentity): Promise<PrincipalRunActivity>;
   getInterrupt(
     identity: RequestIdentity,
     runId: RunId,

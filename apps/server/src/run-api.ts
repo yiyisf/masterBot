@@ -20,6 +20,7 @@ import {
   conversationId,
   ConversationNotFoundError,
   IdempotencyConflictError,
+  InvalidConversationCursorError,
   messageId,
   MessageNotFoundError,
   type Conversation,
@@ -127,7 +128,7 @@ export function sendRunApiError(
   request: FastifyRequest,
   reply: FastifyReply,
 ): FastifyReply {
-  if (error instanceof ZodError) {
+  if (error instanceof ZodError || error instanceof InvalidConversationCursorError) {
     return problem(reply, request, 400, 'invalid_request', 'Invalid request', 'The request does not match the API contract.');
   }
   if (error instanceof ConversationNotFoundError || error instanceof MessageNotFoundError || error instanceof RunNotFoundError) {
@@ -139,7 +140,8 @@ export function sendRunApiError(
   if (error instanceof IdempotencyConflictError || error instanceof RunIdempotencyConflictError) {
     return problem(reply, request, 409, 'idempotency_conflict', 'Idempotency conflict', 'The Idempotency-Key was already used for another command.');
   }
-  request.log.error({ err: error }, 'Run API request failed');
+  // 未知异常可能携带 Message、Tool 参数或 Provider 响应；日志只保留安全请求关联。
+  request.log.error({ requestId: request.id }, 'Run API request failed');
   return problem(reply, request, 500, 'internal_error', 'Internal error', 'The request could not be completed.');
 }
 
@@ -211,7 +213,7 @@ export function registerRunApi(app: FastifyInstance, dependencies: RunApiDepende
       const body = createRunRequestSchema.parse(request.body);
       const identity = dependencies.identity.resolveRequest();
       const trigger = await dependencies.conversations.getMessageTrigger(
-        identity.organizationId, messageId(body.trigger.messageId),
+        identity, messageId(body.trigger.messageId),
       );
       const agent = await dependencies.agents.resolveDefault(identity.organizationId);
       const result = await dependencies.execution.acceptRun(identity, {

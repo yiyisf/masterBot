@@ -8,6 +8,7 @@ import {
   type AcceptRunCommand,
   type CancelRunResult,
   type CommandResult,
+  type ConversationRunActivity,
   type ContextBuiltMetadata,
   type DispatchAttemptId,
   type ExecutionCheckpoint,
@@ -21,6 +22,7 @@ import {
   type InvocationId,
   type InvocationStatus,
   type PreparedRunOutput,
+  type PrincipalRunActivity,
   type RequestInterruptCommand,
   type ResolveInterruptCommand,
   type RunCommandId,
@@ -363,6 +365,60 @@ export class PostgresExecutionModule implements ExecutionModule {
     const row = await selectRun(this.pool, identity.organizationId, runId);
     if (!row || row.initiating_principal_id !== identity.principalId) throw new RunNotFoundError();
     return mapRun(row);
+  }
+
+  async listConversationActivity(
+    identity: RequestIdentity,
+    conversationIds: readonly ConversationId[],
+  ): Promise<readonly ConversationRunActivity[]> {
+    if (conversationIds.length === 0) return [];
+    const result = await this.pool.query<{
+      conversation_id: string;
+      active_run_count: number;
+      pending_action_count: number;
+      latest_run_status: RunStatus;
+    }>(
+      `SELECT r.conversation_id,
+              count(DISTINCT r.id) FILTER (
+                WHERE r.status IN ('accepted', 'queued', 'running', 'waiting')
+              )::integer AS active_run_count,
+              count(DISTINCT x.id) FILTER (WHERE x.status = 'pending')::integer
+                AS pending_action_count,
+              (array_agg(r.status ORDER BY r.created_at DESC, r.id DESC))[1]
+                AS latest_run_status
+       FROM runs r
+       LEFT JOIN execution_interrupts x
+         ON x.organization_id = r.organization_id AND x.run_id = r.id
+       WHERE r.organization_id = $1 AND r.initiating_principal_id = $2
+         AND r.conversation_id = ANY($3::uuid[])
+       GROUP BY r.conversation_id`,
+      [identity.organizationId, identity.principalId, conversationIds],
+    );
+    return result.rows.map((row) => ({
+      conversationId: row.conversation_id as ConversationId,
+      activeRunCount: row.active_run_count,
+      pendingActionCount: row.pending_action_count,
+      latestRunStatus: row.latest_run_status,
+    }));
+  }
+
+  async summarizePrincipalActivity(identity: RequestIdentity): Promise<PrincipalRunActivity> {
+    const result = await this.pool.query<{ active_run_count: number; pending_action_count: number }>(
+      `SELECT count(DISTINCT r.id) FILTER (
+                WHERE r.status IN ('accepted', 'queued', 'running', 'waiting')
+              )::integer AS active_run_count,
+              count(DISTINCT x.id) FILTER (WHERE x.status = 'pending')::integer
+                AS pending_action_count
+       FROM runs r
+       LEFT JOIN execution_interrupts x
+         ON x.organization_id = r.organization_id AND x.run_id = r.id
+       WHERE r.organization_id = $1 AND r.initiating_principal_id = $2`,
+      [identity.organizationId, identity.principalId],
+    );
+    return {
+      activeRunCount: result.rows[0]?.active_run_count ?? 0,
+      pendingActionCount: result.rows[0]?.pending_action_count ?? 0,
+    };
   }
 
   async getInterrupt(
