@@ -11,6 +11,7 @@ import { z } from 'zod';
 extendZodWithOpenApi(z);
 const artifacts = await import('../src/artifacts.js');
 const conversations = await import('../src/conversations.js');
+const composer = await import('../src/composer.js');
 const runs = await import('../src/runs.js');
 const workspace = await import('../src/workspace.js');
 const { problemDetailsSchema } = await import('../src/problem.js');
@@ -22,6 +23,7 @@ registry.register('Artifact', artifacts.artifactSchema);
 const artifactVersion = registry.register('ArtifactVersion', artifacts.artifactVersionSchema);
 const artifactView = registry.register('ArtifactView', artifacts.artifactViewSchema);
 const conversation = registry.register('Conversation', conversations.conversationSchema);
+const conversationRunPage = registry.register('ConversationRunPage', composer.conversationRunPageSchema);
 const message = registry.register('Message', conversations.messageSchema);
 const messagePage = registry.register('MessagePage', conversations.messagePageSchema);
 const run = registry.register('RunSnapshot', runs.runSnapshotSchema);
@@ -84,6 +86,12 @@ registry.registerPath({
   },
 });
 registry.registerPath({
+  method: 'get', path: '/api/v1/conversations/by-command/{commandId}',
+  summary: 'Reconcile a create-Conversation Command',
+  request: { params: idPath('commandId') },
+  responses: { 200: { description: 'Created Conversation', content: { 'application/json': { schema: conversation } } }, 400: problemResponse('Invalid request'), 404: problemResponse('Command result not found') },
+});
+registry.registerPath({
   method: 'get', path: '/api/v1/conversations/{conversationId}', summary: 'Read a Conversation',
   request: { params: idPath('conversationId') },
   responses: { 200: { description: 'Conversation', content: { 'application/json': { schema: conversation } } }, 400: problemResponse('Invalid request'), 404: problemResponse('Not found') },
@@ -98,6 +106,12 @@ registry.registerPath({
     201: { description: 'Message appended or replayed', headers: idempotencyReplayHeaders, content: { 'application/json': { schema: message } } },
     400: problemResponse('Invalid command'), 404: problemResponse('Not found'), 409: problemResponse('Idempotency conflict'),
   },
+});
+registry.registerPath({
+  method: 'get', path: '/api/v1/messages/by-command/{commandId}',
+  summary: 'Reconcile an append-Message Command',
+  request: { params: idPath('commandId') },
+  responses: { 200: { description: 'Appended Employee Message', content: { 'application/json': { schema: message } } }, 400: problemResponse('Invalid request'), 404: problemResponse('Command result not found') },
 });
 registry.registerPath({
   method: 'get', path: '/api/v1/conversations/{conversationId}/messages', summary: 'Read ordered Messages',
@@ -157,6 +171,18 @@ registry.registerPath({
     202: { description: 'Run accepted or replayed', headers: idempotencyReplayHeaders, content: { 'application/json': { schema: acceptRunResponse } } },
     400: problemResponse('Invalid command'), 404: problemResponse('Trigger not found'), 409: problemResponse('Idempotency conflict'),
   },
+});
+registry.registerPath({
+  method: 'get', path: '/api/v1/runs/by-command/{commandId}',
+  summary: 'Reconcile an accept-Run Command',
+  request: { params: idPath('commandId') },
+  responses: { 200: { description: 'Accepted Run', content: { 'application/json': { schema: run } } }, 400: problemResponse('Invalid request'), 404: problemResponse('Command result not found') },
+});
+registry.registerPath({
+  method: 'get', path: '/api/v1/conversations/{conversationId}/runs',
+  summary: 'List bounded Run attempts for a private Conversation',
+  request: { params: idPath('conversationId') },
+  responses: { 200: { description: 'Conversation Run attempts', content: { 'application/json': { schema: conversationRunPage } } }, 400: problemResponse('Invalid request'), 404: problemResponse('Conversation not found') },
 });
 registry.registerPath({
   method: 'get', path: '/api/v1/runs/{runId}', summary: 'Read a Run Snapshot',

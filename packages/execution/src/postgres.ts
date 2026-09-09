@@ -9,6 +9,7 @@ import {
   type CancelRunResult,
   type CommandResult,
   type ConversationRunActivity,
+  type ConversationRunSummary,
   type ContextBuiltMetadata,
   type DispatchAttemptId,
   type ExecutionCheckpoint,
@@ -365,6 +366,43 @@ export class PostgresExecutionModule implements ExecutionModule {
     const row = await selectRun(this.pool, identity.organizationId, runId);
     if (!row || row.initiating_principal_id !== identity.principalId) throw new RunNotFoundError();
     return mapRun(row);
+  }
+
+  async getRunByCommand(
+    identity: RequestIdentity,
+    commandId: RunCommandId,
+  ): Promise<RunSnapshot> {
+    const result = await this.pool.query<RunRow>(
+      `${runSelect} WHERE r.organization_id = $1 AND r.initiating_principal_id = $2
+         AND r.idempotency_key = $3`,
+      [identity.organizationId, identity.principalId, commandId],
+    );
+    if (!result.rows[0]) throw new RunNotFoundError();
+    return mapRun(result.rows[0]);
+  }
+
+  async listConversationRuns(
+    identity: RequestIdentity,
+    conversationId: ConversationId,
+    limit: number,
+  ): Promise<readonly ConversationRunSummary[]> {
+    const result = await this.pool.query<{
+      id: string;
+      trigger_ref: string;
+      status: RunStatus;
+      created_at: Date;
+    }>(
+      `SELECT id, trigger_ref, status, created_at FROM runs
+       WHERE organization_id = $1 AND initiating_principal_id = $2 AND conversation_id = $3
+       ORDER BY created_at DESC, id DESC LIMIT $4`,
+      [identity.organizationId, identity.principalId, conversationId, limit],
+    );
+    return result.rows.map((row) => ({
+      id: row.id as RunId,
+      triggerMessageId: row.trigger_ref as MessageId,
+      status: row.status,
+      createdAt: row.created_at,
+    }));
   }
 
   async listConversationActivity(

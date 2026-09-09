@@ -228,6 +228,13 @@ export interface PrincipalRunActivity {
   readonly pendingActionCount: number;
 }
 
+export interface ConversationRunSummary {
+  readonly id: RunId;
+  readonly triggerMessageId: MessageId;
+  readonly status: RunStatus;
+  readonly createdAt: Date;
+}
+
 /**
  * 串行化 Run cancellation 与 Provider I/O。进程丢失后 Lease 可过期；只有当前持有者可清除
  * boundary，过期持有者不能覆盖后继者。
@@ -254,6 +261,12 @@ export interface ToolExecutionBoundary {
 export interface ExecutionModule extends ToolExecutionBoundary {
   acceptRun(identity: RequestIdentity, command: AcceptRunCommand): Promise<CommandResult<RunSnapshot>>;
   getRun(identity: RequestIdentity, runId: RunId): Promise<RunSnapshot>;
+  getRunByCommand(identity: RequestIdentity, commandId: RunCommandId): Promise<RunSnapshot>;
+  listConversationRuns(
+    identity: RequestIdentity,
+    conversationId: ConversationId,
+    limit: number,
+  ): Promise<readonly ConversationRunSummary[]>;
   listConversationActivity(
     identity: RequestIdentity,
     conversationIds: readonly ConversationId[],

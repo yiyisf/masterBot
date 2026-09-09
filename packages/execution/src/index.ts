@@ -25,6 +25,7 @@ export {
   type ActiveInterrupt,
   type CancelRunResult,
   type ConversationRunActivity,
+  type ConversationRunSummary,
   type ContextBuiltMetadata,
   type ExecutionCheckpoint,
   type ExecutionInterrupt,
