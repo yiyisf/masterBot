@@ -241,6 +241,12 @@ export interface ConversationRunPage {
   readonly nextCursor?: string;
 }
 
+export interface RunEventPage {
+  readonly items: readonly RunEventEnvelope[];
+  /** 指向前一页的 exclusive canonical sequence cursor。 */
+  readonly beforeSequence?: number;
+}
+
 /**
  * 串行化 Run cancellation 与 Provider I/O。进程丢失后 Lease 可过期；只有当前持有者可清除
  * boundary，过期持有者不能覆盖后继者。
@@ -292,6 +298,11 @@ export interface ExecutionModule extends ToolExecutionBoundary {
     command: ResolveInterruptCommand,
   ): Promise<CommandResult<RunSnapshot>>;
   readEvents(identity: RequestIdentity, runId: RunId, afterSequence: number): Promise<RunEventEnvelope[]>;
+  listEventPage(
+    identity: RequestIdentity,
+    runId: RunId,
+    query: { readonly beforeSequence?: number; readonly limit: number },
+  ): Promise<RunEventPage>;
 }
 
 export class RunNotFoundError extends Error {}

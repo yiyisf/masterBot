@@ -13,6 +13,7 @@ const artifacts = await import('../src/artifacts.js');
 const conversations = await import('../src/conversations.js');
 const composer = await import('../src/composer.js');
 const runs = await import('../src/runs.js');
+const runUiProjection = await import('../src/run-ui-projection.js');
 const workspace = await import('../src/workspace.js');
 const { problemDetailsSchema } = await import('../src/problem.js');
 const { systemStatusSchema } = await import('../src/system-status.js');
@@ -27,6 +28,13 @@ const conversationRunPage = registry.register('ConversationRunPage', composer.co
 const message = registry.register('Message', conversations.messageSchema);
 const messagePage = registry.register('MessagePage', conversations.messagePageSchema);
 const run = registry.register('RunSnapshot', runs.runSnapshotSchema);
+const runUiProjectionSnapshot = registry.register(
+  'RunUiProjectionSnapshot', runUiProjection.runUiProjectionSnapshotSchema,
+);
+const runUiTimelinePage = registry.register(
+  'RunUiTimelinePage', runUiProjection.runUiTimelinePageSchema,
+);
+registry.register('RunUiProjectionEvent', runUiProjection.runUiProjectionEventSchema);
 const acceptRunResponse = registry.register('AcceptRunResponse', runs.acceptRunResponseSchema);
 registry.register('RunEvent', runs.runEventEnvelopeSchema);
 const cancelResponse = registry.register('CancelRunResponse', runs.cancelRunResponseSchema);
@@ -274,14 +282,39 @@ registry.registerPath({
   },
 });
 registry.registerPath({
-  method: 'get', path: '/api/v1/runs/{runId}/ui-stream', summary: 'Present Run Events as an AI SDK UI Message Stream',
+  method: 'get', path: '/api/v1/workspace/runs/{runId}/projection',
+  summary: 'Read a recoverable Run UI Projection Snapshot',
+  request: { params: idPath('runId') },
+  responses: {
+    200: { description: 'Run UI Projection Snapshot', content: { 'application/json': { schema: runUiProjectionSnapshot } } },
+    400: problemResponse('Invalid request'), 404: problemResponse('Not found'),
+  },
+});
+registry.registerPath({
+  method: 'get', path: '/api/v1/workspace/runs/{runId}/timeline',
+  summary: 'Page backward through safe Run Timeline items',
+  request: {
+    params: idPath('runId'),
+    query: z.object({
+      beforeSequence: z.coerce.number().int().positive().optional(),
+      limit: z.coerce.number().int().min(1).max(100).default(100),
+    }),
+  },
+  responses: {
+    200: { description: 'Run Timeline page', content: { 'application/json': { schema: runUiTimelinePage } } },
+    400: problemResponse('Invalid request'), 404: problemResponse('Not found'),
+  },
+});
+registry.registerPath({
+  method: 'get', path: '/api/v1/workspace/runs/{runId}/stream',
+  summary: 'Stream replayable Run UI Projection Events',
   request: {
     params: idPath('runId'),
     query: z.object({ afterSequence: z.coerce.number().int().nonnegative().optional() }),
     headers: z.object({ 'last-event-id': z.string().regex(/^\\d+$/).optional() }),
   },
   responses: {
-    200: { description: 'AI SDK UI Message Stream derived from canonical Run Events', content: { 'text/event-stream': { schema: z.string() } } },
+    200: { description: 'SSE stream; each event is a RunUiProjectionEvent', content: { 'text/event-stream': { schema: z.string() } } },
     400: problemResponse('Invalid request'), 404: problemResponse('Not found'),
   },
 });

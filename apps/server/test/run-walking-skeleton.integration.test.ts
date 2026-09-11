@@ -26,6 +26,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { Pool } from 'pg';
 import { buildApi } from '../src/app.js';
 import { loadServerConfig } from '../src/config.js';
+import { InMemoryFeatureFlags } from '../src/feature-flags.js';
 import { PollingRunEventNotifier } from '../src/run-event-notifier.js';
 
 const databaseUrl = process.env.DATABASE_URL;
@@ -195,6 +196,20 @@ describe('Run Walking Skeleton', () => {
 
     const snapshot = await execution.getRun(identity.resolveRequest(), runId(accepted.run.id));
     expect(snapshot.status).toBe('succeeded');
+    const latestEvents = await execution.listEventPage(
+      identity.resolveRequest(), runId(accepted.run.id), { limit: 2 },
+    );
+    expect(latestEvents.items.map((event) => event.sequence)).toEqual([
+      snapshot.lastSequence - 1, snapshot.lastSequence,
+    ]);
+    expect(latestEvents.beforeSequence).toBe(snapshot.lastSequence - 1);
+    if (!latestEvents.beforeSequence) throw new Error('Expected an older Run Event page');
+    const earlierEvents = await execution.listEventPage(
+      identity.resolveRequest(), runId(accepted.run.id), {
+        beforeSequence: latestEvents.beforeSequence, limit: 2,
+      },
+    );
+    expect(earlierEvents.items.at(-1)?.sequence).toBeLessThan(latestEvents.items[0]!.sequence);
     const messages = await conversations.listMessages(
       identity.resolveRequest(), conversationId(accepted.conversation.id), 0, 100,
     );
@@ -463,7 +478,9 @@ describe('Run Walking Skeleton', () => {
     const app = buildApi({
       config,
       database: { check: async () => true },
+      featureFlags: new InMemoryFeatureFlags({ nextArchitecture: true, employeeWorkspace: true }),
       runApi: { identity, agents, conversations, execution, notifier },
+      workspaceApi: { identity, conversations, execution },
     });
     const response = await app.inject({
       method: 'GET', url: `/api/v1/runs/${accepted.run.id}/events`,
@@ -478,18 +495,67 @@ describe('Run Walking Skeleton', () => {
     expect(ids.every((sequence) => sequence > accepted.run.lastSequence)).toBe(true);
     expect(ids).toEqual([...ids].sort((left, right) => left - right));
 
+    const projectionResponse = await app.inject({
+      method: 'GET', url: `/api/v1/workspace/runs/${accepted.run.id}/projection`,
+    });
+    expect(projectionResponse.statusCode, projectionResponse.body).toBe(200);
+    expect(projectionResponse.json()).toMatchObject({
+      schemaVersion: 1, runId: accepted.run.id, status: 'completed',
+    });
+    expect(projectionResponse.body).not.toContain('invocation.output_delta');
+
+    const timelineResponse = await app.inject({
+      method: 'GET', url: `/api/v1/workspace/runs/${accepted.run.id}/timeline?limit=2`,
+    });
+    expect(timelineResponse.statusCode).toBe(200);
+    expect(timelineResponse.json<{ items: unknown[] }>().items.length).toBeLessThanOrEqual(2);
+
     const uiResponse = await app.inject({
-      method: 'GET', url: `/api/v1/runs/${accepted.run.id}/ui-stream?afterSequence=0`,
+      method: 'GET', url: `/api/v1/workspace/runs/${accepted.run.id}/stream?afterSequence=0`,
     });
     expect(uiResponse.statusCode).toBe(200);
-    expect(uiResponse.headers['x-vercel-ai-ui-message-stream']).toBe('v1');
+    expect(uiResponse.headers['x-vercel-ai-ui-message-stream']).toBeUndefined();
     const uiIds = [...uiResponse.body.matchAll(/^id: (\d+)$/gm)].map((match) => Number(match[1]));
     expect(uiIds).toEqual([...uiIds].sort((left, right) => left - right));
-    const uiChunks = [...uiResponse.body.matchAll(/^data: (\{.*\})$/gm)]
-      .map((match) => JSON.parse(match[1]!) as { type: string });
-    expect(uiChunks.some((chunk) => chunk.type === 'text-delta')).toBe(true);
+    const projectionEvents = [...uiResponse.body.matchAll(/^data: (\{.*\})$/gm)]
+      .map((match) => JSON.parse(match[1]!) as { type: string; changes: { type: string }[] });
+    expect(projectionEvents.some((event) => event.changes
+      .some((change) => change.type === 'assistant_draft_appended'))).toBe(true);
+    expect(uiResponse.body).toContain('event: run-ui-projection');
     expect(uiResponse.body).toContain('data: [DONE]');
+    expect(uiResponse.body).not.toContain('invocation.output_delta');
     await app.close();
+
+    const otherEmployeeIdentity = new PostgresDevelopmentIdentity(pool, {
+      ...identityConfig,
+      principalId: principalId(randomUUID()),
+      principalDisplayName: 'Other Employee',
+    });
+    await otherEmployeeIdentity.provision();
+    const privateApp = buildApi({
+      config,
+      database: { check: async () => true },
+      featureFlags: new InMemoryFeatureFlags({ nextArchitecture: true, employeeWorkspace: true }),
+      runApi: {
+        identity: otherEmployeeIdentity, agents, conversations, execution, notifier,
+      },
+      workspaceApi: { identity: otherEmployeeIdentity, conversations, execution },
+    });
+    const privateProjection = await privateApp.inject({
+      method: 'GET', url: `/api/v1/workspace/runs/${accepted.run.id}/projection`,
+    });
+    const unknownProjection = await privateApp.inject({
+      method: 'GET', url: `/api/v1/workspace/runs/${randomUUID()}/projection`,
+    });
+    expect(privateProjection.statusCode).toBe(404);
+    expect(unknownProjection.statusCode).toBe(404);
+    const withoutInstance = (body: string) => {
+      const problem = JSON.parse(body) as Record<string, unknown>;
+      delete problem.instance;
+      return problem;
+    };
+    expect(withoutInstance(privateProjection.body)).toEqual(withoutInstance(unknownProjection.body));
+    await privateApp.close();
 
     const otherIdentity: RequestIdentity = {
       organizationId: organizationId(randomUUID()),

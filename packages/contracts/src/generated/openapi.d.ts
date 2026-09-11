@@ -1272,14 +1272,129 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/v1/runs/{runId}/ui-stream": {
+    "/api/v1/workspace/runs/{runId}/projection": {
         parameters: {
             query?: never;
             header?: never;
             path?: never;
             cookie?: never;
         };
-        /** Present Run Events as an AI SDK UI Message Stream */
+        /** Read a recoverable Run UI Projection Snapshot */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    runId: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Run UI Projection Snapshot */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["RunUiProjectionSnapshot"];
+                    };
+                };
+                /** @description Invalid request */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/problem+json": components["schemas"]["ProblemDetails"];
+                    };
+                };
+                /** @description Not found */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/problem+json": components["schemas"]["ProblemDetails"];
+                    };
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/workspace/runs/{runId}/timeline": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Page backward through safe Run Timeline items */
+        get: {
+            parameters: {
+                query?: {
+                    beforeSequence?: number;
+                    limit?: number;
+                };
+                header?: never;
+                path: {
+                    runId: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Run Timeline page */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["RunUiTimelinePage"];
+                    };
+                };
+                /** @description Invalid request */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/problem+json": components["schemas"]["ProblemDetails"];
+                    };
+                };
+                /** @description Not found */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/problem+json": components["schemas"]["ProblemDetails"];
+                    };
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/workspace/runs/{runId}/stream": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Stream replayable Run UI Projection Events */
         get: {
             parameters: {
                 query?: {
@@ -1295,7 +1410,7 @@ export interface paths {
             };
             requestBody?: never;
             responses: {
-                /** @description AI SDK UI Message Stream derived from canonical Run Events */
+                /** @description SSE stream; each event is a RunUiProjectionEvent */
                 200: {
                     headers: {
                         [name: string]: unknown;
@@ -1622,6 +1737,255 @@ export interface components {
             startedAt?: string;
             /** Format: date-time */
             completedAt?: string;
+        };
+        RunUiProjectionSnapshot: {
+            /** @enum {number} */
+            schemaVersion: 1;
+            /** Format: uuid */
+            runId: string;
+            /** Format: uuid */
+            conversationId: string;
+            /** Format: uuid */
+            triggerMessageId: string;
+            /** @enum {string} */
+            status: "queued" | "working" | "waiting" | "completed" | "failed" | "cancelled";
+            cancellable: boolean;
+            lastSequence: number;
+            draft?: {
+                generation: number;
+                text: string;
+                /** @enum {string} */
+                state: "streaming" | "complete";
+            };
+            /** Format: uuid */
+            assistantMessageId?: string;
+            activeInterrupt?: {
+                /** Format: uuid */
+                id: string;
+                /** @enum {string} */
+                kind: "tool_confirmation" | "tool_outcome_review";
+                title: string;
+                details: {
+                    [key: string]: string;
+                };
+                allowedResponses: ("confirm" | "reject" | "continue_with_uncertainty")[];
+            };
+            timeline: {
+                /** Format: uuid */
+                id: string;
+                sequence: number;
+                /** @enum {string} */
+                category: "status" | "context" | "agent" | "tool" | "approval" | "artifact" | "fallback" | "warning" | "completion";
+                /** @enum {string} */
+                presentation: "run_accepted" | "run_queued" | "run_started" | "run_recovered" | "run_waiting" | "run_resumed" | "context_prepared" | "agent_started" | "model_selected" | "tool_running" | "tool_succeeded" | "tool_denied" | "tool_failed" | "approval_requested" | "approval_resolved" | "artifact_available" | "fallback_selected" | "output_restarted" | "run_completed" | "run_failed" | "run_cancelled" | "activity_updated";
+                /** Format: date-time */
+                occurredAt: string;
+                tool?: {
+                    capability: string;
+                    /** @enum {string} */
+                    status: "running" | "succeeded" | "denied" | "failed" | "confirmation_required" | "requires_review" | "unknown";
+                    title?: string;
+                    details?: {
+                        [key: string]: string;
+                    };
+                };
+                artifact?: {
+                    /** Format: uuid */
+                    artifactId: string;
+                    /** Format: uuid */
+                    artifactVersionId: string;
+                };
+                technical?: {
+                    safeId?: string;
+                    durationMs?: number;
+                    agentDisplayName?: string;
+                    modelDisplayName?: string;
+                    fallback?: boolean;
+                    usage?: {
+                        inputTokens: number;
+                        outputTokens: number;
+                        totalTokens: number;
+                    };
+                    safeErrorCode?: string;
+                    /** Format: uuid */
+                    correlationId?: string;
+                };
+            }[];
+            hasEarlierTimeline: boolean;
+            timelineBeforeSequence?: number;
+            technical: {
+                /** Format: uuid */
+                correlationId: string;
+                /** Format: uuid */
+                agentRevisionId?: string;
+                modelDisplayName?: string;
+                fallback?: boolean;
+                usage?: {
+                    inputTokens: number;
+                    outputTokens: number;
+                    totalTokens: number;
+                };
+                safeErrorCode?: string;
+            };
+        };
+        RunUiTimelinePage: {
+            items: {
+                /** Format: uuid */
+                id: string;
+                sequence: number;
+                /** @enum {string} */
+                category: "status" | "context" | "agent" | "tool" | "approval" | "artifact" | "fallback" | "warning" | "completion";
+                /** @enum {string} */
+                presentation: "run_accepted" | "run_queued" | "run_started" | "run_recovered" | "run_waiting" | "run_resumed" | "context_prepared" | "agent_started" | "model_selected" | "tool_running" | "tool_succeeded" | "tool_denied" | "tool_failed" | "approval_requested" | "approval_resolved" | "artifact_available" | "fallback_selected" | "output_restarted" | "run_completed" | "run_failed" | "run_cancelled" | "activity_updated";
+                /** Format: date-time */
+                occurredAt: string;
+                tool?: {
+                    capability: string;
+                    /** @enum {string} */
+                    status: "running" | "succeeded" | "denied" | "failed" | "confirmation_required" | "requires_review" | "unknown";
+                    title?: string;
+                    details?: {
+                        [key: string]: string;
+                    };
+                };
+                artifact?: {
+                    /** Format: uuid */
+                    artifactId: string;
+                    /** Format: uuid */
+                    artifactVersionId: string;
+                };
+                technical?: {
+                    safeId?: string;
+                    durationMs?: number;
+                    agentDisplayName?: string;
+                    modelDisplayName?: string;
+                    fallback?: boolean;
+                    usage?: {
+                        inputTokens: number;
+                        outputTokens: number;
+                        totalTokens: number;
+                    };
+                    safeErrorCode?: string;
+                    /** Format: uuid */
+                    correlationId?: string;
+                };
+            }[];
+            beforeSequence?: number;
+        };
+        RunUiProjectionEvent: {
+            /** @enum {number} */
+            schemaVersion: 1;
+            /** Format: uuid */
+            eventId: string;
+            /** Format: uuid */
+            runId: string;
+            sequence: number;
+            /** @enum {string} */
+            type: "projection.updated";
+            changes: ({
+                /** @enum {string} */
+                type: "projection_advanced";
+            } | {
+                /** @enum {string} */
+                type: "status_changed";
+                /** @enum {string} */
+                status: "queued" | "working" | "waiting" | "completed" | "failed" | "cancelled";
+                cancellable: boolean;
+            } | {
+                /** @enum {string} */
+                type: "assistant_draft_started";
+                generation: number;
+            } | {
+                /** @enum {string} */
+                type: "assistant_draft_appended";
+                generation: number;
+                text: string;
+            } | {
+                /** @enum {string} */
+                type: "assistant_draft_reset";
+                generation: number;
+                /** @enum {string} */
+                reason: "fallback" | "failure" | "recovery" | "unknown";
+            } | {
+                /** @enum {string} */
+                type: "assistant_draft_completed";
+                generation: number;
+            } | {
+                /** @enum {string} */
+                type: "assistant_draft_cleared";
+                /** @enum {string} */
+                reason: "message_available" | "failed" | "cancelled";
+            } | {
+                /** @enum {string} */
+                type: "timeline_item_upserted";
+                item: {
+                    /** Format: uuid */
+                    id: string;
+                    sequence: number;
+                    /** @enum {string} */
+                    category: "status" | "context" | "agent" | "tool" | "approval" | "artifact" | "fallback" | "warning" | "completion";
+                    /** @enum {string} */
+                    presentation: "run_accepted" | "run_queued" | "run_started" | "run_recovered" | "run_waiting" | "run_resumed" | "context_prepared" | "agent_started" | "model_selected" | "tool_running" | "tool_succeeded" | "tool_denied" | "tool_failed" | "approval_requested" | "approval_resolved" | "artifact_available" | "fallback_selected" | "output_restarted" | "run_completed" | "run_failed" | "run_cancelled" | "activity_updated";
+                    /** Format: date-time */
+                    occurredAt: string;
+                    tool?: {
+                        capability: string;
+                        /** @enum {string} */
+                        status: "running" | "succeeded" | "denied" | "failed" | "confirmation_required" | "requires_review" | "unknown";
+                        title?: string;
+                        details?: {
+                            [key: string]: string;
+                        };
+                    };
+                    artifact?: {
+                        /** Format: uuid */
+                        artifactId: string;
+                        /** Format: uuid */
+                        artifactVersionId: string;
+                    };
+                    technical?: {
+                        safeId?: string;
+                        durationMs?: number;
+                        agentDisplayName?: string;
+                        modelDisplayName?: string;
+                        fallback?: boolean;
+                        usage?: {
+                            inputTokens: number;
+                            outputTokens: number;
+                            totalTokens: number;
+                        };
+                        safeErrorCode?: string;
+                        /** Format: uuid */
+                        correlationId?: string;
+                    };
+                };
+            } | {
+                /** @enum {string} */
+                type: "active_interrupt_changed";
+                interrupt: {
+                    /** Format: uuid */
+                    id: string;
+                    /** @enum {string} */
+                    kind: "tool_confirmation" | "tool_outcome_review";
+                    title: string;
+                    details: {
+                        [key: string]: string;
+                    };
+                    allowedResponses: ("confirm" | "reject" | "continue_with_uncertainty")[];
+                } | null;
+            } | {
+                /** @enum {string} */
+                type: "assistant_message_available";
+                /** Format: uuid */
+                messageId: string;
+            } | {
+                /** @enum {string} */
+                type: "artifact_available";
+                /** Format: uuid */
+                artifactId: string;
+                /** Format: uuid */
+                artifactVersionId: string;
+            })[];
         };
         AcceptRunResponse: {
             /** Format: uuid */
