@@ -1,88 +1,98 @@
 import { describe, expect, it } from 'vitest';
-import type { RunEventContract, RunSnapshotContract } from '@cmaster/contracts';
-import { applyRunEvent, projectionFromSnapshot } from './run-projection.js';
+import type {
+  RunUiProjectionEventContract,
+  RunUiProjectionSnapshotContract,
+} from '@cmaster/contracts';
+import {
+  applyRunUiProjectionEvent,
+  decodeRunUiProjectionEvent,
+  projectionFromSnapshot,
+  replaceProjectionSnapshot,
+} from './run-projection.js';
 
-const snapshot = {
-  status: 'running', cancellable: true, lastSequence: 4,
-} as RunSnapshotContract;
-const event = (sequence: number, type: string): RunEventContract => ({
+const runId = '10000000-0000-4000-8000-000000000001';
+const timelineItem = {
+  id: '10000000-0000-4000-8000-000000000002',
+  sequence: 4,
+  category: 'agent' as const,
+  presentation: 'agent_started' as const,
+  occurredAt: '2026-01-01T00:00:00.000Z',
+};
+const snapshot: RunUiProjectionSnapshotContract = {
   schemaVersion: 1,
-  eventId: `00000000-0000-4000-8000-${String(sequence).padStart(12, '0')}`,
-  runId: '00000000-0000-4000-8000-000000000100',
-  sequence,
-  type,
-  timestamp: '2026-01-01T00:00:00.000Z',
-  correlationId: '00000000-0000-4000-8000-000000000100',
-  data: {},
-});
+  runId,
+  conversationId: '10000000-0000-4000-8000-000000000010',
+  triggerMessageId: '10000000-0000-4000-8000-000000000011',
+  status: 'working',
+  cancellable: true,
+  lastSequence: 4,
+  draft: { generation: 1, text: 'Old draft', state: 'streaming' },
+  timeline: [timelineItem],
+  hasEarlierTimeline: false,
+  technical: { correlationId: runId },
+};
 
-describe('RunProjection', () => {
-  it('ignores duplicate events', () => {
+function event(
+  sequence: number,
+  changes: RunUiProjectionEventContract['changes'],
+): RunUiProjectionEventContract {
+  return {
+    schemaVersion: 1,
+    eventId: `10000000-0000-4000-8000-${String(sequence).padStart(12, '0')}`,
+    runId,
+    sequence,
+    type: 'projection.updated',
+    changes,
+  };
+}
+
+describe('Run UI Projection reducer', () => {
+  it('ignores duplicate delivery and detects a sequence gap', () => {
     const state = projectionFromSnapshot(snapshot);
-    expect(applyRunEvent(state, event(4, 'run.started'))).toBe(state);
+    expect(applyRunUiProjectionEvent(state, event(4, [{ type: 'projection_advanced' }]))).toBe(state);
+    expect(applyRunUiProjectionEvent(state, event(6, [{ type: 'projection_advanced' }])))
+      .toMatchObject({ lastAppliedSequence: 4, hasGap: true, calibrationRequired: true });
   });
 
-  it('detects a sequence gap without applying the event', () => {
-    const state = applyRunEvent(projectionFromSnapshot(snapshot), event(6, 'run.succeeded'));
-    expect(state).toMatchObject({ status: 'running', lastAppliedSequence: 4, hasGap: true });
+  it('discards the previous generation on reset and localizes following deltas', () => {
+    const reset = applyRunUiProjectionEvent(projectionFromSnapshot(snapshot), event(5, [{
+      type: 'assistant_draft_reset', generation: 2, reason: 'fallback',
+    }]));
+    expect(reset.draft).toEqual({ generation: 2, text: '', state: 'streaming' });
+    const appended = applyRunUiProjectionEvent(reset, event(6, [{
+      type: 'assistant_draft_appended', generation: 2, text: 'Replacement',
+    }]));
+    expect(appended.draft?.text).toBe('Replacement');
+    expect(appended.draft?.text).not.toContain('Old draft');
   });
 
-  it('applies ordered terminal events', () => {
-    const state = applyRunEvent(projectionFromSnapshot(snapshot), event(5, 'run.succeeded'));
-    expect(state).toMatchObject({ status: 'succeeded', cancellable: false, lastAppliedSequence: 5 });
-  });
-
-  it('keeps an unknown additive event in the generic timeline', () => {
-    const state = applyRunEvent(projectionFromSnapshot(snapshot), event(5, 'future.event'));
-    expect(state).toMatchObject({ status: 'running', lastAppliedSequence: 5, hasGap: false });
-    expect(state.events[0]?.type).toBe('future.event');
-  });
-
-  it('restores confirmation and uncertain-review actions from a waiting Snapshot', () => {
-    const confirmation = projectionFromSnapshot({
-      ...snapshot,
-      status: 'waiting',
-      activeInterrupt: {
-        id: '00000000-0000-4000-8000-000000000010',
-        kind: 'tool_confirmation',
-        status: 'pending',
-        safeSubjectSummary: { title: 'Confirm HTTPS fetch', details: { host: 'example.test' } },
-        allowedResponses: ['confirm', 'reject'],
-      },
+  it('replaces Draft with immutable Message availability and clears partial terminal output', () => {
+    const delivered = applyRunUiProjectionEvent(projectionFromSnapshot(snapshot), event(5, [
+      { type: 'assistant_message_available', messageId: '10000000-0000-4000-8000-000000000003' },
+      { type: 'assistant_draft_cleared', reason: 'message_available' },
+    ]));
+    expect(delivered).toMatchObject({
+      assistantMessageId: '10000000-0000-4000-8000-000000000003', draft: undefined,
     });
-    expect(confirmation).toMatchObject({
-      status: 'waiting',
-      activeInterrupt: { allowedResponses: ['confirm', 'reject'] },
-    });
-
-    const outcomeReview = projectionFromSnapshot({
-      ...snapshot,
-      status: 'waiting',
-      activeInterrupt: {
-        id: '00000000-0000-4000-8000-000000000011',
-        kind: 'tool_outcome_review',
-        status: 'pending',
-        safeSubjectSummary: { title: 'Review unknown effect', details: {} },
-        allowedResponses: ['continue_with_uncertainty'],
-      },
-    });
-    expect(outcomeReview.activeInterrupt?.allowedResponses)
-      .toEqual(['continue_with_uncertainty']);
+    const failed = applyRunUiProjectionEvent(projectionFromSnapshot(snapshot), event(5, [
+      { type: 'status_changed', status: 'failed', cancellable: false },
+      { type: 'assistant_draft_cleared', reason: 'failed' },
+    ]));
+    expect(failed.draft).toBeUndefined();
   });
 
-  it('projects waiting and resolved Interrupt lifecycle events', () => {
-    const waiting = applyRunEvent(
-      projectionFromSnapshot(snapshot),
-      event(5, 'run.waiting'),
-    );
-    expect(waiting.status).toBe('waiting');
-    const resolved = applyRunEvent(waiting, event(6, 'interrupt.resolved'));
-    expect(resolved.activeInterrupt).toBeUndefined();
-    expect(applyRunEvent(resolved, event(7, 'run.resumed')).status).toBe('queued');
-  });
+  it('calibrates unknown Projection types and replaces state from a fresh Snapshot', () => {
+    const decoded = decodeRunUiProjectionEvent({
+      schemaVersion: 2, runId, sequence: 5, type: 'future.projection', data: { private: 'ignored' },
+    });
+    expect(decoded.kind).toBe('unknown');
+    if (decoded.kind !== 'unknown') throw new Error('Expected unknown Projection event');
+    expect(decoded.safeFallback).toEqual({ sequence: 5 });
 
-  it('stops cancellation once output is ready', () => {
-    const state = applyRunEvent(projectionFromSnapshot(snapshot), event(5, 'invocation.output_ready'));
-    expect(state.cancellable).toBe(false);
+    const stale = { ...projectionFromSnapshot(snapshot), hasGap: true, calibrationRequired: true };
+    const replacement = replaceProjectionSnapshot(stale, { ...snapshot, lastSequence: 8, draft: undefined });
+    expect(replacement).toMatchObject({
+      lastAppliedSequence: 8, hasGap: false, calibrationRequired: false,
+    });
   });
 });

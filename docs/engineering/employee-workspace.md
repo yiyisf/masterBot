@@ -58,7 +58,11 @@ RunUiProjectionEvent
 └── status | draft | timeline | interrupt | message/artifact availability projection
 ```
 
-The Snapshot is derived on demand in Slice 5; no Projection table is added. Recent Timeline is bounded and older items use sequence pagination. A gap causes Snapshot replacement and reconnect from its `lastSequence`. Only one Workspace UI Stream is active for the selected Run.
+The Snapshot is derived on demand in Slice 5; no Projection table is added. The creator-private Browser surface is `GET /api/v1/workspace/runs/{runId}/projection`, with older Timeline pages at `/timeline?beforeSequence=…` and resumable SSE at `/stream?afterSequence=…`. Native EventSource cannot set `Last-Event-ID` for a newly created stream, so the Browser resumes through the equivalent query cursor; the Server also accepts `Last-Event-ID` on capable clients. Recent Timeline is bounded to 100 safe items and older items use an exclusive canonical sequence cursor.
+
+Duplicate or older Projection sequences are ignored. A gap, unknown Projection schema/type, or disconnected stream causes Snapshot replacement and reconnect from its `lastSequence`; failed calibration retries with bounded-delay reconnect rather than continuing from uncertain state. Only one Workspace UI Stream is active for the selected Run, and the Browser does not subscribe to canonical Run Event SSE.
+
+Tool Activity consumes only a CMaster View Model. Generic rendering supports unknown capabilities, keeps Artifact output as ID references, and places only approved identifiers, duration, display names, aggregate usage, safe error codes, Fallback state, and correlation data behind technical disclosure.
 
 Output Delta creates a temporary Assistant Draft. Reset discards the old generation. Only a successfully delivered immutable Assistant Message replaces the Draft in Conversation history; failed/cancelled partial output is not a Message.
 

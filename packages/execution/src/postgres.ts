@@ -29,6 +29,7 @@ import {
   type ResolveInterruptCommand,
   type RunCommandId,
   type RunEventEnvelope,
+  type RunEventPage,
   type RunEventType,
   type RunFailure,
   type RunId,
@@ -862,6 +863,35 @@ export class PostgresExecutionModule implements ExecutionModule {
       [identity.organizationId, runId, afterSequence],
     );
     return result.rows.map(mapEvent);
+  }
+
+  async listEventPage(
+    identity: RequestIdentity,
+    runId: RunId,
+    query: { readonly beforeSequence?: number; readonly limit: number },
+  ): Promise<RunEventPage> {
+    if (!Number.isInteger(query.limit) || query.limit < 1 || query.limit > 100
+      || (query.beforeSequence !== undefined
+        && (!Number.isInteger(query.beforeSequence) || query.beforeSequence < 1))) {
+      throw new InvalidRunCursorError();
+    }
+    await this.getRun(identity, runId);
+    const result = await this.pool.query<EventRow>(
+      `SELECT * FROM (
+         SELECT * FROM run_events
+         WHERE organization_id = $1 AND run_id = $2
+           AND ($3::integer IS NULL OR sequence < $3)
+         ORDER BY sequence DESC LIMIT $4
+       ) recent_events
+       ORDER BY sequence ASC`,
+      [identity.organizationId, runId, query.beforeSequence ?? null, query.limit + 1],
+    );
+    const hasEarlier = result.rows.length > query.limit;
+    const pageRows = hasEarlier ? result.rows.slice(1) : result.rows;
+    return {
+      items: pageRows.map(mapEvent),
+      ...(hasEarlier && pageRows[0] ? { beforeSequence: pageRows[0].sequence } : {}),
+    };
   }
 
   async relayNextOutbox(): Promise<boolean> {

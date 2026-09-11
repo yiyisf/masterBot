@@ -91,6 +91,18 @@ section { margin-top: 36px; }
 .message section { margin-top: 16px; }
 .message .run-attempt-list a { color: var(--accent); }
 .new-content { position: sticky; bottom: 12px; margin: 12px auto 0; padding: 10px 16px; border-radius: 999px; background: var(--accent); color: var(--surface); box-shadow: 0 4px 18px rgb(0 0 0 / 22%); }
+.run-status { display: inline-flex; margin-right: 12px; padding: 5px 10px; border-radius: 999px; background: var(--surface-muted); }
+.assistant-draft { padding: 20px; border: 1px solid var(--accent); border-radius: 14px; background: var(--surface); overflow-wrap: anywhere; }
+.assistant-draft h2 { margin-top: 0; font-size: 1rem; color: var(--accent); }
+.run-timeline { display: grid; gap: 10px; padding: 0; list-style: none; }
+.timeline-item, .tool-activity { padding: 14px; border: 1px solid var(--border); border-radius: 10px; background: var(--surface); }
+.timeline-item p { margin: 0; color: var(--text); }
+.timeline-item time, .tool-capability { color: var(--muted); font-size: .85rem; }
+.tool-activity header { display: flex; justify-content: space-between; gap: 16px; }
+.tool-activity dl, .run-technical dl { display: grid; gap: 8px; }
+.tool-activity dl div, .run-technical dl div { padding-top: 8px; border-top: 1px solid var(--border); }
+.tool-activity details, .run-technical { margin-top: 18px; padding: 12px; border: 1px solid var(--border); border-radius: 10px; background: var(--surface); }
+.tool-activity summary, .run-technical summary { color: var(--accent); cursor: pointer; }
 
 @media (prefers-reduced-motion: reduce) {
   .conversation-thread-scroll { scroll-behavior: auto; }

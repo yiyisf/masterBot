@@ -44,6 +44,7 @@ export {
   type ResolveInterruptCommand,
   type RunCommandId,
   type RunEventEnvelope,
+  type RunEventPage,
   type RunEventType,
   type RunFailure,
   type RunId,

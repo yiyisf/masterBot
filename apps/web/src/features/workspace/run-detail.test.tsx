@@ -7,13 +7,17 @@ const ids = {
   conversation: '10000000-0000-4000-8000-000000000001',
   run: '10000000-0000-4000-8000-000000000002',
 };
-const get = vi.hoisted(() => vi.fn(async (path: string) => path === '/api/v1/runs/{runId}'
+const get = vi.hoisted(() => vi.fn(async (path: string) => path
+  === '/api/v1/workspace/runs/{runId}/projection'
   ? {
       data: {
-        id: '10000000-0000-4000-8000-000000000002',
+        schemaVersion: 1,
+        runId: '10000000-0000-4000-8000-000000000002',
         conversationId: '10000000-0000-4000-8000-000000000001',
-        trigger: { type: 'message', messageId: '10000000-0000-4000-8000-000000000003' },
-        status: 'succeeded', lastSequence: 2,
+        triggerMessageId: '10000000-0000-4000-8000-000000000003',
+        status: 'completed', cancellable: false, lastSequence: 2,
+        timeline: [], hasEarlierTimeline: false,
+        technical: { correlationId: '10000000-0000-4000-8000-000000000002' },
       },
     }
   : { data: { items: [], nextSequence: 0 } }));
@@ -36,11 +40,11 @@ describe('nested Conversation Run detail', () => {
   it('restores the Run in its Conversation and moves focus to the loaded heading', async () => {
     render(<RunDetail conversationId={ids.conversation} runId={ids.run} />);
 
-    const heading = await screen.findByRole('heading', { name: 'succeeded' });
+    const heading = await screen.findByRole('heading', { name: 'completed' });
     await waitFor(() => expect(document.activeElement).toBe(heading));
     expect(screen.getByRole('link', { name: /conversation/i }).getAttribute('href'))
       .toBe(`/workspace/conversations/${ids.conversation}`);
-    expect(get).toHaveBeenCalledWith('/api/v1/runs/{runId}', {
+    expect(get).toHaveBeenCalledWith('/api/v1/workspace/runs/{runId}/projection', {
       params: { path: { runId: ids.run } },
     });
   });

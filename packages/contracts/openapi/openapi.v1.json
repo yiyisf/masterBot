@@ -791,6 +791,1070 @@
           "createdAt"
         ]
       },
+      "RunUiProjectionSnapshot": {
+        "type": "object",
+        "properties": {
+          "schemaVersion": {
+            "type": "number",
+            "enum": [
+              1
+            ]
+          },
+          "runId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "conversationId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "triggerMessageId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "queued",
+              "working",
+              "waiting",
+              "completed",
+              "failed",
+              "cancelled"
+            ]
+          },
+          "cancellable": {
+            "type": "boolean"
+          },
+          "lastSequence": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "draft": {
+            "type": "object",
+            "properties": {
+              "generation": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "text": {
+                "type": "string"
+              },
+              "state": {
+                "type": "string",
+                "enum": [
+                  "streaming",
+                  "complete"
+                ]
+              }
+            },
+            "required": [
+              "generation",
+              "text",
+              "state"
+            ]
+          },
+          "assistantMessageId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "activeInterrupt": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string",
+                "format": "uuid"
+              },
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "tool_confirmation",
+                  "tool_outcome_review"
+                ]
+              },
+              "title": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 200
+              },
+              "details": {
+                "type": "object",
+                "additionalProperties": {
+                  "type": "string",
+                  "maxLength": 500
+                }
+              },
+              "allowedResponses": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "enum": [
+                    "confirm",
+                    "reject",
+                    "continue_with_uncertainty"
+                  ]
+                },
+                "minItems": 1,
+                "maxItems": 3
+              }
+            },
+            "required": [
+              "id",
+              "kind",
+              "title",
+              "details",
+              "allowedResponses"
+            ]
+          },
+          "timeline": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "sequence": {
+                  "type": "integer",
+                  "exclusiveMinimum": 0
+                },
+                "category": {
+                  "type": "string",
+                  "enum": [
+                    "status",
+                    "context",
+                    "agent",
+                    "tool",
+                    "approval",
+                    "artifact",
+                    "fallback",
+                    "warning",
+                    "completion"
+                  ]
+                },
+                "presentation": {
+                  "type": "string",
+                  "enum": [
+                    "run_accepted",
+                    "run_queued",
+                    "run_started",
+                    "run_recovered",
+                    "run_waiting",
+                    "run_resumed",
+                    "context_prepared",
+                    "agent_started",
+                    "model_selected",
+                    "tool_running",
+                    "tool_succeeded",
+                    "tool_denied",
+                    "tool_failed",
+                    "approval_requested",
+                    "approval_resolved",
+                    "artifact_available",
+                    "fallback_selected",
+                    "output_restarted",
+                    "run_completed",
+                    "run_failed",
+                    "run_cancelled",
+                    "activity_updated"
+                  ]
+                },
+                "occurredAt": {
+                  "type": "string",
+                  "format": "date-time"
+                },
+                "tool": {
+                  "type": "object",
+                  "properties": {
+                    "capability": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 200
+                    },
+                    "status": {
+                      "type": "string",
+                      "enum": [
+                        "running",
+                        "succeeded",
+                        "denied",
+                        "failed",
+                        "confirmation_required",
+                        "requires_review",
+                        "unknown"
+                      ]
+                    },
+                    "title": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 200
+                    },
+                    "details": {
+                      "type": "object",
+                      "additionalProperties": {
+                        "type": "string",
+                        "maxLength": 500
+                      }
+                    }
+                  },
+                  "required": [
+                    "capability",
+                    "status"
+                  ]
+                },
+                "artifact": {
+                  "type": "object",
+                  "properties": {
+                    "artifactId": {
+                      "type": "string",
+                      "format": "uuid"
+                    },
+                    "artifactVersionId": {
+                      "type": "string",
+                      "format": "uuid"
+                    }
+                  },
+                  "required": [
+                    "artifactId",
+                    "artifactVersionId"
+                  ]
+                },
+                "technical": {
+                  "type": "object",
+                  "properties": {
+                    "safeId": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 200
+                    },
+                    "durationMs": {
+                      "type": "integer",
+                      "minimum": 0
+                    },
+                    "agentDisplayName": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 200
+                    },
+                    "modelDisplayName": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 200
+                    },
+                    "fallback": {
+                      "type": "boolean"
+                    },
+                    "usage": {
+                      "type": "object",
+                      "properties": {
+                        "inputTokens": {
+                          "type": "integer",
+                          "minimum": 0
+                        },
+                        "outputTokens": {
+                          "type": "integer",
+                          "minimum": 0
+                        },
+                        "totalTokens": {
+                          "type": "integer",
+                          "minimum": 0
+                        }
+                      },
+                      "required": [
+                        "inputTokens",
+                        "outputTokens",
+                        "totalTokens"
+                      ]
+                    },
+                    "safeErrorCode": {
+                      "type": "string",
+                      "pattern": "^[a-z0-9_]{1,100}$/u"
+                    },
+                    "correlationId": {
+                      "type": "string",
+                      "format": "uuid"
+                    }
+                  }
+                }
+              },
+              "required": [
+                "id",
+                "sequence",
+                "category",
+                "presentation",
+                "occurredAt"
+              ]
+            },
+            "maxItems": 100
+          },
+          "hasEarlierTimeline": {
+            "type": "boolean"
+          },
+          "timelineBeforeSequence": {
+            "type": "integer",
+            "exclusiveMinimum": 0
+          },
+          "technical": {
+            "type": "object",
+            "properties": {
+              "correlationId": {
+                "type": "string",
+                "format": "uuid"
+              },
+              "agentRevisionId": {
+                "type": "string",
+                "format": "uuid"
+              },
+              "modelDisplayName": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 200
+              },
+              "fallback": {
+                "type": "boolean"
+              },
+              "usage": {
+                "type": "object",
+                "properties": {
+                  "inputTokens": {
+                    "type": "integer",
+                    "minimum": 0
+                  },
+                  "outputTokens": {
+                    "type": "integer",
+                    "minimum": 0
+                  },
+                  "totalTokens": {
+                    "type": "integer",
+                    "minimum": 0
+                  }
+                },
+                "required": [
+                  "inputTokens",
+                  "outputTokens",
+                  "totalTokens"
+                ]
+              },
+              "safeErrorCode": {
+                "type": "string",
+                "pattern": "^[a-z0-9_]{1,100}$/u"
+              }
+            },
+            "required": [
+              "correlationId"
+            ]
+          }
+        },
+        "required": [
+          "schemaVersion",
+          "runId",
+          "conversationId",
+          "triggerMessageId",
+          "status",
+          "cancellable",
+          "lastSequence",
+          "timeline",
+          "hasEarlierTimeline",
+          "technical"
+        ]
+      },
+      "RunUiTimelinePage": {
+        "type": "object",
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "sequence": {
+                  "type": "integer",
+                  "exclusiveMinimum": 0
+                },
+                "category": {
+                  "type": "string",
+                  "enum": [
+                    "status",
+                    "context",
+                    "agent",
+                    "tool",
+                    "approval",
+                    "artifact",
+                    "fallback",
+                    "warning",
+                    "completion"
+                  ]
+                },
+                "presentation": {
+                  "type": "string",
+                  "enum": [
+                    "run_accepted",
+                    "run_queued",
+                    "run_started",
+                    "run_recovered",
+                    "run_waiting",
+                    "run_resumed",
+                    "context_prepared",
+                    "agent_started",
+                    "model_selected",
+                    "tool_running",
+                    "tool_succeeded",
+                    "tool_denied",
+                    "tool_failed",
+                    "approval_requested",
+                    "approval_resolved",
+                    "artifact_available",
+                    "fallback_selected",
+                    "output_restarted",
+                    "run_completed",
+                    "run_failed",
+                    "run_cancelled",
+                    "activity_updated"
+                  ]
+                },
+                "occurredAt": {
+                  "type": "string",
+                  "format": "date-time"
+                },
+                "tool": {
+                  "type": "object",
+                  "properties": {
+                    "capability": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 200
+                    },
+                    "status": {
+                      "type": "string",
+                      "enum": [
+                        "running",
+                        "succeeded",
+                        "denied",
+                        "failed",
+                        "confirmation_required",
+                        "requires_review",
+                        "unknown"
+                      ]
+                    },
+                    "title": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 200
+                    },
+                    "details": {
+                      "type": "object",
+                      "additionalProperties": {
+                        "type": "string",
+                        "maxLength": 500
+                      }
+                    }
+                  },
+                  "required": [
+                    "capability",
+                    "status"
+                  ]
+                },
+                "artifact": {
+                  "type": "object",
+                  "properties": {
+                    "artifactId": {
+                      "type": "string",
+                      "format": "uuid"
+                    },
+                    "artifactVersionId": {
+                      "type": "string",
+                      "format": "uuid"
+                    }
+                  },
+                  "required": [
+                    "artifactId",
+                    "artifactVersionId"
+                  ]
+                },
+                "technical": {
+                  "type": "object",
+                  "properties": {
+                    "safeId": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 200
+                    },
+                    "durationMs": {
+                      "type": "integer",
+                      "minimum": 0
+                    },
+                    "agentDisplayName": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 200
+                    },
+                    "modelDisplayName": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 200
+                    },
+                    "fallback": {
+                      "type": "boolean"
+                    },
+                    "usage": {
+                      "type": "object",
+                      "properties": {
+                        "inputTokens": {
+                          "type": "integer",
+                          "minimum": 0
+                        },
+                        "outputTokens": {
+                          "type": "integer",
+                          "minimum": 0
+                        },
+                        "totalTokens": {
+                          "type": "integer",
+                          "minimum": 0
+                        }
+                      },
+                      "required": [
+                        "inputTokens",
+                        "outputTokens",
+                        "totalTokens"
+                      ]
+                    },
+                    "safeErrorCode": {
+                      "type": "string",
+                      "pattern": "^[a-z0-9_]{1,100}$/u"
+                    },
+                    "correlationId": {
+                      "type": "string",
+                      "format": "uuid"
+                    }
+                  }
+                }
+              },
+              "required": [
+                "id",
+                "sequence",
+                "category",
+                "presentation",
+                "occurredAt"
+              ]
+            },
+            "maxItems": 100
+          },
+          "beforeSequence": {
+            "type": "integer",
+            "exclusiveMinimum": 0
+          }
+        },
+        "required": [
+          "items"
+        ]
+      },
+      "RunUiProjectionEvent": {
+        "type": "object",
+        "properties": {
+          "schemaVersion": {
+            "type": "number",
+            "enum": [
+              1
+            ]
+          },
+          "eventId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "runId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "sequence": {
+            "type": "integer",
+            "exclusiveMinimum": 0
+          },
+          "type": {
+            "type": "string",
+            "enum": [
+              "projection.updated"
+            ]
+          },
+          "changes": {
+            "type": "array",
+            "items": {
+              "oneOf": [
+                {
+                  "type": "object",
+                  "properties": {
+                    "type": {
+                      "type": "string",
+                      "enum": [
+                        "projection_advanced"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "type"
+                  ]
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "type": {
+                      "type": "string",
+                      "enum": [
+                        "status_changed"
+                      ]
+                    },
+                    "status": {
+                      "type": "string",
+                      "enum": [
+                        "queued",
+                        "working",
+                        "waiting",
+                        "completed",
+                        "failed",
+                        "cancelled"
+                      ]
+                    },
+                    "cancellable": {
+                      "type": "boolean"
+                    }
+                  },
+                  "required": [
+                    "type",
+                    "status",
+                    "cancellable"
+                  ]
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "type": {
+                      "type": "string",
+                      "enum": [
+                        "assistant_draft_started"
+                      ]
+                    },
+                    "generation": {
+                      "type": "integer",
+                      "minimum": 0
+                    }
+                  },
+                  "required": [
+                    "type",
+                    "generation"
+                  ]
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "type": {
+                      "type": "string",
+                      "enum": [
+                        "assistant_draft_appended"
+                      ]
+                    },
+                    "generation": {
+                      "type": "integer",
+                      "minimum": 0
+                    },
+                    "text": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "type",
+                    "generation",
+                    "text"
+                  ]
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "type": {
+                      "type": "string",
+                      "enum": [
+                        "assistant_draft_reset"
+                      ]
+                    },
+                    "generation": {
+                      "type": "integer",
+                      "minimum": 0
+                    },
+                    "reason": {
+                      "type": "string",
+                      "enum": [
+                        "fallback",
+                        "failure",
+                        "recovery",
+                        "unknown"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "type",
+                    "generation",
+                    "reason"
+                  ]
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "type": {
+                      "type": "string",
+                      "enum": [
+                        "assistant_draft_completed"
+                      ]
+                    },
+                    "generation": {
+                      "type": "integer",
+                      "minimum": 0
+                    }
+                  },
+                  "required": [
+                    "type",
+                    "generation"
+                  ]
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "type": {
+                      "type": "string",
+                      "enum": [
+                        "assistant_draft_cleared"
+                      ]
+                    },
+                    "reason": {
+                      "type": "string",
+                      "enum": [
+                        "message_available",
+                        "failed",
+                        "cancelled"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "type",
+                    "reason"
+                  ]
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "type": {
+                      "type": "string",
+                      "enum": [
+                        "timeline_item_upserted"
+                      ]
+                    },
+                    "item": {
+                      "type": "object",
+                      "properties": {
+                        "id": {
+                          "type": "string",
+                          "format": "uuid"
+                        },
+                        "sequence": {
+                          "type": "integer",
+                          "exclusiveMinimum": 0
+                        },
+                        "category": {
+                          "type": "string",
+                          "enum": [
+                            "status",
+                            "context",
+                            "agent",
+                            "tool",
+                            "approval",
+                            "artifact",
+                            "fallback",
+                            "warning",
+                            "completion"
+                          ]
+                        },
+                        "presentation": {
+                          "type": "string",
+                          "enum": [
+                            "run_accepted",
+                            "run_queued",
+                            "run_started",
+                            "run_recovered",
+                            "run_waiting",
+                            "run_resumed",
+                            "context_prepared",
+                            "agent_started",
+                            "model_selected",
+                            "tool_running",
+                            "tool_succeeded",
+                            "tool_denied",
+                            "tool_failed",
+                            "approval_requested",
+                            "approval_resolved",
+                            "artifact_available",
+                            "fallback_selected",
+                            "output_restarted",
+                            "run_completed",
+                            "run_failed",
+                            "run_cancelled",
+                            "activity_updated"
+                          ]
+                        },
+                        "occurredAt": {
+                          "type": "string",
+                          "format": "date-time"
+                        },
+                        "tool": {
+                          "type": "object",
+                          "properties": {
+                            "capability": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 200
+                            },
+                            "status": {
+                              "type": "string",
+                              "enum": [
+                                "running",
+                                "succeeded",
+                                "denied",
+                                "failed",
+                                "confirmation_required",
+                                "requires_review",
+                                "unknown"
+                              ]
+                            },
+                            "title": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 200
+                            },
+                            "details": {
+                              "type": "object",
+                              "additionalProperties": {
+                                "type": "string",
+                                "maxLength": 500
+                              }
+                            }
+                          },
+                          "required": [
+                            "capability",
+                            "status"
+                          ]
+                        },
+                        "artifact": {
+                          "type": "object",
+                          "properties": {
+                            "artifactId": {
+                              "type": "string",
+                              "format": "uuid"
+                            },
+                            "artifactVersionId": {
+                              "type": "string",
+                              "format": "uuid"
+                            }
+                          },
+                          "required": [
+                            "artifactId",
+                            "artifactVersionId"
+                          ]
+                        },
+                        "technical": {
+                          "type": "object",
+                          "properties": {
+                            "safeId": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 200
+                            },
+                            "durationMs": {
+                              "type": "integer",
+                              "minimum": 0
+                            },
+                            "agentDisplayName": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 200
+                            },
+                            "modelDisplayName": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 200
+                            },
+                            "fallback": {
+                              "type": "boolean"
+                            },
+                            "usage": {
+                              "type": "object",
+                              "properties": {
+                                "inputTokens": {
+                                  "type": "integer",
+                                  "minimum": 0
+                                },
+                                "outputTokens": {
+                                  "type": "integer",
+                                  "minimum": 0
+                                },
+                                "totalTokens": {
+                                  "type": "integer",
+                                  "minimum": 0
+                                }
+                              },
+                              "required": [
+                                "inputTokens",
+                                "outputTokens",
+                                "totalTokens"
+                              ]
+                            },
+                            "safeErrorCode": {
+                              "type": "string",
+                              "pattern": "^[a-z0-9_]{1,100}$/u"
+                            },
+                            "correlationId": {
+                              "type": "string",
+                              "format": "uuid"
+                            }
+                          }
+                        }
+                      },
+                      "required": [
+                        "id",
+                        "sequence",
+                        "category",
+                        "presentation",
+                        "occurredAt"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "type",
+                    "item"
+                  ]
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "type": {
+                      "type": "string",
+                      "enum": [
+                        "active_interrupt_changed"
+                      ]
+                    },
+                    "interrupt": {
+                      "type": [
+                        "object",
+                        "null"
+                      ],
+                      "properties": {
+                        "id": {
+                          "type": "string",
+                          "format": "uuid"
+                        },
+                        "kind": {
+                          "type": "string",
+                          "enum": [
+                            "tool_confirmation",
+                            "tool_outcome_review"
+                          ]
+                        },
+                        "title": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 200
+                        },
+                        "details": {
+                          "type": "object",
+                          "additionalProperties": {
+                            "type": "string",
+                            "maxLength": 500
+                          }
+                        },
+                        "allowedResponses": {
+                          "type": "array",
+                          "items": {
+                            "type": "string",
+                            "enum": [
+                              "confirm",
+                              "reject",
+                              "continue_with_uncertainty"
+                            ]
+                          },
+                          "minItems": 1,
+                          "maxItems": 3
+                        }
+                      },
+                      "required": [
+                        "id",
+                        "kind",
+                        "title",
+                        "details",
+                        "allowedResponses"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "type",
+                    "interrupt"
+                  ]
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "type": {
+                      "type": "string",
+                      "enum": [
+                        "assistant_message_available"
+                      ]
+                    },
+                    "messageId": {
+                      "type": "string",
+                      "format": "uuid"
+                    }
+                  },
+                  "required": [
+                    "type",
+                    "messageId"
+                  ]
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "type": {
+                      "type": "string",
+                      "enum": [
+                        "artifact_available"
+                      ]
+                    },
+                    "artifactId": {
+                      "type": "string",
+                      "format": "uuid"
+                    },
+                    "artifactVersionId": {
+                      "type": "string",
+                      "format": "uuid"
+                    }
+                  },
+                  "required": [
+                    "type",
+                    "artifactId",
+                    "artifactVersionId"
+                  ]
+                }
+              ]
+            },
+            "minItems": 1,
+            "maxItems": 5
+          }
+        },
+        "required": [
+          "schemaVersion",
+          "eventId",
+          "runId",
+          "sequence",
+          "type",
+          "changes"
+        ]
+      },
       "AcceptRunResponse": {
         "type": "object",
         "properties": {
@@ -3427,9 +4491,125 @@
         }
       }
     },
-    "/api/v1/runs/{runId}/ui-stream": {
+    "/api/v1/workspace/runs/{runId}/projection": {
       "get": {
-        "summary": "Present Run Events as an AI SDK UI Message Stream",
+        "summary": "Read a recoverable Run UI Projection Snapshot",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "required": true,
+            "name": "runId",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Run UI Projection Snapshot",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RunUiProjectionSnapshot"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/workspace/runs/{runId}/timeline": {
+      "get": {
+        "summary": "Page backward through safe Run Timeline items",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "required": true,
+            "name": "runId",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "type": "integer",
+              "exclusiveMinimum": 0
+            },
+            "required": false,
+            "name": "beforeSequence",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 100,
+              "default": 100
+            },
+            "required": false,
+            "name": "limit",
+            "in": "query"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Run Timeline page",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RunUiTimelinePage"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/workspace/runs/{runId}/stream": {
+      "get": {
+        "summary": "Stream replayable Run UI Projection Events",
         "parameters": [
           {
             "schema": {
@@ -3464,7 +4644,7 @@
         ],
         "responses": {
           "200": {
-            "description": "AI SDK UI Message Stream derived from canonical Run Events",
+            "description": "SSE stream; each event is a RunUiProjectionEvent",
             "content": {
               "text/event-stream": {
                 "schema": {

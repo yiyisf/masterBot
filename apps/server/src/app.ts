@@ -1,7 +1,7 @@
 import { systemStatusSchema } from '@cmaster/contracts';
 import cors from '@fastify/cors';
 import Fastify, { type FastifyInstance } from 'fastify';
-import { registerAiUiPresenter } from './ai-ui-presenter.js';
+import { registerRunUiPresenter } from './run-ui-presenter.js';
 import { registerArtifactApi, type ArtifactApiDependencies } from './artifact-api.js';
 import type { ServerConfig } from './config.js';
 import { EnvironmentFeatureFlags, type FeatureFlags } from './feature-flags.js';
@@ -66,7 +66,9 @@ export function buildApi(dependencies: ApiDependencies): FastifyInstance {
           ? { toolConfirmation: dependencies.toolConfirmationCoordinator }
           : {}),
       });
-      registerAiUiPresenter(app, dependencies.runApi);
+      if (featureFlags.isEnabled('employeeWorkspace')) {
+        registerRunUiPresenter(app, dependencies.runApi);
+      }
     }
 
     app.get('/api/v1/system/status', async () => {

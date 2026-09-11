@@ -55,6 +55,21 @@ export {
   type RunSnapshotContract,
 } from '#internal/runs';
 export {
+  runUiInterruptSchema,
+  runUiProjectionEventSchema,
+  runUiProjectionSnapshotSchema,
+  runUiStatusSchema,
+  runUiTimelineItemSchema,
+  runUiTimelinePageSchema,
+  type RunUiInterruptContract,
+  type RunUiProjectionChangeContract,
+  type RunUiProjectionEventContract,
+  type RunUiProjectionSnapshotContract,
+  type RunUiStatusContract,
+  type RunUiTimelineItemContract,
+  type RunUiTimelinePageContract,
+} from '#internal/run-ui-projection';
+export {
   serverRoleSchema,
   systemStatusSchema,
   type ServerRole,
