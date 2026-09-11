@@ -74,6 +74,7 @@ const agents = new PostgresAgentModule(
 );
 const conversations = new PostgresConversationModule(database.pool);
 const execution = new PostgresExecutionModule(database.pool);
+const approvals = new PostgresApprovalModule(database.pool);
 
 let models: ModelGateway | undefined;
 let artifacts: PostgresArtifactModule | undefined;
@@ -136,7 +137,6 @@ if (config.features.nextArchitecture) {
 }
 if (config.features.toolRuntime) {
   const organizationId = identity.resolveRequest().organizationId;
-  const approvals = new PostgresApprovalModule(database.pool);
   const catalog = new PostgresToolCatalog(database.pool);
   artifacts = config.features.contextArtifacts
     ? new PostgresArtifactModule(database.pool, config.artifactStorageRoot)
@@ -223,7 +223,7 @@ const api = config.role === 'worker' ? undefined : buildApi({
   ...(config.features.nextArchitecture ? {
     runApi: { identity, agents, conversations, execution, notifier },
     ...(config.features.employeeWorkspace
-      ? { workspaceApi: { identity, conversations, execution } }
+      ? { workspaceApi: { identity, conversations, execution, approvals } }
       : {}),
     ...(artifacts ? { artifactApi: { identity, artifacts } } : {}),
     ...(toolConfirmationCoordinator ? { toolConfirmationCoordinator } : {}),

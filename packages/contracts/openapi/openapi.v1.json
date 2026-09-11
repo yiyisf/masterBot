@@ -2990,6 +2990,188 @@
           "activeRunCount",
           "pendingActionCount"
         ]
+      },
+      "PendingInterruptPage": {
+        "type": "object",
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "anyOf": [
+                {
+                  "type": "object",
+                  "properties": {
+                    "conversationId": {
+                      "type": "string",
+                      "format": "uuid"
+                    },
+                    "triggerMessageId": {
+                      "type": "string",
+                      "format": "uuid"
+                    },
+                    "runId": {
+                      "type": "string",
+                      "format": "uuid"
+                    },
+                    "interruptId": {
+                      "type": "string",
+                      "format": "uuid"
+                    },
+                    "createdAt": {
+                      "type": "string",
+                      "format": "date-time"
+                    },
+                    "kind": {
+                      "type": "string",
+                      "enum": [
+                        "employee_confirmation"
+                      ]
+                    },
+                    "decisionStatus": {
+                      "type": "string",
+                      "enum": [
+                        "pending",
+                        "confirmed",
+                        "rejected"
+                      ]
+                    },
+                    "allowedResponses": {
+                      "type": "array",
+                      "items": {
+                        "type": "string",
+                        "enum": [
+                          "confirm",
+                          "reject"
+                        ]
+                      },
+                      "maxItems": 2
+                    },
+                    "approvalSubject": {
+                      "type": "object",
+                      "properties": {
+                        "title": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 200
+                        },
+                        "details": {
+                          "type": "object",
+                          "additionalProperties": {
+                            "type": "string",
+                            "maxLength": 500
+                          }
+                        },
+                        "approvalId": {
+                          "type": "string",
+                          "format": "uuid"
+                        }
+                      },
+                      "required": [
+                        "title",
+                        "details",
+                        "approvalId"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "conversationId",
+                    "triggerMessageId",
+                    "runId",
+                    "interruptId",
+                    "createdAt",
+                    "kind",
+                    "decisionStatus",
+                    "allowedResponses",
+                    "approvalSubject"
+                  ]
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "conversationId": {
+                      "type": "string",
+                      "format": "uuid"
+                    },
+                    "triggerMessageId": {
+                      "type": "string",
+                      "format": "uuid"
+                    },
+                    "runId": {
+                      "type": "string",
+                      "format": "uuid"
+                    },
+                    "interruptId": {
+                      "type": "string",
+                      "format": "uuid"
+                    },
+                    "createdAt": {
+                      "type": "string",
+                      "format": "date-time"
+                    },
+                    "kind": {
+                      "type": "string",
+                      "enum": [
+                        "uncertain_tool_outcome_review"
+                      ]
+                    },
+                    "allowedResponses": {
+                      "type": "array",
+                      "items": {
+                        "type": "string",
+                        "enum": [
+                          "continue_with_uncertainty"
+                        ]
+                      }
+                    },
+                    "subject": {
+                      "type": "object",
+                      "properties": {
+                        "title": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 200
+                        },
+                        "details": {
+                          "type": "object",
+                          "additionalProperties": {
+                            "type": "string",
+                            "maxLength": 500
+                          }
+                        }
+                      },
+                      "required": [
+                        "title",
+                        "details"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "conversationId",
+                    "triggerMessageId",
+                    "runId",
+                    "interruptId",
+                    "createdAt",
+                    "kind",
+                    "allowedResponses",
+                    "subject"
+                  ]
+                }
+              ]
+            },
+            "maxItems": 50
+          },
+          "nextCursor": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "minLength": 1
+          }
+        },
+        "required": [
+          "items",
+          "nextCursor"
+        ]
       }
     },
     "parameters": {}
@@ -3022,6 +3204,65 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/WorkspaceSummary"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Workspace is unavailable",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/workspace/interrupts": {
+      "get": {
+        "summary": "List active Employee Interrupts",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1
+            },
+            "required": false,
+            "name": "cursor",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 50,
+              "default": 20
+            },
+            "required": false,
+            "name": "limit",
+            "in": "query"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Creator-private active Interrupt page",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PendingInterruptPage"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
                 }
               }
             }

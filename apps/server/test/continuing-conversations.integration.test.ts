@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { agentId, agentRevisionId, PostgresAgentModule } from '@cmaster/agents';
 import { commandId, PostgresConversationModule } from '@cmaster/conversations';
 import { PostgresExecutionModule } from '@cmaster/execution';
+import { PostgresApprovalModule } from '@cmaster/governance';
 import { organizationId, PostgresDevelopmentIdentity, principalId } from '@cmaster/identity';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { Pool } from 'pg';
@@ -29,6 +30,7 @@ const agents = new PostgresAgentModule(pool, {
 });
 const conversations = new PostgresConversationModule(pool);
 const execution = new PostgresExecutionModule(pool);
+const approvals = new PostgresApprovalModule(pool);
 const config = loadServerConfig({
   DATABASE_URL: databaseUrl, CMASTER_RUNTIME_ENV: 'test', NEXT_ARCHITECTURE_ENABLED: 'true',
   CMASTER_DEVELOPMENT_IDENTITY_ENABLED: 'true',
@@ -49,7 +51,7 @@ function api(identity: PostgresDevelopmentIdentity) {
     runApi: {
       identity, agents, conversations, execution, notifier: new PollingRunEventNotifier(),
     },
-    workspaceApi: { identity, conversations, execution },
+    workspaceApi: { identity, conversations, execution, approvals },
   });
 }
 

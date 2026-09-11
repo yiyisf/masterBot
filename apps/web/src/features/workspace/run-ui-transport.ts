@@ -42,6 +42,12 @@ export class RunUiProjectionController {
     this.connect();
   }
 
+  async refresh(): Promise<RunProjection | undefined> {
+    this.queue = this.queue.catch(() => undefined).then(() => this.calibrate());
+    await this.queue;
+    return this.state;
+  }
+
   receive(value: unknown): Promise<void> {
     this.queue = this.queue.then(async () => {
       const state = this.state;

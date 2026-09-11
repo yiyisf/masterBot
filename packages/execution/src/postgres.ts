@@ -18,6 +18,7 @@ import {
   type ExecutionModule,
   type ExecutionProgressEvent,
   type ActiveInterrupt,
+  type ActiveRunInterruptPage,
   type InterruptId,
   type InterruptKind,
   type InterruptResponse,
@@ -503,6 +504,60 @@ export class PostgresExecutionModule implements ExecutionModule {
     return {
       activeRunCount: result.rows[0]?.active_run_count ?? 0,
       pendingActionCount: result.rows[0]?.pending_action_count ?? 0,
+    };
+  }
+
+  async listActiveInterrupts(
+    identity: RequestIdentity,
+    query: { readonly cursor?: string; readonly limit: number },
+  ): Promise<ActiveRunInterruptPage> {
+    if (!Number.isInteger(query.limit) || query.limit < 1 || query.limit > 50) {
+      throw new InvalidRunCursorError();
+    }
+    const cursor = query.cursor ? decodeRunCursor(query.cursor) : undefined;
+    const result = await this.pool.query<{
+      id: string;
+      run_id: string;
+      conversation_id: string;
+      trigger_ref: string;
+      kind: InterruptKind;
+      subject_ref: string;
+      safe_subject_summary: ActiveInterrupt['safeSubjectSummary'];
+      allowed_responses: InterruptResponse[];
+      created_at: Date;
+    }>(
+      `SELECT x.id, x.run_id, r.conversation_id, r.trigger_ref, x.kind,
+              x.subject_ref, x.safe_subject_summary, x.allowed_responses, x.created_at
+       FROM execution_interrupts x
+       JOIN runs r ON r.organization_id = x.organization_id AND r.id = x.run_id
+       WHERE x.organization_id = $1 AND r.initiating_principal_id = $2
+         AND x.status = 'pending'
+         AND ($3::timestamptz IS NULL OR (x.created_at, x.id) < ($3::timestamptz, $4::uuid))
+       ORDER BY x.created_at DESC, x.id DESC LIMIT $5`,
+      [identity.organizationId, identity.principalId,
+        cursor?.createdAt ?? null, cursor?.id ?? null, query.limit + 1],
+    );
+    const pageRows = result.rows.slice(0, query.limit);
+    const items = pageRows.map((row) => ({
+      runId: row.run_id as RunId,
+      conversationId: row.conversation_id as ConversationId,
+      triggerMessageId: row.trigger_ref as MessageId,
+      interrupt: {
+        id: row.id as InterruptId,
+        kind: row.kind,
+        status: 'pending' as const,
+        subjectRef: row.subject_ref,
+        safeSubjectSummary: row.safe_subject_summary,
+        allowedResponses: row.allowed_responses,
+      },
+      createdAt: row.created_at,
+    }));
+    const last = pageRows.at(-1);
+    return {
+      items,
+      ...(result.rows.length > query.limit && last
+        ? { nextCursor: encodeRunCursor({ createdAt: last.created_at.toISOString(), id: last.id }) }
+        : {}),
     };
   }
 

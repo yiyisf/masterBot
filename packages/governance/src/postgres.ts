@@ -119,6 +119,22 @@ export class PostgresApprovalModule implements ApprovalModule {
     return mapApproval(approval);
   }
 
+  async listBySubjectRefs(
+    identity: RequestIdentity,
+    subjectRefs: readonly string[],
+  ): Promise<readonly Approval[]> {
+    if (subjectRefs.length === 0) return [];
+    if (subjectRefs.length > 50) throw new RangeError('At most 50 Approval Subject references may be queried');
+    const result = await this.pool.query<ApprovalRow>(
+      `SELECT * FROM approvals
+       WHERE organization_id = $1 AND initiating_principal_id = $2
+         AND subject_ref = ANY($3::uuid[])
+       ORDER BY array_position($3::uuid[], subject_ref), created_at DESC, id DESC`,
+      [identity.organizationId, identity.principalId, subjectRefs],
+    );
+    return result.rows.map(mapApproval);
+  }
+
   async resolve(
     identity: RequestIdentity,
     approvalId: ApprovalId,

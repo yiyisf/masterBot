@@ -624,6 +624,9 @@ describe('PostgresToolCatalog', () => {
       get(identity, approvalId) {
         return postgresApprovals.get(identity, approvalId);
       },
+      listBySubjectRefs(identity, subjectRefs) {
+        return postgresApprovals.listBySubjectRefs(identity, subjectRefs);
+      },
       resolve(identity, approvalId, resolution) {
         return postgresApprovals.resolve(identity, approvalId, resolution);
       },

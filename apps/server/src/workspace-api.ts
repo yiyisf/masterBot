@@ -1,9 +1,11 @@
 import {
+  pendingInterruptPageSchema,
   workspaceConversationPageSchema,
   workspaceSummarySchema,
 } from '@cmaster/contracts';
 import type { ConversationModule } from '@cmaster/conversations';
 import type { ExecutionModule } from '@cmaster/execution';
+import type { ApprovalModule } from '@cmaster/governance';
 import type { IdentityModule } from '@cmaster/identity';
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
@@ -14,8 +16,9 @@ export interface WorkspaceApiDependencies {
   readonly conversations: Pick<ConversationModule, 'list' | 'count'>;
   readonly execution: Pick<
     ExecutionModule,
-    'listConversationActivity' | 'summarizePrincipalActivity'
+    'listConversationActivity' | 'summarizePrincipalActivity' | 'listActiveInterrupts'
   >;
+  readonly approvals: Pick<ApprovalModule, 'listBySubjectRefs'>;
 }
 
 /**
@@ -34,6 +37,73 @@ export function registerWorkspaceApi(
         dependencies.execution.summarizePrincipalActivity(identity),
       ]);
       return reply.send(workspaceSummarySchema.parse({ conversationCount, ...activity }));
+    } catch (error) {
+      return sendRunApiError(error, request, reply);
+    }
+  });
+
+  app.get('/api/v1/workspace/interrupts', async (request, reply) => {
+    try {
+      const query = z.object({
+        cursor: z.string().min(1).optional(),
+        limit: z.coerce.number().int().min(1).max(50).default(20),
+      }).parse(request.query);
+      const identity = dependencies.identity.resolveRequest();
+      const page = await dependencies.execution.listActiveInterrupts(identity, {
+        limit: query.limit,
+        ...(query.cursor === undefined ? {} : { cursor: query.cursor }),
+      });
+      const confirmationRefs = page.items
+        .filter((item) => item.interrupt.kind === 'tool_confirmation')
+        .map((item) => item.interrupt.subjectRef);
+      const approvals = await dependencies.approvals.listBySubjectRefs(identity, confirmationRefs);
+      const approvalBySubjectRef = new Map(
+        approvals.map((approval) => [approval.subject.subjectRef, approval]),
+      );
+      const items = page.items.map((item) => {
+        const common = {
+          conversationId: item.conversationId,
+          triggerMessageId: item.triggerMessageId,
+          runId: item.runId,
+          interruptId: item.interrupt.id,
+          createdAt: item.createdAt.toISOString(),
+        };
+        if (item.interrupt.kind === 'tool_confirmation') {
+          const approval = approvalBySubjectRef.get(item.interrupt.subjectRef);
+          if (!approval) throw new Error('Active Confirmation has no immutable Approval Subject');
+          return {
+            ...common,
+            kind: 'employee_confirmation' as const,
+            decisionStatus: approval.status,
+            allowedResponses: approval.status === 'pending'
+              ? item.interrupt.allowedResponses.filter(
+                  (response): response is 'confirm' | 'reject' => (
+                    response === 'confirm' || response === 'reject'
+                  ),
+                )
+              : [],
+            approvalSubject: {
+              approvalId: approval.id,
+              title: approval.subject.safeSummary.title,
+              details: approval.subject.safeSummary.details,
+            },
+          };
+        }
+        return {
+          ...common,
+          kind: 'uncertain_tool_outcome_review' as const,
+          allowedResponses: item.interrupt.allowedResponses.filter(
+            (response): response is 'continue_with_uncertainty' => (
+              response === 'continue_with_uncertainty'
+            ),
+          ),
+          subject: item.interrupt.safeSubjectSummary,
+        };
+      });
+      return reply.send(pendingInterruptPageSchema.parse({
+        items,
+        nextCursor: page.nextCursor ?? null,
+      }));
     } catch (error) {
       return sendRunApiError(error, request, reply);
     }
