@@ -24,6 +24,8 @@ export {
   runId,
   type AcceptRunCommand,
   type ActiveInterrupt,
+  type ActiveRunInterruptPage,
+  type ActiveRunInterruptSummary,
   type CancelRunResult,
   type ConversationRunActivity,
   type ConversationRunPage,

@@ -85,6 +85,63 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/workspace/interrupts": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List active Employee Interrupts */
+        get: {
+            parameters: {
+                query?: {
+                    cursor?: string;
+                    limit?: number;
+                };
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Creator-private active Interrupt page */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["PendingInterruptPage"];
+                    };
+                };
+                /** @description Invalid request */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/problem+json": components["schemas"]["ProblemDetails"];
+                    };
+                };
+                /** @description Workspace is unavailable */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/problem+json": components["schemas"]["ProblemDetails"];
+                    };
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/workspace/conversations": {
         parameters: {
             query?: never;
@@ -2294,6 +2351,54 @@ export interface components {
             conversationCount: number;
             activeRunCount: number;
             pendingActionCount: number;
+        };
+        PendingInterruptPage: {
+            items: ({
+                /** Format: uuid */
+                conversationId: string;
+                /** Format: uuid */
+                triggerMessageId: string;
+                /** Format: uuid */
+                runId: string;
+                /** Format: uuid */
+                interruptId: string;
+                /** Format: date-time */
+                createdAt: string;
+                /** @enum {string} */
+                kind: "employee_confirmation";
+                /** @enum {string} */
+                decisionStatus: "pending" | "confirmed" | "rejected";
+                allowedResponses: ("confirm" | "reject")[];
+                approvalSubject: {
+                    title: string;
+                    details: {
+                        [key: string]: string;
+                    };
+                    /** Format: uuid */
+                    approvalId: string;
+                };
+            } | {
+                /** Format: uuid */
+                conversationId: string;
+                /** Format: uuid */
+                triggerMessageId: string;
+                /** Format: uuid */
+                runId: string;
+                /** Format: uuid */
+                interruptId: string;
+                /** Format: date-time */
+                createdAt: string;
+                /** @enum {string} */
+                kind: "uncertain_tool_outcome_review";
+                allowedResponses: "continue_with_uncertainty"[];
+                subject: {
+                    title: string;
+                    details: {
+                        [key: string]: string;
+                    };
+                };
+            })[];
+            nextCursor: string | null;
         };
     };
     responses: never;

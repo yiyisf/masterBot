@@ -108,7 +108,11 @@ Slice 5.3 keeps Message pages ascending while loading the newest 50 first and pa
 
 ## Pending interactions
 
-“Pending” is a Presentation aggregation of active Interrupts, not a Domain aggregate. It distinguishes Employee Confirmation from Uncertain Tool Outcome Review. The former confirms/rejects one immutable Approval Subject; the latter can only continue with uncertainty and never relabel or retry the Tool effect. Both use existing Run/Interrupt Commands. Cancel uses one accessible confirmation Dialog and does not promise rollback.
+“Pending” is a Presentation aggregation of active Interrupts, not a Domain aggregate. `GET /api/v1/workspace/interrupts` provides a creator-private, newest-first page with an opaque cursor and exact Conversation, Trigger Message, Run, and Interrupt references. The Employee navigation count and `/workspace/pending` consume this projection; no Pending write path or persisted `PendingAction` exists.
+
+The projection distinguishes Employee Confirmation from Uncertain Tool Outcome Review. The former confirms/rejects one immutable Approval Subject and exposes its recorded decision state while a Run is resuming; the latter can only continue with uncertainty and never relabel or retry the Tool effect. Both Pending and nested Run Detail use the existing Run/Interrupt Commands. Browser response-loss recovery retains one Command ID until an authoritative Interrupt refresh establishes the current state, and does not replace an unknown in-flight decision with its opposite.
+
+Cancel uses one keyboard-contained confirmation Dialog. It distinguishes cancellation, a Tool effect still in flight, and a result generated too late, refreshes the Run UI Projection after every known outcome, and never promises that completed Tool effects are rolled back.
 
 ## Artifacts
 

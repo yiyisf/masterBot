@@ -45,10 +45,12 @@ export interface CommandResult<Value> {
 /**
  * Owns Employee Confirmation records for immutable Approval Subjects.
  * Commands are Organization-scoped and idempotent; conflicting command reuse is rejected.
+ * Subject lookup is bounded and creator-private so Experience Adapters need no Governance table access.
  */
 export interface ApprovalModule {
   request(identity: RequestIdentity, command: RequestApprovalCommand): Promise<CommandResult<Approval>>;
   get(identity: RequestIdentity, approvalId: ApprovalId): Promise<Approval>;
+  listBySubjectRefs(identity: RequestIdentity, subjectRefs: readonly string[]): Promise<readonly Approval[]>;
   resolve(
     identity: RequestIdentity,
     approvalId: ApprovalId,

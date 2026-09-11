@@ -55,6 +55,12 @@ export {
   type RunSnapshotContract,
 } from '#internal/runs';
 export {
+  pendingInterruptPageSchema,
+  pendingInterruptSchema,
+  type PendingInterruptContract,
+  type PendingInterruptPageContract,
+} from '#internal/pending-interactions';
+export {
   runUiInterruptSchema,
   runUiProjectionEventSchema,
   runUiProjectionSnapshotSchema,

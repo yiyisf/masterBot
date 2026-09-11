@@ -75,7 +75,8 @@ export function EmployeeWorkspaceHome() {
       <main className="workspace-home">
         <section className="workspace-stat-grid" aria-label="Workspace activity">
           <article><strong>{summary.data?.activeRunCount ?? 0}</strong><span>{text.active}</span></article>
-          <article><strong>{summary.data?.pendingActionCount ?? 0}</strong><span>{text.pending}</span></article>
+          <article><strong>{summary.data?.pendingActionCount ?? 0}</strong>
+            <Link href="/workspace/pending">{text.pending}</Link></article>
         </section>
         <section aria-labelledby="recent-conversations-title">
           <h2 id="recent-conversations-title">{text.conversations}</h2>

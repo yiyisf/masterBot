@@ -12,6 +12,7 @@ extendZodWithOpenApi(z);
 const artifacts = await import('../src/artifacts.js');
 const conversations = await import('../src/conversations.js');
 const composer = await import('../src/composer.js');
+const pendingInteractions = await import('../src/pending-interactions.js');
 const runs = await import('../src/runs.js');
 const runUiProjection = await import('../src/run-ui-projection.js');
 const workspace = await import('../src/workspace.js');
@@ -49,6 +50,9 @@ const workspaceConversationPage = registry.register(
   'WorkspaceConversationPage', workspace.workspaceConversationPageSchema,
 );
 const workspaceSummary = registry.register('WorkspaceSummary', workspace.workspaceSummarySchema);
+const pendingInterruptPage = registry.register(
+  'PendingInterruptPage', pendingInteractions.pendingInterruptPageSchema,
+);
 
 const idempotencyHeaders = z.object({ 'idempotency-key': z.uuid() });
 const idempotencyReplayHeaders = z.object({ 'Idempotency-Replayed': z.enum(['true', 'false']) });
@@ -70,6 +74,19 @@ registry.registerPath({
   responses: {
     200: { description: 'Private Workspace summary', content: { 'application/json': { schema: workspaceSummary } } },
     404: problemResponse('Workspace is unavailable'),
+  },
+});
+registry.registerPath({
+  method: 'get', path: '/api/v1/workspace/interrupts', summary: 'List active Employee Interrupts',
+  request: {
+    query: z.object({
+      cursor: z.string().min(1).optional(),
+      limit: z.coerce.number().int().min(1).max(50).default(20),
+    }),
+  },
+  responses: {
+    200: { description: 'Creator-private active Interrupt page', content: { 'application/json': { schema: pendingInterruptPage } } },
+    400: problemResponse('Invalid request'), 404: problemResponse('Workspace is unavailable'),
   },
 });
 registry.registerPath({

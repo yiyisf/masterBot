@@ -16,6 +16,7 @@ import {
   RunWorker,
   StaleLeaseError,
 } from '@cmaster/execution';
+import { PostgresApprovalModule } from '@cmaster/governance';
 import {
   organizationId,
   PostgresDevelopmentIdentity,
@@ -51,6 +52,7 @@ const identity = new PostgresDevelopmentIdentity(pool, identityConfig);
 const agents = new PostgresAgentModule(pool, agentConfig);
 const conversations = new PostgresConversationModule(pool);
 const execution = new PostgresExecutionModule(pool);
+const approvals = new PostgresApprovalModule(pool);
 const notifier = new PollingRunEventNotifier();
 const config = loadServerConfig({
   DATABASE_URL: databaseUrl,
@@ -480,7 +482,7 @@ describe('Run Walking Skeleton', () => {
       database: { check: async () => true },
       featureFlags: new InMemoryFeatureFlags({ nextArchitecture: true, employeeWorkspace: true }),
       runApi: { identity, agents, conversations, execution, notifier },
-      workspaceApi: { identity, conversations, execution },
+      workspaceApi: { identity, conversations, execution, approvals },
     });
     const response = await app.inject({
       method: 'GET', url: `/api/v1/runs/${accepted.run.id}/events`,
@@ -539,7 +541,9 @@ describe('Run Walking Skeleton', () => {
       runApi: {
         identity: otherEmployeeIdentity, agents, conversations, execution, notifier,
       },
-      workspaceApi: { identity: otherEmployeeIdentity, conversations, execution },
+      workspaceApi: {
+        identity: otherEmployeeIdentity, conversations, execution, approvals,
+      },
     });
     const privateProjection = await privateApp.inject({
       method: 'GET', url: `/api/v1/workspace/runs/${accepted.run.id}/projection`,

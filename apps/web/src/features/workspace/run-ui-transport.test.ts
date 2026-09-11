@@ -87,6 +87,21 @@ describe('Run UI Projection transport', () => {
     expect(loadSnapshot).toHaveBeenCalledTimes(3);
   });
 
+  it('replaces local state from authority after a governed command', async () => {
+    const onState = vi.fn();
+    const controller = new RunUiProjectionController({
+      loadSnapshot: vi.fn()
+        .mockResolvedValueOnce(snapshot(4))
+        .mockResolvedValueOnce(snapshot(5, 'After decision')),
+      openStream: vi.fn(() => vi.fn()),
+      onState,
+      onUnknown: vi.fn(),
+    });
+    await controller.start(runId);
+    await controller.refresh();
+    expect(onState.mock.calls.at(-1)?.[0].draft?.text).toBe('After decision');
+  });
+
   it('uses a safe unknown fallback and calibrates instead of applying unknown data', async () => {
     const onUnknown = vi.fn();
     const controller = new RunUiProjectionController({

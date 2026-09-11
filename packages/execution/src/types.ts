@@ -247,6 +247,19 @@ export interface RunEventPage {
   readonly beforeSequence?: number;
 }
 
+export interface ActiveRunInterruptSummary {
+  readonly runId: RunId;
+  readonly conversationId: ConversationId;
+  readonly triggerMessageId: MessageId;
+  readonly interrupt: ActiveInterrupt;
+  readonly createdAt: Date;
+}
+
+export interface ActiveRunInterruptPage {
+  readonly items: readonly ActiveRunInterruptSummary[];
+  readonly nextCursor?: string;
+}
+
 /**
  * 串行化 Run cancellation 与 Provider I/O。进程丢失后 Lease 可过期；只有当前持有者可清除
  * boundary，过期持有者不能覆盖后继者。
@@ -266,8 +279,8 @@ export interface ToolExecutionBoundary {
  * Commands are Organization-scoped and idempotent; key reuse with another payload throws
  * RunIdempotencyConflictError. Employee queries require both trusted Organization and initiating
  * Principal; missing and unauthorized resources throw the same RunNotFoundError. Conversation
- * activity queries are bounded by caller-supplied IDs, Conversation Run attempts use an opaque
- * stable cursor, and Principal summary uses indexed scope filters. Event reads are indexed by
+ * activity queries are bounded by caller-supplied IDs; Conversation Run attempts and active
+ * Interrupts use opaque stable cursors; Principal summary uses indexed scope filters. Event reads are indexed by
  * (runId, sequence), return strict ascending order, and are
  * linear in the page read.
  */
@@ -285,6 +298,10 @@ export interface ExecutionModule extends ToolExecutionBoundary {
     conversationIds: readonly ConversationId[],
   ): Promise<readonly ConversationRunActivity[]>;
   summarizePrincipalActivity(identity: RequestIdentity): Promise<PrincipalRunActivity>;
+  listActiveInterrupts(
+    identity: RequestIdentity,
+    query: { readonly cursor?: string; readonly limit: number },
+  ): Promise<ActiveRunInterruptPage>;
   getInterrupt(
     identity: RequestIdentity,
     runId: RunId,

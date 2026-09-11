@@ -9,7 +9,9 @@ export interface RunUiBrowserApi {
   loadSnapshot(runId: string): Promise<RunUiProjectionSnapshotContract>;
   loadTimeline(runId: string, beforeSequence: number): Promise<RunUiTimelinePageContract>;
   openStream(runId: string, afterSequence: number, stream: ProjectionStream): () => void;
-  cancel(runId: string, commandId: string): Promise<void>;
+  cancel(runId: string, commandId: string): Promise<
+    { readonly kind: 'cancelled' | 'tool_effect_in_flight' | 'too_late' }
+  >;
   resolveConfirmation(
     runId: string,
     interruptId: string,
@@ -66,7 +68,12 @@ export function createRunUiBrowserApi(
       const result = await client.POST('/api/v1/runs/{runId}/commands/cancel', {
         params: { path: { runId }, header: { 'idempotency-key': commandId } },
       });
-      requireData(result.data, 'run_cancel_failed');
+      if (result.data) return { kind: 'cancelled' };
+      if (result.error?.code === 'tool_effect_in_flight') {
+        return { kind: 'tool_effect_in_flight' };
+      }
+      if (result.error?.code === 'run_cancellation_too_late') return { kind: 'too_late' };
+      throw new Error('run_cancel_failed');
     },
     async resolveConfirmation(runId, interruptId, commandId, response) {
       const result = await client.POST(

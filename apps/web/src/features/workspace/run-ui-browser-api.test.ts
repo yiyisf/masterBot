@@ -33,6 +33,19 @@ describe('Run UI Browser API', () => {
     expect(close).toHaveBeenCalledTimes(2);
   });
 
+  it('returns authoritative cancellation conflicts for natural recovery copy', async () => {
+    const fetchImplementation = vi.fn(async () => new Response(JSON.stringify({
+      type: 'https://cmaster.dev/problems/tool-effect-in-flight',
+      title: 'Tool effect in flight', status: 409, code: 'tool_effect_in_flight',
+      detail: 'Cancellation is temporarily unavailable.', instance: '/api/v1/runs/example',
+    }), { status: 409, headers: { 'content-type': 'application/problem+json' } }));
+    const apiTypeSafeFetch = fetchImplementation as unknown as typeof globalThis.fetch;
+    const api = createRunUiBrowserApi('https://cmaster.example', apiTypeSafeFetch);
+    await expect(api.cancel(runId, '10000000-0000-4000-8000-000000000002'))
+      .resolves.toEqual({ kind: 'tool_effect_in_flight' });
+    expect(fetchImplementation).toHaveBeenCalledTimes(1);
+  });
+
   it('turns malformed stream data into an unknown value for safe calibration', () => {
     let projectionListener: ((event: MessageEvent) => void) | undefined;
     const source = {
