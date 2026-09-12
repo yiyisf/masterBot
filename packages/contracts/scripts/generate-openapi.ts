@@ -24,6 +24,10 @@ const problem = registry.register('ProblemDetails', problemDetailsSchema);
 registry.register('Artifact', artifacts.artifactSchema);
 const artifactVersion = registry.register('ArtifactVersion', artifacts.artifactVersionSchema);
 const artifactView = registry.register('ArtifactView', artifacts.artifactViewSchema);
+const artifactPage = registry.register('ArtifactPage', artifacts.artifactPageSchema);
+const artifactVersionPage = registry.register(
+  'ArtifactVersionPage', artifacts.artifactVersionPageSchema,
+);
 const conversation = registry.register('Conversation', conversations.conversationSchema);
 const conversationRunPage = registry.register('ConversationRunPage', composer.conversationRunPageSchema);
 const message = registry.register('Message', conversations.messageSchema);
@@ -171,10 +175,38 @@ registry.registerPath({
   responses: { 200: { description: 'Message page', content: { 'application/json': { schema: messagePage } } }, 400: problemResponse('Invalid request'), 404: problemResponse('Not found') },
 });
 registry.registerPath({
+  method: 'get', path: '/api/v1/artifacts', summary: 'Page through private Artifacts',
+  request: {
+    query: z.object({
+      cursor: z.string().min(1).optional(),
+      limit: z.coerce.number().int().min(1).max(50).default(20),
+    }),
+  },
+  responses: {
+    200: { description: 'Private Artifact summary page', content: { 'application/json': { schema: artifactPage } } },
+    400: problemResponse('Invalid request'),
+  },
+});
+registry.registerPath({
   method: 'get', path: '/api/v1/artifacts/{artifactId}', summary: 'Read private Artifact metadata',
   request: { params: idPath('artifactId') },
   responses: {
     200: { description: 'Artifact and immutable Versions', content: { 'application/json': { schema: artifactView } } },
+    400: problemResponse('Invalid request'), 404: problemResponse('Not found'),
+  },
+});
+registry.registerPath({
+  method: 'get', path: '/api/v1/artifacts/{artifactId}/versions',
+  summary: 'Page through immutable Artifact Versions',
+  request: {
+    params: idPath('artifactId'),
+    query: z.object({
+      beforeVersionNumber: z.coerce.number().int().positive().optional(),
+      limit: z.coerce.number().int().min(1).max(50).default(50),
+    }),
+  },
+  responses: {
+    200: { description: 'Private immutable Version page', content: { 'application/json': { schema: artifactVersionPage } } },
     400: problemResponse('Invalid request'), 404: problemResponse('Not found'),
   },
 });
@@ -192,6 +224,7 @@ registry.registerPath({
   summary: 'Read complete or single-range exact Artifact Version content',
   request: {
     params: z.object({ artifactId: z.uuid(), artifactVersionId: z.uuid() }),
+    query: z.object({ disposition: z.enum(['inline', 'attachment']).default('inline') }),
     headers: z.object({ range: z.string().optional() }),
   },
   responses: {

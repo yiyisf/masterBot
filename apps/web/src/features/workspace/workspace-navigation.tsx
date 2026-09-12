@@ -7,8 +7,8 @@ import { useWorkspacePreferences } from './workspace-providers';
 
 const client = createContractClient(process.env.NEXT_PUBLIC_CMASTER_API_URL ?? '');
 const copy = {
-  'zh-CN': { workspace: 'Workspace', pending: '待处理' },
-  'en-US': { workspace: 'Workspace', pending: 'Pending' },
+  'zh-CN': { workspace: 'Workspace', pending: '待处理', artifacts: 'Artifact Library' },
+  'en-US': { workspace: 'Workspace', pending: 'Pending', artifacts: 'Artifact Library' },
 } as const;
 
 export function WorkspaceNavigation() {
@@ -28,6 +28,7 @@ export function WorkspaceNavigation() {
       <Link href="/workspace/pending">
         {text.pending} <span className="navigation-count">{summary.data?.pendingActionCount ?? 0}</span>
       </Link>
+      <Link href="/workspace/artifacts">{text.artifacts}</Link>
     </nav>
   );
 }

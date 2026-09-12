@@ -74,14 +74,15 @@ Artifact 默认由 initiating Principal 私有。metadata、完整内容和 Rang
 
 读取面提供：
 
-- Artifact metadata；
-- 指定 Version metadata；
+- creator-private Artifact Library，使用稳定 opaque cursor，并在 summary 固定 current Artifact Version ID；
+- 有界的不可变 Version metadata 分页与指定 Version metadata；
 - 指定 Version 完整内容；
-- 单一 `bytes=start-end | start- | -suffix` Range。
+- 单一 `bytes=start-end | start- | -suffix` Range；
+- `disposition=attachment` 下载，由 Server 生成安全文件名和媒体扩展名。
 
-合法 Range 返回 206；非法、越界或多区间返回 416。Contract 不暴露 content hash、storage key 或 path。
+合法 Range 返回 206；非法、越界或多区间返回 416。成功内容响应设置 `nosniff`；下载和预览保持相同的单 Range 语义。Contract 不暴露 content hash、storage key 或 path，Browser 不能提交文件名。
 
-Slice 4 只在现有 Run/Message 页面提供安全 Text、Markdown Renderer 和 unknown fallback/download card。Markdown 禁止原始 HTML、脚本和危险链接。完整 Artifact 导航、列表、版本交互与正式视觉体验属于 Slice 5。
+Slice 5 的 Message Artifact Card 只读取有界 metadata。确切 Version 页面在 Employee 主动操作后读取正文；仅 UTF-8 Text/Markdown 可内联，其他类型使用本地化 metadata/download fallback。Markdown 禁止原始 HTML、脚本、远程图片、危险 scheme 和不安全的外链行为。
 
 ## 安全事件与失败
 

@@ -669,6 +669,54 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/artifacts": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Page through private Artifacts */
+        get: {
+            parameters: {
+                query?: {
+                    cursor?: string;
+                    limit?: number;
+                };
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Private Artifact summary page */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ArtifactPage"];
+                    };
+                };
+                /** @description Invalid request */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/problem+json": components["schemas"]["ProblemDetails"];
+                    };
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/artifacts/{artifactId}": {
         parameters: {
             query?: never;
@@ -695,6 +743,65 @@ export interface paths {
                     };
                     content: {
                         "application/json": components["schemas"]["ArtifactView"];
+                    };
+                };
+                /** @description Invalid request */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/problem+json": components["schemas"]["ProblemDetails"];
+                    };
+                };
+                /** @description Not found */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/problem+json": components["schemas"]["ProblemDetails"];
+                    };
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/artifacts/{artifactId}/versions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Page through immutable Artifact Versions */
+        get: {
+            parameters: {
+                query?: {
+                    beforeVersionNumber?: number;
+                    limit?: number;
+                };
+                header?: never;
+                path: {
+                    artifactId: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Private immutable Version page */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ArtifactVersionPage"];
                     };
                 };
                 /** @description Invalid request */
@@ -792,7 +899,9 @@ export interface paths {
         /** Read complete or single-range exact Artifact Version content */
         get: {
             parameters: {
-                query?: never;
+                query?: {
+                    disposition?: "inline" | "attachment";
+                };
                 header?: {
                     range?: string;
                 };
@@ -811,6 +920,8 @@ export interface paths {
                         "content-length": string;
                         "content-type": string;
                         "content-range"?: string;
+                        "content-disposition"?: string;
+                        "x-content-type-options": "nosniff";
                         [name: string]: unknown;
                     };
                     content: {
@@ -825,6 +936,8 @@ export interface paths {
                         "content-length": string;
                         "content-type": string;
                         "content-range"?: string;
+                        "content-disposition"?: string;
+                        "x-content-type-options": "nosniff";
                         [name: string]: unknown;
                     };
                     content: {
@@ -1627,6 +1740,54 @@ export interface components {
                 /** Format: date-time */
                 createdAt: string;
             }[];
+        };
+        ArtifactPage: {
+            items: {
+                artifact: {
+                    /** Format: uuid */
+                    id: string;
+                    title: string;
+                    kind: string;
+                    currentVersionNumber: number;
+                    /** Format: date-time */
+                    createdAt: string;
+                };
+                currentVersion: {
+                    /** Format: uuid */
+                    id: string;
+                    /** Format: uuid */
+                    artifactId: string;
+                    versionNumber: number;
+                    mediaType: string;
+                    sizeBytes: number;
+                    /** Format: date-time */
+                    createdAt: string;
+                };
+            }[];
+            nextCursor: string | null;
+        };
+        ArtifactVersionPage: {
+            artifact: {
+                /** Format: uuid */
+                id: string;
+                title: string;
+                kind: string;
+                currentVersionNumber: number;
+                /** Format: date-time */
+                createdAt: string;
+            };
+            items: {
+                /** Format: uuid */
+                id: string;
+                /** Format: uuid */
+                artifactId: string;
+                versionNumber: number;
+                mediaType: string;
+                sizeBytes: number;
+                /** Format: date-time */
+                createdAt: string;
+            }[];
+            beforeVersionNumber: number | null;
         };
         Conversation: {
             /** Format: uuid */

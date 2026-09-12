@@ -197,6 +197,200 @@
           "versions"
         ]
       },
+      "ArtifactPage": {
+        "type": "object",
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "artifact": {
+                  "type": "object",
+                  "properties": {
+                    "id": {
+                      "type": "string",
+                      "format": "uuid"
+                    },
+                    "title": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 200
+                    },
+                    "kind": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 100
+                    },
+                    "currentVersionNumber": {
+                      "type": "integer",
+                      "exclusiveMinimum": 0
+                    },
+                    "createdAt": {
+                      "type": "string",
+                      "format": "date-time"
+                    }
+                  },
+                  "required": [
+                    "id",
+                    "title",
+                    "kind",
+                    "currentVersionNumber",
+                    "createdAt"
+                  ]
+                },
+                "currentVersion": {
+                  "type": "object",
+                  "properties": {
+                    "id": {
+                      "type": "string",
+                      "format": "uuid"
+                    },
+                    "artifactId": {
+                      "type": "string",
+                      "format": "uuid"
+                    },
+                    "versionNumber": {
+                      "type": "integer",
+                      "exclusiveMinimum": 0
+                    },
+                    "mediaType": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 200
+                    },
+                    "sizeBytes": {
+                      "type": "integer",
+                      "minimum": 0
+                    },
+                    "createdAt": {
+                      "type": "string",
+                      "format": "date-time"
+                    }
+                  },
+                  "required": [
+                    "id",
+                    "artifactId",
+                    "versionNumber",
+                    "mediaType",
+                    "sizeBytes",
+                    "createdAt"
+                  ]
+                }
+              },
+              "required": [
+                "artifact",
+                "currentVersion"
+              ]
+            },
+            "maxItems": 50
+          },
+          "nextCursor": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "minLength": 1
+          }
+        },
+        "required": [
+          "items",
+          "nextCursor"
+        ]
+      },
+      "ArtifactVersionPage": {
+        "type": "object",
+        "properties": {
+          "artifact": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string",
+                "format": "uuid"
+              },
+              "title": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 200
+              },
+              "kind": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 100
+              },
+              "currentVersionNumber": {
+                "type": "integer",
+                "exclusiveMinimum": 0
+              },
+              "createdAt": {
+                "type": "string",
+                "format": "date-time"
+              }
+            },
+            "required": [
+              "id",
+              "title",
+              "kind",
+              "currentVersionNumber",
+              "createdAt"
+            ]
+          },
+          "items": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "artifactId": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "versionNumber": {
+                  "type": "integer",
+                  "exclusiveMinimum": 0
+                },
+                "mediaType": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 200
+                },
+                "sizeBytes": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "createdAt": {
+                  "type": "string",
+                  "format": "date-time"
+                }
+              },
+              "required": [
+                "id",
+                "artifactId",
+                "versionNumber",
+                "mediaType",
+                "sizeBytes",
+                "createdAt"
+              ]
+            },
+            "maxItems": 50
+          },
+          "beforeVersionNumber": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "exclusiveMinimum": 0
+          }
+        },
+        "required": [
+          "artifact",
+          "items",
+          "beforeVersionNumber"
+        ]
+      },
       "Conversation": {
         "type": "object",
         "properties": {
@@ -3910,6 +4104,55 @@
         }
       }
     },
+    "/api/v1/artifacts": {
+      "get": {
+        "summary": "Page through private Artifacts",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1
+            },
+            "required": false,
+            "name": "cursor",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 50,
+              "default": 20
+            },
+            "required": false,
+            "name": "limit",
+            "in": "query"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Private Artifact summary page",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ArtifactPage"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/artifacts/{artifactId}": {
       "get": {
         "summary": "Read private Artifact metadata",
@@ -3931,6 +4174,74 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/ArtifactView"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/artifacts/{artifactId}/versions": {
+      "get": {
+        "summary": "Page through immutable Artifact Versions",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "required": true,
+            "name": "artifactId",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "type": "integer",
+              "exclusiveMinimum": 0
+            },
+            "required": false,
+            "name": "beforeVersionNumber",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 50,
+              "default": 50
+            },
+            "required": false,
+            "name": "limit",
+            "in": "query"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Private immutable Version page",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ArtifactVersionPage"
                 }
               }
             }
@@ -4039,6 +4350,19 @@
           },
           {
             "schema": {
+              "type": "string",
+              "enum": [
+                "inline",
+                "attachment"
+              ],
+              "default": "inline"
+            },
+            "required": false,
+            "name": "disposition",
+            "in": "query"
+          },
+          {
+            "schema": {
               "type": "string"
             },
             "required": false,
@@ -4080,6 +4404,23 @@
                   "pattern": "^bytes \\d+-\\d+\\/\\d+$"
                 },
                 "required": false
+              },
+              "content-disposition": {
+                "schema": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 500
+                },
+                "required": false
+              },
+              "x-content-type-options": {
+                "schema": {
+                  "type": "string",
+                  "enum": [
+                    "nosniff"
+                  ]
+                },
+                "required": true
               }
             },
             "content": {
@@ -4128,6 +4469,23 @@
                   "pattern": "^bytes \\d+-\\d+\\/\\d+$"
                 },
                 "required": false
+              },
+              "content-disposition": {
+                "schema": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 500
+                },
+                "required": false
+              },
+              "x-content-type-options": {
+                "schema": {
+                  "type": "string",
+                  "enum": [
+                    "nosniff"
+                  ]
+                },
+                "required": true
               }
             },
             "content": {
