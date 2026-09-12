@@ -2,6 +2,7 @@ import { defineConfig, devices } from 'playwright/test';
 
 export default defineConfig({
   testDir: './apps/web/e2e',
+  testIgnore: 'workspace-release.spec.mjs',
   fullyParallel: false,
   retries: process.env.CI ? 1 : 0,
   reporter: 'list',

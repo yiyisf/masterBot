@@ -6,8 +6,10 @@ import {
   PostgresConversationModule,
 } from '@cmaster/conversations';
 import {
+  EchoAgentEngine,
   InvalidRunCursorError,
   PostgresExecutionModule,
+  RunWorker,
   runCommandId,
   RunNotFoundError,
 } from '@cmaster/execution';
@@ -50,7 +52,7 @@ beforeAll(async () => {
 afterAll(async () => pool.end());
 
 describe('Composer Command recovery queries', () => {
-  it('recovers each creator-private result and lists every Run attempt', async () => {
+  it('recovers creator-private Commands and distinguishes an explicit retryable Run attempt', async () => {
     const identity = creator.resolveRequest();
     const conversationCommandId = commandId(randomUUID());
     const messageCommandId = commandId(randomUUID());
@@ -67,6 +69,20 @@ describe('Composer Command recovery queries', () => {
     const first = (await execution.acceptRun(identity, {
       commandId: firstRunCommandId, messageId: message.id, conversationId: conversation.id, agent,
     })).value;
+    const runWorker = new RunWorker(
+      execution, conversations, [new EchoAgentEngine()],
+      { workerId: `failed-attempt-${randomUUID()}`, leaseTtlMs: 1_000, maxAttempts: 5 },
+    );
+    expect(await runWorker.relayOne()).toBe(true);
+    const failedLease = await execution.leaseNext(
+      `failed-attempt-${randomUUID()}`, 1_000, 5,
+    );
+    if (!failedLease || failedLease.runId !== first.id) {
+      throw new Error('Expected to lease the first Run attempt');
+    }
+    await execution.fail(failedLease, {
+      code: 'model_failed', message: 'The deterministic attempt failed.', retryable: true,
+    });
     const second = (await execution.acceptRun(identity, {
       commandId: secondRunCommandId, messageId: message.id, conversationId: conversation.id, agent,
     })).value;
@@ -89,7 +105,9 @@ describe('Composer Command recovery queries', () => {
     );
     expect([...firstAttemptPage.items, ...secondAttemptPage.items]).toEqual(
       expect.arrayContaining([
-        expect.objectContaining({ id: first.id, triggerMessageId: message.id }),
+        expect.objectContaining({
+          id: first.id, triggerMessageId: message.id, status: 'failed', retryable: true,
+        }),
         expect.objectContaining({ id: second.id, triggerMessageId: message.id }),
       ]),
     );

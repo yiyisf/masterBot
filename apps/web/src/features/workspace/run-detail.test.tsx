@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
 
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { cleanup, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
@@ -38,7 +39,10 @@ afterEach(() => {
 
 describe('nested Conversation Run detail', () => {
   it('restores the Run in its Conversation and moves focus to the loaded heading', async () => {
-    render(<RunDetail conversationId={ids.conversation} runId={ids.run} />);
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(<QueryClientProvider client={queryClient}>
+      <RunDetail conversationId={ids.conversation} runId={ids.run} />
+    </QueryClientProvider>);
 
     const heading = await screen.findByRole('heading', { name: 'Completed' });
     await waitFor(() => expect(document.activeElement).toBe(heading));

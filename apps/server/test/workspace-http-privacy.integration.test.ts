@@ -82,6 +82,8 @@ describe('Workspace HTTP privacy', () => {
       `/api/v1/conversations/${conversation.id}`,
       `/api/v1/conversations/${conversation.id}/messages`,
       `/api/v1/runs/${run.runId}`,
+      `/api/v1/workspace/runs/${run.runId}/projection`,
+      `/api/v1/workspace/runs/${run.runId}/timeline?beforeSequence=2&limit=20`,
       `/api/v1/conversations/${randomUUID()}`,
       `/api/v1/runs/${randomUUID()}`,
     ]) {
@@ -89,11 +91,27 @@ describe('Workspace HTTP privacy', () => {
       expect(response.statusCode).toBe(404);
       expect(response.json()).toMatchObject({ code: 'resource_not_found' });
     }
-    const forbiddenTrigger = await colleagueApi.inject({
-      method: 'POST', url: '/api/v1/runs', headers: { 'idempotency-key': randomUUID() },
-      payload: { trigger: { type: 'message', messageId: message.id } },
-    });
-    expect(forbiddenTrigger.statusCode).toBe(404);
+    const forbiddenMutations = await Promise.all([
+      colleagueApi.inject({
+        method: 'POST', url: '/api/v1/runs', headers: { 'idempotency-key': randomUUID() },
+        payload: { trigger: { type: 'message', messageId: message.id } },
+      }),
+      colleagueApi.inject({
+        method: 'POST', url: `/api/v1/conversations/${conversation.id}/messages`,
+        headers: { 'idempotency-key': randomUUID() },
+        payload: { parts: [{ type: 'text', text: 'Unauthorized mutation' }] },
+      }),
+      colleagueApi.inject({
+        method: 'PATCH', url: `/api/v1/conversations/${conversation.id}`,
+        headers: { 'idempotency-key': randomUUID() }, payload: { title: 'Unauthorized rename' },
+      }),
+      colleagueApi.inject({
+        method: 'POST', url: `/api/v1/runs/${run.runId}/commands/cancel`,
+        headers: { 'idempotency-key': randomUUID() },
+      }),
+    ]);
+    expect(forbiddenMutations.map((response) => response.statusCode))
+      .toEqual([404, 404, 404, 404]);
 
     const workspace = await colleagueApi.inject({
       method: 'GET', url: '/api/v1/workspace/conversations',
