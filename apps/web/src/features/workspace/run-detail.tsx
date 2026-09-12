@@ -24,7 +24,12 @@ type DisplayMessage = MessageContract;
 const MessageHistory = memo(function MessageHistory({
   messages,
   heading,
-}: Readonly<{ messages: readonly DisplayMessage[]; heading: string }>) {
+  locale,
+}: Readonly<{
+  messages: readonly DisplayMessage[];
+  heading: string;
+  locale: 'zh-CN' | 'en-US';
+}>) {
   return (
     <section>
       <h2>{heading}</h2>
@@ -35,7 +40,8 @@ const MessageHistory = memo(function MessageHistory({
             ? <p key={`text-${index}`}>{part.text}</p>
             : (
               <ArtifactCard key={part.artifactVersionId} apiUrl={apiUrl}
-                artifactId={part.artifactId} artifactVersionId={part.artifactVersionId} />
+                artifactId={part.artifactId} artifactVersionId={part.artifactVersionId}
+                locale={locale} />
             ))}
         </article>
       ))}
@@ -237,7 +243,7 @@ export function RunDetail({
         <RunActivity projection={displayProjection} locale={locale}
           unknownActivity={unknownActivity} commands={runActivityCommands} />
       ) : null}
-      <MessageHistory messages={messages} heading={text.messages} />
+      <MessageHistory messages={messages} heading={text.messages} locale={locale} />
       {unknownActivity ? <p className="sr-only" role="status">{text.synchronized}</p> : null}
     </main>
   );

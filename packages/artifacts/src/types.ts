@@ -69,10 +69,50 @@ export interface ArtifactView {
   readonly versions: readonly ArtifactVersion[];
 }
 
+export interface ArtifactSummary {
+  readonly artifact: Artifact;
+  readonly currentVersion: ArtifactVersion;
+}
+
+export interface ArtifactPage {
+  readonly items: readonly ArtifactSummary[];
+  readonly nextCursor?: string;
+}
+
+export interface ListArtifactsQuery {
+  readonly identity: RequestIdentity;
+  readonly cursor?: string;
+  readonly limit: number;
+}
+
+export interface ListArtifactVersionsQuery {
+  readonly identity: RequestIdentity;
+  readonly artifactId: ArtifactId;
+  readonly beforeVersionNumber?: number;
+  readonly limit: number;
+}
+
+export interface ArtifactVersionPage {
+  readonly artifact: Artifact;
+  readonly items: readonly ArtifactVersion[];
+  readonly beforeVersionNumber?: number;
+}
+
 export type ArtifactByteRangeRequest =
   | { readonly kind: 'closed'; readonly start: number; readonly endInclusive: number }
   | { readonly kind: 'open_ended'; readonly start: number }
   | { readonly kind: 'suffix'; readonly length: number };
+
+export interface GetArtifactVersionQuery {
+  readonly identity: RequestIdentity;
+  readonly artifactId: ArtifactId;
+  readonly artifactVersionId: ArtifactVersionId;
+}
+
+export interface ArtifactVersionView {
+  readonly artifact: Artifact;
+  readonly version: ArtifactVersion;
+}
 
 export interface OpenArtifactVersionQuery {
   readonly identity: RequestIdentity;
@@ -93,7 +133,10 @@ export interface OpenedArtifactContent {
 export interface ArtifactModule {
   create(command: CreateArtifactCommand): Promise<ArtifactCreateResult>;
   createVersion(command: CreateArtifactVersionCommand): Promise<ArtifactCreateResult>;
+  list(query: ListArtifactsQuery): Promise<ArtifactPage>;
+  listVersions(query: ListArtifactVersionsQuery): Promise<ArtifactVersionPage>;
   get(query: GetArtifactQuery): Promise<ArtifactView>;
+  getVersion(query: GetArtifactVersionQuery): Promise<ArtifactVersionView>;
   open(query: OpenArtifactVersionQuery): Promise<OpenedArtifactContent>;
 }
 
@@ -101,6 +144,7 @@ export class ArtifactInputInvalidError extends Error {}
 export class ArtifactIdempotencyConflictError extends Error {}
 export class ArtifactNotFoundError extends Error {}
 export class ArtifactRangeNotSatisfiableError extends Error {}
+export class InvalidArtifactCursorError extends Error {}
 
 export function artifactId(value: string): ArtifactId {
   return value as ArtifactId;

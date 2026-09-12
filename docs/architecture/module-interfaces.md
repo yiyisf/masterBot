@@ -200,8 +200,10 @@ interface ArtifactModule {
   create(command: CreateArtifact): Promise<ArtifactCreateResult>;
   createVersion(command: CreateArtifactVersion): Promise<Artifact>;
   get(query: GetArtifact): Promise<ArtifactView>;
+  getVersion(query: GetArtifactVersion): Promise<ArtifactVersionView>;
   open(query: OpenArtifactVersion): Promise<ArtifactContent>;
   list(query: ListArtifacts): Promise<Page<ArtifactSummary>>;
+  listVersions(query: ListArtifactVersions): Promise<Page<ArtifactVersion>>;
 }
 ```
 

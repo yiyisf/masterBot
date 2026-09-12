@@ -17,11 +17,15 @@ export function createContractClient(
 export async function readArtifactVersionContent(
   baseUrl: string,
   reference: { artifactId: string; artifactVersionId: string },
+  fetchImplementation: typeof globalThis.fetch = globalThis.fetch,
 ): Promise<string> {
-  const client = createContractClient(baseUrl);
+  const client = createContractClient(baseUrl, fetchImplementation);
   const result = await client.GET(
     '/api/v1/artifacts/{artifactId}/versions/{artifactVersionId}/content',
-    { params: { path: reference, header: {} } },
+    {
+      params: { path: reference, query: { disposition: 'inline' }, header: {} },
+      parseAs: 'text',
+    },
   );
   if (result.data === undefined) throw new Error('Artifact content could not be read');
   return result.data;

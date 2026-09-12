@@ -15,9 +15,13 @@ export function MarkdownArtifactRenderer({ content }: { content: string }) {
         components={{
           a({ href, children }) {
             const safeHref = safeArtifactLink(href);
-            return safeHref
-              ? <a href={safeHref} rel="noopener noreferrer">{children}</a>
-              : <span>{children}</span>;
+            if (!safeHref) return <span>{children}</span>;
+            const external = /^(?:https?:)?\/\//iu.test(safeHref);
+            return external
+              ? <a href={safeHref} target="_blank" rel="noopener noreferrer">
+                  {children} <span className="sr-only">(opens in a new tab)</span>
+                </a>
+              : <a href={safeHref}>{children}</a>;
           },
           img({ alt }) {
             return <span>{alt ?? 'Image omitted'}</span>;
@@ -28,10 +32,17 @@ export function MarkdownArtifactRenderer({ content }: { content: string }) {
   );
 }
 
-export function UnknownArtifactRenderer({ downloadUrl }: { downloadUrl: string }) {
+export function UnknownArtifactRenderer({
+  downloadUrl,
+  locale = 'en-US',
+}: {
+  downloadUrl: string;
+  locale?: 'zh-CN' | 'en-US';
+}) {
   return (
     <p className="artifact-content artifact-content-fallback">
-      Preview unavailable. <a href={downloadUrl} download>Download exact Version</a>
+      {locale === 'zh-CN' ? '此类型不支持内联预览。' : 'Inline preview is unavailable for this type.'}{' '}
+      <a href={downloadUrl}>{locale === 'zh-CN' ? '下载确切 Version' : 'Download exact Version'}</a>
     </p>
   );
 }

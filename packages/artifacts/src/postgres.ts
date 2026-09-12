@@ -7,18 +7,25 @@ import {
   ArtifactInputInvalidError,
   ArtifactNotFoundError,
   ArtifactRangeNotSatisfiableError,
+  InvalidArtifactCursorError,
   type Artifact,
   type ArtifactContentId,
   type ArtifactCreateResult,
   type ArtifactId,
   type ArtifactModule,
+  type ArtifactPage,
   type ArtifactSourceToolCallId,
   type ArtifactVersion,
   type ArtifactVersionId,
   type ArtifactView,
+  type ArtifactVersionPage,
+  type ArtifactVersionView,
   type CreateArtifactCommand,
+  type ListArtifactsQuery,
+  type ListArtifactVersionsQuery,
   type CreateArtifactVersionCommand,
   type GetArtifactQuery,
+  type GetArtifactVersionQuery,
   type OpenArtifactVersionQuery,
   type OpenedArtifactContent,
 } from './types.js';
@@ -49,6 +56,18 @@ interface VersionRow {
 interface ArtifactViewRow extends ArtifactRow {
   version_id: string;
   version_artifact_id: string;
+  content_id: string;
+  version_number: number;
+  media_type: ArtifactVersion['mediaType'];
+  size_bytes: number;
+  created_by_invocation_id: string;
+  source_tool_call_id: string;
+  source_request_hash: string;
+  version_created_at: Date;
+}
+
+interface ArtifactListRow extends ArtifactRow {
+  version_id: string;
   content_id: string;
   version_number: number;
   media_type: ArtifactVersion['mediaType'];
@@ -160,6 +179,33 @@ async function findBySource(
     },
     version: row,
   };
+}
+
+const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu;
+
+function encodeArtifactCursor(cursor: { readonly createdAt: string; readonly id: string }): string {
+  return Buffer.from(JSON.stringify(cursor), 'utf8').toString('base64url');
+}
+
+function isCanonicalDateTime(value: string): boolean {
+  const parsed = new Date(value);
+  return !Number.isNaN(parsed.valueOf()) && parsed.toISOString() === value;
+}
+
+function decodeArtifactCursor(value: string): { readonly createdAt: string; readonly id: string } {
+  try {
+    const parsed: unknown = JSON.parse(Buffer.from(value, 'base64url').toString('utf8'));
+    if (!parsed || typeof parsed !== 'object'
+      || !('createdAt' in parsed) || typeof parsed.createdAt !== 'string'
+      || !isCanonicalDateTime(parsed.createdAt)
+      || !('id' in parsed) || typeof parsed.id !== 'string' || !uuidPattern.test(parsed.id)) {
+      throw new InvalidArtifactCursorError();
+    }
+    return { createdAt: parsed.createdAt, id: parsed.id };
+  } catch (error) {
+    if (error instanceof InvalidArtifactCursorError) throw error;
+    throw new InvalidArtifactCursorError();
+  }
 }
 
 function resolveRange(
@@ -318,6 +364,101 @@ export class PostgresArtifactModule implements ArtifactModule {
     }
   }
 
+  async list(query: ListArtifactsQuery): Promise<ArtifactPage> {
+    if (!Number.isInteger(query.limit) || query.limit < 1 || query.limit > 50) {
+      throw new InvalidArtifactCursorError();
+    }
+    const cursor = query.cursor ? decodeArtifactCursor(query.cursor) : undefined;
+    const found = await this.pool.query<ArtifactListRow>(
+      `SELECT a.*, v.id AS version_id, v.content_id, v.version_number,
+              c.media_type, c.size_bytes, v.created_by_invocation_id,
+              v.source_tool_call_id, v.source_request_hash,
+              v.created_at AS version_created_at
+       FROM artifacts a
+       JOIN artifact_versions v
+         ON v.organization_id = a.organization_id AND v.artifact_id = a.id
+        AND v.version_number = a.current_version_number
+       JOIN artifact_contents c
+         ON c.organization_id = v.organization_id AND c.id = v.content_id
+       WHERE a.organization_id = $1 AND a.created_for_principal_id = $2
+         AND ($3::timestamptz IS NULL OR (a.created_at, a.id) < ($3::timestamptz, $4::uuid))
+       ORDER BY a.created_at DESC, a.id DESC LIMIT $5`,
+      [query.identity.organizationId, query.identity.principalId,
+        cursor?.createdAt ?? null, cursor?.id ?? null, query.limit + 1],
+    );
+    const pageRows = found.rows.slice(0, query.limit);
+    const items = pageRows.map((row) => ({
+      artifact: mapArtifact(row),
+      currentVersion: mapVersion({
+        id: row.version_id,
+        artifact_id: row.id,
+        content_id: row.content_id,
+        version_number: row.version_number,
+        media_type: row.media_type,
+        size_bytes: row.size_bytes,
+        created_by_invocation_id: row.created_by_invocation_id,
+        source_tool_call_id: row.source_tool_call_id,
+        source_request_hash: row.source_request_hash,
+        created_at: row.version_created_at,
+      }),
+    }));
+    const last = pageRows.at(-1);
+    return {
+      items,
+      ...(found.rows.length > query.limit && last
+        ? { nextCursor: encodeArtifactCursor({
+            createdAt: last.created_at.toISOString(), id: last.id,
+          }) }
+        : {}),
+    };
+  }
+
+  async listVersions(query: ListArtifactVersionsQuery): Promise<ArtifactVersionPage> {
+    if (!Number.isInteger(query.limit) || query.limit < 1 || query.limit > 50
+      || (query.beforeVersionNumber !== undefined
+        && (!Number.isInteger(query.beforeVersionNumber) || query.beforeVersionNumber < 1))) {
+      throw new InvalidArtifactCursorError();
+    }
+    const client = await this.pool.connect();
+    try {
+      await client.query('BEGIN');
+      const artifactResult = await client.query<ArtifactRow>(
+        `SELECT * FROM artifacts
+         WHERE organization_id = $1 AND id = $2 AND created_for_principal_id = $3
+         FOR SHARE`,
+        [query.identity.organizationId, query.artifactId, query.identity.principalId],
+      );
+      const artifact = artifactResult.rows[0];
+      if (!artifact) throw new ArtifactNotFoundError();
+      const versions = await client.query<VersionRow>(
+        `SELECT v.*, c.media_type, c.size_bytes
+         FROM artifact_versions v
+         JOIN artifact_contents c
+           ON c.organization_id = v.organization_id AND c.id = v.content_id
+         WHERE v.organization_id = $1 AND v.artifact_id = $2
+           AND ($3::integer IS NULL OR v.version_number < $3)
+         ORDER BY v.version_number DESC LIMIT $4`,
+        [query.identity.organizationId, query.artifactId,
+          query.beforeVersionNumber ?? null, query.limit + 1],
+      );
+      await client.query('COMMIT');
+      const pageRows = versions.rows.slice(0, query.limit);
+      const last = pageRows.at(-1);
+      return {
+        artifact: mapArtifact(artifact),
+        items: pageRows.map(mapVersion),
+        ...(versions.rows.length > query.limit && last
+          ? { beforeVersionNumber: last.version_number }
+          : {}),
+      };
+    } catch (error) {
+      await client.query('ROLLBACK');
+      throw error;
+    } finally {
+      client.release();
+    }
+  }
+
   async get(query: GetArtifactQuery): Promise<ArtifactView> {
     const found = await this.pool.query<ArtifactViewRow>(
       `SELECT a.*,
@@ -350,6 +491,42 @@ export class PostgresArtifactModule implements ArtifactModule {
         source_request_hash: row.source_request_hash,
         created_at: row.version_created_at,
       })),
+    };
+  }
+
+  async getVersion(query: GetArtifactVersionQuery): Promise<ArtifactVersionView> {
+    const found = await this.pool.query<ArtifactViewRow>(
+      `SELECT a.*,
+         v.id AS version_id, v.artifact_id AS version_artifact_id,
+         v.content_id, v.version_number, c.media_type, c.size_bytes,
+         v.created_by_invocation_id, v.source_tool_call_id, v.source_request_hash,
+         v.created_at AS version_created_at
+       FROM artifacts a
+       JOIN artifact_versions v
+         ON v.organization_id = a.organization_id AND v.artifact_id = a.id
+       JOIN artifact_contents c
+         ON c.organization_id = v.organization_id AND c.id = v.content_id
+       WHERE a.organization_id = $1 AND a.id = $2 AND v.id = $3
+         AND a.created_for_principal_id = $4`,
+      [query.identity.organizationId, query.artifactId, query.artifactVersionId,
+        query.identity.principalId],
+    );
+    const row = found.rows[0];
+    if (!row) throw new ArtifactNotFoundError();
+    return {
+      artifact: mapArtifact(row),
+      version: mapVersion({
+        id: row.version_id,
+        artifact_id: row.version_artifact_id,
+        content_id: row.content_id,
+        version_number: row.version_number,
+        media_type: row.media_type,
+        size_bytes: row.size_bytes,
+        created_by_invocation_id: row.created_by_invocation_id,
+        source_tool_call_id: row.source_tool_call_id,
+        source_request_hash: row.source_request_hash,
+        created_at: row.version_created_at,
+      }),
     };
   }
 

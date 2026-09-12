@@ -116,9 +116,13 @@ Cancel uses one keyboard-contained confirmation Dialog. It distinguishes cancell
 
 ## Artifacts
 
-The Library lists only Artifacts readable by the trusted Principal. Every preview/download URL fixes `artifactId + artifactVersionId`; a current version is resolved to an exact ID before navigation. Message cards are compact and do not eagerly fetch content.
+The Library lists only Artifacts readable by the trusted Principal through `GET /api/v1/artifacts`, ordered newest-first with an opaque `(createdAt, id)` cursor. Every summary resolves the current Version to an exact `artifactVersionId` before navigation. Immutable Version metadata uses a separate bounded, newest-first page. Exact-Version routes are `/workspace/artifacts/{artifactId}/versions/{artifactVersionId}`; switching Versions changes that URL and historical Versions are explicitly labelled.
 
-Supported inline preview is limited to UTF-8 plain text and Markdown. Raw HTML, scripts, remote images, and dangerous links remain disabled. Other media types use metadata/download Fallback. Preview and download read the same Version; attachment disposition and sanitized filename are controlled by the Server, with `nosniff` and existing single-range behavior.
+Message cards fetch only bounded Artifact and exact-Version metadata. Preview navigation records a per-tab Workspace Focus origin; desktop renders the exact route as a Library detail panel, mobile renders the same route full-page, and close returns to the originating Library or Conversation control. Artifact content is fetched only after an explicit preview command.
+
+Supported inline preview is limited to UTF-8 plain text and Markdown with approved GFM. Raw HTML, scripts, remote images, dangerous schemes, and unsafe external-link behavior remain disabled. PDF, Office, image, audio/video, HTML, JSON/CSV specialized views, archives, arbitrary `text/*`, and unknown types use a localized metadata/download Fallback.
+
+Preview and download always read the same `artifactId + artifactVersionId`. `?disposition=attachment` is the only Browser-controlled download option; the Server derives a bounded sanitized title-based filename and media extension, adds UTF-8 filename metadata and `X-Content-Type-Options: nosniff`, and preserves complete, closed, open-ended, and suffix single-range behavior. Browser input cannot choose a filename or storage path.
 
 ## Presentation and content design
 

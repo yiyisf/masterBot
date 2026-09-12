@@ -1,5 +1,7 @@
 import {
   artifactContentHeadersSchema,
+  artifactPageSchema,
+  artifactVersionPageSchema,
   artifactVersionSchema,
   artifactViewSchema,
   problemDetailsSchema,
@@ -8,8 +10,10 @@ import {
 import {
   ArtifactNotFoundError,
   ArtifactRangeNotSatisfiableError,
+  InvalidArtifactCursorError,
   artifactId,
   artifactVersionId,
+  type Artifact,
   type ArtifactByteRangeRequest,
   type ArtifactModule,
   type ArtifactVersion,
@@ -21,7 +25,17 @@ import type { RequestIdentitySource } from './governed-agent-tools.js';
 
 export interface ArtifactApiDependencies {
   identity: RequestIdentitySource;
-  artifacts: Pick<ArtifactModule, 'get' | 'open'>;
+  artifacts: Pick<ArtifactModule, 'get' | 'getVersion' | 'list' | 'listVersions' | 'open'>;
+}
+
+function artifactContract(artifact: Artifact) {
+  return {
+    id: artifact.id,
+    title: artifact.title,
+    kind: artifact.kind,
+    currentVersionNumber: artifact.currentVersionNumber,
+    createdAt: artifact.createdAt.toISOString(),
+  };
 }
 
 function versionContract(version: ArtifactVersion) {
@@ -58,6 +72,31 @@ function parseRange(value: string | undefined): ArtifactByteRangeRequest | undef
     start: rangeInteger(startText, true),
     endInclusive: rangeInteger(endText, true),
   };
+}
+
+function downloadExtension(mediaType: string): string {
+  const normalized = mediaType.split(';', 1)[0]?.trim().toLowerCase();
+  const known: Readonly<Record<string, string>> = {
+    'text/plain': '.txt', 'text/markdown': '.md', 'application/pdf': '.pdf',
+    'application/json': '.json', 'text/csv': '.csv', 'text/html': '.html',
+    'image/png': '.png', 'image/jpeg': '.jpg', 'image/gif': '.gif',
+    'audio/mpeg': '.mp3', 'video/mp4': '.mp4', 'application/zip': '.zip',
+  };
+  return normalized ? known[normalized] ?? '.bin' : '.bin';
+}
+
+function downloadDisposition(title: string, mediaType: string): string {
+  const extension = downloadExtension(mediaType);
+  const unicodeBase = Array.from(title.normalize('NFC').replace(/[\u0000-\u001f\u007f/\\]/gu, '_'))
+    .slice(0, 32).join('').replace(/^[.\s]+|[.\s]+$/gu, '') || 'artifact';
+  const asciiBase = unicodeBase.normalize('NFKD').replace(/[^\x20-\x7e]/gu, '')
+    .replace(/[^A-Za-z0-9._-]+/gu, '-').replace(/^[.-]+|[.-]+$/gu, '') || 'artifact';
+  const unicodeName = `${unicodeBase}${extension}`;
+  const asciiName = `${asciiBase}${extension}`;
+  const encodedName = encodeURIComponent(unicodeName).replace(/[!'()*]/gu, (character) => (
+    `%${character.charCodeAt(0).toString(16).toUpperCase()}`
+  ));
+  return `attachment; filename="${asciiName}"; filename*=UTF-8''${encodedName}`;
 }
 
 async function bytes(content: AsyncIterable<Uint8Array>): Promise<Buffer> {
@@ -112,18 +151,37 @@ export function registerArtifactApi(
     dependencies.artifacts.get({ identity, artifactId: artifactId(artifactIdValue) })
   );
 
+  app.get('/api/v1/artifacts', async (request, reply) => {
+    try {
+      const query = z.object({
+        cursor: z.string().min(1).optional(),
+        limit: z.coerce.number().int().min(1).max(50).default(20),
+      }).parse(request.query);
+      const page = await dependencies.artifacts.list({
+        identity: dependencies.identity.resolveRequest(), limit: query.limit,
+        ...(query.cursor === undefined ? {} : { cursor: query.cursor }),
+      });
+      return reply.send(artifactPageSchema.parse({
+        items: page.items.map((item) => ({
+          artifact: artifactContract(item.artifact),
+          currentVersion: versionContract(item.currentVersion),
+        })),
+        nextCursor: page.nextCursor ?? null,
+      }));
+    } catch (error) {
+      if (error instanceof InvalidArtifactCursorError || error instanceof z.ZodError) {
+        return invalidRequest(request, reply);
+      }
+      throw error;
+    }
+  });
+
   app.get('/api/v1/artifacts/:artifactId', async (request, reply) => {
     try {
       const path = pathSchema.parse(request.params);
       const found = await view(dependencies.identity.resolveRequest(), path.artifactId);
       return reply.send(artifactViewSchema.parse({
-        artifact: {
-          id: found.artifact.id,
-          title: found.artifact.title,
-          kind: found.artifact.kind,
-          currentVersionNumber: found.artifact.currentVersionNumber,
-          createdAt: found.artifact.createdAt.toISOString(),
-        },
+        artifact: artifactContract(found.artifact),
         versions: found.versions.map(versionContract),
       }));
     } catch (error) {
@@ -133,13 +191,42 @@ export function registerArtifactApi(
     }
   });
 
+  app.get('/api/v1/artifacts/:artifactId/versions', async (request, reply) => {
+    try {
+      const path = pathSchema.parse(request.params);
+      const query = z.object({
+        beforeVersionNumber: z.coerce.number().int().positive().optional(),
+        limit: z.coerce.number().int().min(1).max(50).default(50),
+      }).parse(request.query);
+      const page = await dependencies.artifacts.listVersions({
+        identity: dependencies.identity.resolveRequest(),
+        artifactId: artifactId(path.artifactId), limit: query.limit,
+        ...(query.beforeVersionNumber === undefined
+          ? {} : { beforeVersionNumber: query.beforeVersionNumber }),
+      });
+      return reply.send(artifactVersionPageSchema.parse({
+        artifact: artifactContract(page.artifact),
+        items: page.items.map(versionContract),
+        beforeVersionNumber: page.beforeVersionNumber ?? null,
+      }));
+    } catch (error) {
+      if (error instanceof ArtifactNotFoundError) return notFound(request, reply);
+      if (error instanceof InvalidArtifactCursorError || error instanceof z.ZodError) {
+        return invalidRequest(request, reply);
+      }
+      throw error;
+    }
+  });
+
   app.get('/api/v1/artifacts/:artifactId/versions/:artifactVersionId', async (request, reply) => {
     try {
       const path = versionPathSchema.parse(request.params);
-      const found = await view(dependencies.identity.resolveRequest(), path.artifactId);
-      const version = found.versions.find((candidate) => candidate.id === path.artifactVersionId);
-      if (!version) throw new ArtifactNotFoundError();
-      return reply.send(versionContract(version));
+      const found = await dependencies.artifacts.getVersion({
+        identity: dependencies.identity.resolveRequest(),
+        artifactId: artifactId(path.artifactId),
+        artifactVersionId: artifactVersionId(path.artifactVersionId),
+      });
+      return reply.send(versionContract(found.version));
     } catch (error) {
       if (error instanceof ArtifactNotFoundError) return notFound(request, reply);
       if (error instanceof z.ZodError) return invalidRequest(request, reply);
@@ -151,11 +238,16 @@ export function registerArtifactApi(
     let totalSizeBytes: number | undefined;
     try {
       const path = versionPathSchema.parse(request.params);
+      const query = z.object({
+        disposition: z.enum(['inline', 'attachment']).default('inline'),
+      }).parse(request.query);
       const identity = dependencies.identity.resolveRequest();
-      const found = await view(identity, path.artifactId);
-      const version = found.versions.find((candidate) => candidate.id === path.artifactVersionId);
-      if (!version) throw new ArtifactNotFoundError();
-      totalSizeBytes = version.sizeBytes;
+      const found = await dependencies.artifacts.getVersion({
+        identity,
+        artifactId: artifactId(path.artifactId),
+        artifactVersionId: artifactVersionId(path.artifactVersionId),
+      });
+      totalSizeBytes = found.version.sizeBytes;
       const range = parseRange(typeof request.headers.range === 'string'
         ? request.headers.range
         : undefined);
@@ -173,6 +265,10 @@ export function registerArtifactApi(
         ...(opened.range ? {
           'content-range': `bytes ${opened.range.start}-${opened.range.endInclusive}/${opened.totalSizeBytes}`,
         } : {}),
+        ...(query.disposition === 'attachment' ? {
+          'content-disposition': downloadDisposition(found.artifact.title, opened.mediaType),
+        } : {}),
+        'x-content-type-options': 'nosniff',
       });
       for (const [name, value] of Object.entries(headers)) {
         if (value !== undefined) reply.header(name, value);

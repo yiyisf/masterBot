@@ -29,5 +29,7 @@ describe('Employee Workspace navigation', () => {
     render(<WorkspaceProviders><WorkspaceNavigation /></WorkspaceProviders>);
     const pending = await screen.findByRole('link', { name: 'Pending 3' });
     expect(pending.getAttribute('href')).toBe('/workspace/pending');
+    expect(screen.getByRole('link', { name: 'Artifact Library' }).getAttribute('href'))
+      .toBe('/workspace/artifacts');
   });
 });
