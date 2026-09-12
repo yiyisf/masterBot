@@ -74,8 +74,8 @@ function ArtifactVersionDetail({
   const selected = exact.data;
 
   useEffect(() => {
-    if (selected) headingRef.current?.focus();
-  }, [selected]);
+    if (selected && artifact) headingRef.current?.focus();
+  }, [artifact, selected]);
 
   async function preview(): Promise<void> {
     if (!selected || previewing) return;

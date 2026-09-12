@@ -1,8 +1,5 @@
-import { createRequire } from 'node:module';
 import { expect, test } from 'playwright/test';
-
-const require = createRequire(import.meta.url);
-const axePath = require.resolve('axe-core/axe.min.js');
+import { expectNoAxeViolations } from './axe.mjs';
 
 const ids = {
   conversation: '10000000-0000-4000-8000-000000000001',
@@ -126,19 +123,6 @@ async function mockWorkspace(page) {
       body: JSON.stringify(body),
     });
   });
-}
-
-async function expectNoAxeViolations(page) {
-  await page.addScriptTag({ path: axePath });
-  const violations = await page.evaluate(async () => {
-    const result = await globalThis.axe.run(document, {
-      runOnly: { type: 'tag', values: ['wcag2a', 'wcag2aa', 'wcag21aa', 'wcag22aa'] },
-    });
-    return result.violations.map(({ id, impact, nodes }) => ({
-      id, impact, targets: nodes.map((node) => node.target),
-    }));
-  });
-  expect(violations).toEqual([]);
 }
 
 test.beforeEach(async ({ page }) => {

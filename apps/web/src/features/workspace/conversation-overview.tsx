@@ -276,6 +276,9 @@ export function ConversationOverview({
     );
     try {
       const completed = await coordinator.submit(conversationId, draft);
+      await queryClient.invalidateQueries({
+        queryKey: ['conversation', conversationId, 'runs'],
+      });
       router.push(`/workspace/conversations/${conversationId}/runs/${completed.runId}`);
       coordinator.acknowledge();
     } catch {
@@ -295,6 +298,9 @@ export function ConversationOverview({
     );
     try {
       const completed = await coordinator.runAgain(conversationId, messageId);
+      await queryClient.invalidateQueries({
+        queryKey: ['conversation', conversationId, 'runs'],
+      });
       router.push(`/workspace/conversations/${conversationId}/runs/${completed.runId}`);
       coordinator.acknowledge();
     } catch {
@@ -302,8 +308,8 @@ export function ConversationOverview({
       setComposerFeedback(text.runAgainFailed);
     }
   }, [
-    conversationId, operation, router, runControlsUnavailable, submissionApi,
-    submissionStore, text.runAgainFailed,
+    conversationId, operation, queryClient, router, runControlsUnavailable,
+    submissionApi, submissionStore, text.runAgainFailed,
   ]);
 
   const failed = conversation.isError || messages.isError || runs.isError;

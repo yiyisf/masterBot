@@ -1,6 +1,7 @@
 'use client';
 
 import { type MessageContract } from '@cmaster/contracts';
+import { useQueryClient } from '@tanstack/react-query';
 import Link from 'next/link';
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ArtifactCard } from '../artifacts/artifact-card';
@@ -72,6 +73,7 @@ export function RunDetail({
   const controllerRef = useRef<RunUiProjectionController | undefined>(undefined);
   const cancelCommandIdRef = useRef<string | undefined>(undefined);
   const { locale } = useWorkspacePreferences();
+  const queryClient = useQueryClient();
   const text = copy[locale];
   const projectionApi = useMemo(() => createRunUiBrowserApi(apiUrl), []);
   const conversationApi = useMemo(() => createConversationBrowserApi(apiUrl), []);
@@ -130,6 +132,14 @@ export function RunDetail({
   const triggerMessageId = projection?.triggerMessageId;
   const assistantMessageId = projection?.assistantMessageId;
   const projectionRunId = projection?.runId;
+  useEffect(() => {
+    if (embedded && assistantMessageId) {
+      void queryClient.invalidateQueries({
+        queryKey: ['conversation', conversationId, 'messages'],
+      });
+    }
+  }, [assistantMessageId, conversationId, embedded, queryClient]);
+
   useEffect(() => {
     if (embedded || !triggerMessageId) return;
     // 只在权威 Projection 表明 Message 可能变化时刷新持久历史。

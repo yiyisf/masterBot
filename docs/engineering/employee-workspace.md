@@ -86,8 +86,8 @@ Read-only Experience projections are separated by page need rather than one mega
 GET /api/v1/workspace/summary
 GET /api/v1/workspace/conversations
 GET /api/v1/workspace/conversations/{conversationId}
-GET /api/v1/workspace/pending-actions
-GET /api/v1/workspace/artifacts
+GET /api/v1/workspace/interrupts
+GET /api/v1/artifacts
 GET /api/v1/workspace/runs/{runId}/projection
 GET /api/v1/workspace/runs/{runId}/stream
 ```
@@ -143,6 +143,24 @@ Performance fixtures cover 1,000 loaded Messages and 2,000 Timeline items. Compl
 ## Safe observability
 
 Slice 5 defines a typed `ClientObservability` seam with a no-op default. Runtime validation permits only approved feature-count, duration, reconnect/gap-result, safe-code, fallback-kind, Web Vital, and validated correlation-ID payloads; unknown keys and out-of-range values are dropped. It excludes Message/Draft/title/preview, Artifact title/body/hash, Tool input, Approval details, Provider errors, DOM, screenshots, and keystrokes. Exporter exceptions are isolated from product behavior. Slice 6 may send approved metrics through a same-origin intake to an internal OpenTelemetry Collector; Browser never holds Collector credentials.
+
+## Release verification
+
+`npm run next:test:release-browser` is the production-shaped Slice 5 gate. It requires an already migrated, empty `DATABASE_URL`, starts a local deterministic OpenAI-compatible provider, the real `api + worker` Server on port 3113, and a same-origin Next.js Workspace on port 3114. It does not use Browser API mocks.
+
+The Browser journey deliberately loses the first Run acceptance response after the Server commits it, then verifies Command reconciliation reaches the one accepted Run. It observes a partial Draft, refreshes into the same Run and Draft, verifies `Last-Event-ID` replay ordering, continues the same Conversation through a second Run, observes real Tool Activity, and previews/downloads the immutable Artifact Version attached to the final Assistant Message. The final home projection verifies the derived title, preview, and completed activity. The deterministic provider and Artifact content are test fixtures only and never run in production.
+
+The release evidence is completed by the existing public-seam suites:
+
+- `config.test.ts` and `app.test.ts`: complete prerequisite validation and disabled-route behavior.
+- `composer-recovery.integration.test.ts`: stable per-operation identities and explicit same-Trigger Run attempts.
+- `run-ui-transport.test.ts`: duplicate suppression, sequence-gap Snapshot replacement, and reconnect cursor calibration.
+- `run-walking-skeleton.integration.test.ts`, `model-runtime.integration.test.ts`, and `tool-runtime.integration.test.ts`: Lease/Checkpoint recovery and no blind retry of unknown effects.
+- `pending-interactions.integration.test.ts`, `governed-tool-loop.integration.test.ts`, and responsive Browser scenarios: Confirmation, Uncertain Outcome, and cancellation semantics.
+- Workspace, Run, Pending, Artifact, and HTTP privacy integration suites: creator-private same-/cross-Organization behavior with indistinguishable not-found results.
+- renderer, long-list, observability, boundary, Contract generation, Playwright/axe, and development-smoke suites: safe fallback, bounded rendering, content-free telemetry, dependency ownership, and presentation gates.
+
+CI runs responsive mocked Browser presentation tests before migration, migrates a fresh PostgreSQL 17 service, runs the real release Browser journey, and then runs all PostgreSQL integration tests. The obsolete `/workspace/runs/{runId}` route remains absent; exact Run Detail exists only beneath its Conversation.
 
 ## Delivery
 

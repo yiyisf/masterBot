@@ -86,5 +86,8 @@ jobs:
       - name: Migrate PostgreSQL
         run: npm run next:db:migrate
 
+      - name: Test complete Workspace against PostgreSQL
+        run: npm run next:test:release-browser
+
       - name: Test PostgreSQL integration
         run: npm run next:test:integration

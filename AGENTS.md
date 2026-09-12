@@ -194,6 +194,9 @@ npm run next:test:integration
 # Playwright + axe 响应式 Browser Test（自动启动隔离的 Next.js）
 npm run next:test:browser
 
+# 完整 Workspace Release Browser Test（需要已迁移的空 DATABASE_URL）
+npm run next:test:release-browser
+
 # 显式真实模型 Smoke Eval（无凭据时 skip）
 npm run next:eval:model-smoke
 
