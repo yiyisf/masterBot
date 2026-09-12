@@ -134,13 +134,15 @@ Preview and download always read the same `artifactId + artifactVersionId`. `?di
 
 ## Accessibility and performance
 
-WCAG 2.2 AA is a merge gate. Core flows are keyboard complete; route/Dialog/Composer focus is deterministic; status is not color-only; stream announcements are throttled; reduced motion is respected. Playwright and axe cover desktop and mobile-core routes.
+WCAG 2.2 AA is a merge gate. Core flows are keyboard complete; route/Dialog/Composer focus is deterministic; status is not color-only; stream announcements describe Run state rather than token-level Draft changes; and reduced motion disables smooth scrolling and non-essential animation. Desktop keeps navigation, Conversation Thread, and exact Run Detail together. Tablet uses a collapsible navigation and fixed, labelled Run/Artifact detail sheet. Mobile hides background Conversation context on exact detail routes, uses one content column, and fixes the primary navigation to the viewport bottom.
 
-Performance fixtures cover 1,000 loaded Messages and 2,000 Timeline items. Completed Message rows do not rerender per Output Delta; Draft and Timeline use localized subscriptions; virtualization retains semantic order and focused-item overscan. Production SLOs remain Slice 6 work.
+Performance fixtures cover 1,000 loaded Messages and 2,000 Timeline items. Completed Message rows are memoized and Run attempts are indexed once, so unrelated UI updates do not rebuild them. Draft and Timeline stay outside those completed rows. Timeline mounts at most a 100-item ordered window, exposes total-position semantics and explicit earlier/later controls, and overscans the focused row across append updates. Production SLOs remain Slice 6 work.
+
+`npm run next:test:browser` starts an isolated flagged Next.js server and runs Playwright with Chromium device profiles. The scenarios exercise desktop/tablet composition, mobile send and governed work, exact Artifact preview/download, route and dialog Focus, bilingual preferences, light/dark/system themes, reduced motion, and axe WCAG 2.2 A/AA checks.
 
 ## Safe observability
 
-Slice 5 defines a typed `ClientObservability` seam with a no-op default. It excludes Message/Draft/title/preview, Artifact title/body/hash, Tool input, Approval details, DOM, screenshots, and keystrokes. Slice 6 may send approved metrics through a same-origin intake to an internal OpenTelemetry Collector; Browser never holds Collector credentials, and telemetry failure never changes business behavior.
+Slice 5 defines a typed `ClientObservability` seam with a no-op default. Runtime validation permits only approved feature-count, duration, reconnect/gap-result, safe-code, fallback-kind, Web Vital, and validated correlation-ID payloads; unknown keys and out-of-range values are dropped. It excludes Message/Draft/title/preview, Artifact title/body/hash, Tool input, Approval details, Provider errors, DOM, screenshots, and keystrokes. Exporter exceptions are isolated from product behavior. Slice 6 may send approved metrics through a same-origin intake to an internal OpenTelemetry Collector; Browser never holds Collector credentials.
 
 ## Delivery
 

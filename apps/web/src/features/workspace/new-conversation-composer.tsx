@@ -20,7 +20,7 @@ const copy = {
     messageSaved: 'Message 已保存，但 Run 尚未创建。你可以继续创建同一个 Run。',
     conversationSaved: 'Conversation 已保存，Message 尚未保存。你可以继续完成发送。',
     failed: '暂时无法完成发送。已保存的进度和内容仍保留在当前标签页。',
-    locked: '恢复期间内容保持不变，以便复用同一操作标识。', back: '返回工作区',
+    locked: '恢复期间内容保持不变，以便复用同一操作标识。', back: '返回工作区', employee: 'Employee',
   },
   'en-US': {
     eyebrow: 'New conversation', title: 'Start a piece of work', description: 'The conversation is saved only when you first send.',
@@ -29,7 +29,7 @@ const copy = {
     messageSaved: 'The message was saved, but its run was not created. You can continue creating the same run.',
     conversationSaved: 'The conversation was saved, but its message was not. You can continue sending it.',
     failed: 'Sending could not be completed. Saved progress and content remain in this browser tab.',
-    locked: 'Content stays unchanged during recovery so the same operation identities can be reused.', back: 'Back to workspace',
+    locked: 'Content stays unchanged during recovery so the same operation identities can be reused.', back: 'Back to workspace', employee: 'Employee',
   },
 } as const;
 
@@ -53,7 +53,7 @@ export function NewConversationComposer() {
     const recoveredOperation = store.loadOperation();
     if (recoveredOperation?.conversationId && recoveredOperation.runId) {
       router.replace(
-        `/workspace/conversations/${recoveredOperation.conversationId}?run=${recoveredOperation.runId}`,
+        `/workspace/conversations/${recoveredOperation.conversationId}/runs/${recoveredOperation.runId}`,
       );
       store.clearOperation();
       return;
@@ -90,7 +90,9 @@ export function NewConversationComposer() {
     );
     try {
       const completed = await coordinator.submit(draft);
-      router.replace(`/workspace/conversations/${completed.conversationId}?run=${completed.runId}`);
+      router.replace(
+        `/workspace/conversations/${completed.conversationId}/runs/${completed.runId}`,
+      );
       coordinator.acknowledgeNavigation();
     } catch {
       const saved = store.loadOperation();
@@ -109,7 +111,7 @@ export function NewConversationComposer() {
       <p>{text.description}</p>
       {operation?.messageId ? (
         <article className="message saved-message" aria-label={text.messageSaved}>
-          <strong>Employee</strong>
+          <strong>{text.employee}</strong>
           <p>{draft}</p>
           <small>{text.messageSaved}</small>
         </article>
@@ -123,6 +125,7 @@ export function NewConversationComposer() {
           overLimit,
           placeholder: text.placeholder,
           sendLabel: submitting ? text.sending : operation ? text.continue : text.send,
+          focusOnMount: true,
         }}
         commands={{ onChange: changeDraft, onSubmit: () => void submit() }}
       />

@@ -2,7 +2,7 @@
 
 import { useInfiniteQuery, useQueryClient } from '@tanstack/react-query';
 import Link from 'next/link';
-import { useCallback, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { GovernedInterruptCard } from './governed-interrupt-card';
 import { createPendingBrowserApi } from './pending-browser-api';
 import {
@@ -50,6 +50,9 @@ export function PendingWorkspace() {
   });
   const items = pending.data?.pages.flatMap((page) => page.items) ?? [];
 
+  useEffect(() => { headingRef.current?.focus(); }, []);
+  useEffect(() => { if (feedback) statusRef.current?.focus(); }, [feedback]);
+
   const refresh = useCallback(async (item: ResolvableInterrupt) => {
     const refreshed = await pending.refetch();
     await Promise.all([
@@ -66,7 +69,7 @@ export function PendingWorkspace() {
     api: commandApi,
     refresh,
     operations,
-    createCommandId: crypto.randomUUID,
+    createCommandId: () => crypto.randomUUID(),
   }), [commandApi, operations, refresh]);
 
   const resolve = useCallback(async (
@@ -74,10 +77,7 @@ export function PendingWorkspace() {
     response: PendingResponse,
   ) => {
     const result = await coordinator.resolve(item, response);
-    if (result.kind === 'handled') {
-      setFeedback(text.handled);
-      setTimeout(() => statusRef.current?.focus(), 0);
-    }
+    if (result.kind === 'handled') setFeedback(text.handled);
     return result;
   }, [coordinator, text.handled]);
 

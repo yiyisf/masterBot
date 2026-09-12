@@ -12,6 +12,7 @@ export interface PromptInputViewModel {
   readonly overLimit: boolean;
   readonly placeholder: string;
   readonly sendLabel: string;
+  readonly focusOnMount?: boolean;
 }
 
 export interface PromptInputCommands {
@@ -48,6 +49,7 @@ export function PromptInput({
       <textarea
         id="conversation-draft"
         aria-describedby="composer-feedback"
+        autoFocus={viewModel.focusOnMount}
         disabled={viewModel.disabled}
         readOnly={viewModel.readOnly}
         maxLength={32 * 1024 + 1}

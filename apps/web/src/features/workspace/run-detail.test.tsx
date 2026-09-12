@@ -40,7 +40,7 @@ describe('nested Conversation Run detail', () => {
   it('restores the Run in its Conversation and moves focus to the loaded heading', async () => {
     render(<RunDetail conversationId={ids.conversation} runId={ids.run} />);
 
-    const heading = await screen.findByRole('heading', { name: 'completed' });
+    const heading = await screen.findByRole('heading', { name: 'Completed' });
     await waitFor(() => expect(document.activeElement).toBe(heading));
     expect(screen.getByRole('link', { name: /conversation/i }).getAttribute('href'))
       .toBe(`/workspace/conversations/${ids.conversation}`);

@@ -35,12 +35,13 @@ export interface ArtifactCardState {
 const copy = {
   'zh-CN': {
     version: 'Version', historical: '历史 Version', preview: '预览确切 Version',
-    download: '下载确切 Version', loading: '正在加载 Artifact…', error: '无法读取这个 Artifact。',
+    download: '下载确切 Version', loading: '正在加载 Artifact…',
+    error: '无法读取这个 Artifact。', bytes: '字节',
   },
   'en-US': {
     version: 'Version', historical: 'Historical Version', preview: 'Preview exact Version',
     download: 'Download exact Version', loading: 'Loading Artifact…',
-    error: 'This Artifact could not be read.',
+    error: 'This Artifact could not be read.', bytes: 'bytes',
   },
 } as const;
 
@@ -70,7 +71,7 @@ export function ArtifactCardContent({
       <h3>{state.title}</h3>
       <p>{historical ? text.historical : text.version} {state.versionNumber}</p>
       <p>{state.mediaType}{state.sizeBytes === undefined ? ''
-        : ` · ${new Intl.NumberFormat(locale).format(state.sizeBytes)} bytes`}</p>
+        : ` · ${new Intl.NumberFormat(locale).format(state.sizeBytes)} ${text.bytes}`}</p>
       {renderer !== 'fallback' && state.content === undefined && onPreview ? (
         <button className="button secondary" type="button" onClick={onPreview}>{text.preview}</button>
       ) : null}

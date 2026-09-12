@@ -27,6 +27,7 @@ const copy = {
     loading: '正在加载 Artifact…', loadMore: '加载更早的 Artifact', version: 'Version', historical: '历史 Version', current: '当前 Version',
     preview: '预览确切 Version', download: '下载确切 Version', close: '关闭详情',
     loadVersions: '加载更早的 Version', metadataOnly: '此类型只提供 metadata 与下载。',
+    mediaType: '媒体类型', size: '大小', bytes: '字节',
   },
   'en-US': {
     eyebrow: 'Artifact Library', title: 'Work outputs', description: 'Every entry is pinned to one immutable Version.',
@@ -34,6 +35,7 @@ const copy = {
     loading: 'Loading Artifact…', loadMore: 'Load older Artifacts', version: 'Version', historical: 'Historical Version', current: 'Current Version',
     preview: 'Preview exact Version', download: 'Download exact Version', close: 'Close details',
     loadVersions: 'Load older Versions', metadataOnly: 'This type provides metadata and download only.',
+    mediaType: 'Media type', size: 'Size', bytes: 'bytes',
   },
 } as const;
 
@@ -123,8 +125,10 @@ function ArtifactVersionDetail({
         </select>
       </label>
       <dl>
-        <div><dt>Media type</dt><dd>{selected.mediaType}</dd></div>
-        <div><dt>Size</dt><dd>{new Intl.NumberFormat(locale).format(selected.sizeBytes)} bytes</dd></div>
+        <div><dt>{text.mediaType}</dt><dd>{selected.mediaType}</dd></div>
+        <div><dt>{text.size}</dt><dd>
+          {new Intl.NumberFormat(locale).format(selected.sizeBytes)} {text.bytes}
+        </dd></div>
       </dl>
       {renderer === 'fallback' ? (
         <><p>{text.metadataOnly}</p><UnknownArtifactRenderer downloadUrl={downloadUrl} locale={locale} /></>
@@ -167,7 +171,7 @@ function ArtifactSummary({
         {artifact.title}
       </Link></h2>
       <p>Version {currentVersion.versionNumber} · {currentVersion.mediaType}</p>
-      <p>{new Intl.NumberFormat(locale).format(currentVersion.sizeBytes)} bytes</p>
+      <p>{new Intl.NumberFormat(locale).format(currentVersion.sizeBytes)} {copy[locale].bytes}</p>
     </article>
   );
 }

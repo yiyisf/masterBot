@@ -66,6 +66,16 @@ describe('Artifact Library exact-Version experience', () => {
     expect(readContent).toHaveBeenCalledWith(ids.artifact, ids.historical);
   });
 
+  it('localizes exact Version metadata and units', async () => {
+    localStorage.setItem('cmaster.workspace.locale', 'zh-CN');
+    render(<WorkspaceProviders><ArtifactLibrary selected={{
+      artifactId: ids.artifact, artifactVersionId: ids.historical,
+    }} /></WorkspaceProviders>);
+    expect(await screen.findByText('媒体类型')).toBeTruthy();
+    expect(screen.getByText('大小')).toBeTruthy();
+    expect(screen.getAllByText('20 字节')).toHaveLength(2);
+  });
+
   it('uses metadata/download fallback without reading unsupported content', async () => {
     getVersion.mockResolvedValueOnce({ ...historical, mediaType: 'application/pdf' });
     render(<WorkspaceProviders><ArtifactLibrary selected={{

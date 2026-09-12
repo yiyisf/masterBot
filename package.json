@@ -57,6 +57,7 @@
     "next:test": "vitest run --config vitest.next.config.ts",
     "next:typecheck:tests": "tsc -b tsconfig.next.json --clean && tsc -p tsconfig.next.lint.json --noEmit",
     "next:test:integration": "vitest run --config vitest.next.integration.config.ts",
+    "next:test:browser": "playwright test --config playwright.workspace.config.mjs",
     "next:eval:model-smoke": "tsx tooling/model-smoke.ts",
     "next:lint": "eslint --config eslint.next.config.mjs \"apps/server/**/*.ts\" \"packages/**/*.ts\" \"tooling/**/*.mjs\" \"tooling/**/*.ts\" && npm run lint -w @cmaster/web",
     "next:boundaries": "depcruise --config dependency-cruiser.config.cjs apps packages && node --test tooling/module-boundaries.test.mjs",
@@ -111,7 +112,6 @@
     "pdf-parse": "^2.4.5",
     "pino": "^9.6.0",
     "pino-pretty": "^13.0.0",
-    "playwright": "^1.58.2",
     "undici": "^8.4.1",
     "yaml": "^2.7.0",
     "zod": "^4.4.3"
@@ -122,10 +122,12 @@
     "@types/node": "^22.10.6",
     "@typescript-eslint/eslint-plugin": "^8.20.0",
     "@typescript-eslint/parser": "^8.20.0",
+    "axe-core": "4.13.0",
     "dependency-cruiser": "18.2.0",
     "eslint": "^9.18.0",
     "jsdom": "26.1.0",
     "node-pg-migrate": "9.0.0",
+    "playwright": "1.58.2",
     "tsx": "^4.19.2",
     "typescript": "^5.7.3",
     "vitest": "^4.0.18"

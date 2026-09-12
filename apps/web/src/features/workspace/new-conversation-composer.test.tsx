@@ -27,6 +27,7 @@ describe('new Conversation route', () => {
     render(<NewConversationComposer />);
     expect(fetchSpy).not.toHaveBeenCalled();
     expect(window.sessionStorage.length).toBe(0);
+    expect(document.activeElement).toBe(screen.getByRole('textbox'));
     fetchSpy.mockRestore();
   });
 
@@ -81,7 +82,7 @@ describe('new Conversation route', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Send' }));
 
     await waitFor(() => expect(replace).toHaveBeenCalledWith(
-      `/workspace/conversations/${conversationId}?run=${runId}`,
+      `/workspace/conversations/${conversationId}/runs/${runId}`,
     ));
     expect(calls.filter((call) => call.startsWith('POST'))).toHaveLength(3);
     expect(calls.some((call) => call.includes('/chat'))).toBe(false);
