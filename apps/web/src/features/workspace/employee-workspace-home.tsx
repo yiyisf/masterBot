@@ -3,6 +3,7 @@
 import { createContractClient } from '@cmaster/contracts';
 import { useQuery } from '@tanstack/react-query';
 import Link from 'next/link';
+import { useEffect, useRef } from 'react';
 import { resolveLocale, resolveTheme } from './preferences';
 import { useWorkspacePreferences } from './workspace-providers';
 
@@ -15,20 +16,24 @@ const copy = {
     conversations: '最近的 Conversation', active: '进行中', pending: '待处理', emptyTitle: '还没有 Conversation',
     emptyBody: '首次发送消息时会创建一个 Conversation。', artifact: '包含一个工作产出', noMessages: '尚无消息',
     untitled: '未命名 Conversation', loadError: '暂时无法读取工作区。请稍后重试。', language: '语言', theme: '主题',
-    newConversation: '新建 Conversation', system: '跟随系统', light: '浅色', dark: '深色', statuses: { accepted: '已接受', queued: '排队中', running: '进行中', waiting: '等待处理', succeeded: '已完成', failed: '失败', cancelled: '已取消' },
+    newConversation: '新建 Conversation', system: '跟随系统', light: '浅色', dark: '深色',
+    preferences: '工作区偏好', activity: '工作区活动', loading: '正在加载', statuses: { accepted: '已接受', queued: '排队中', running: '进行中', waiting: '等待处理', succeeded: '已完成', failed: '失败', cancelled: '已取消' },
   },
   'en-US': {
     eyebrow: 'Employee Workspace', title: 'Continue recent work', description: 'Conversations keep the complete message and work history.',
     conversations: 'Recent conversations', active: 'Active', pending: 'Pending', emptyTitle: 'No conversations yet',
     emptyBody: 'A conversation is created when you send your first message.', artifact: 'Contains a work output', noMessages: 'No messages yet',
     untitled: 'Untitled conversation', loadError: 'The workspace is unavailable right now. Try again shortly.', language: 'Language', theme: 'Theme',
-    newConversation: 'New conversation', system: 'System', light: 'Light', dark: 'Dark', statuses: { accepted: 'Accepted', queued: 'Queued', running: 'Active', waiting: 'Waiting', succeeded: 'Completed', failed: 'Failed', cancelled: 'Cancelled' },
+    newConversation: 'New conversation', system: 'System', light: 'Light', dark: 'Dark',
+    preferences: 'Workspace preferences', activity: 'Workspace activity', loading: 'Loading', statuses: { accepted: 'Accepted', queued: 'Queued', running: 'Active', waiting: 'Waiting', succeeded: 'Completed', failed: 'Failed', cancelled: 'Cancelled' },
   },
 } as const;
 
 export function EmployeeWorkspaceHome() {
+  const headingRef = useRef<HTMLHeadingElement>(null);
   const { locale, setLocale, theme, setTheme } = useWorkspacePreferences();
   const text = copy[locale];
+  const numberFormatter = new Intl.NumberFormat(locale);
   const summary = useQuery({
     queryKey: ['workspace', 'summary'],
     queryFn: async () => {
@@ -49,16 +54,17 @@ export function EmployeeWorkspaceHome() {
   });
 
   const failed = summary.isError || conversations.isError;
+  useEffect(() => { headingRef.current?.focus(); }, []);
   return (
     <div className="workspace-shell">
       <header className="workspace-header">
         <div>
           <p className="eyebrow">{text.eyebrow}</p>
-          <h1>{text.title}</h1>
+          <h1 ref={headingRef} tabIndex={-1}>{text.title}</h1>
           <p>{text.description}</p>
           <Link className="button" href="/workspace/conversations/new">{text.newConversation}</Link>
         </div>
-        <div className="workspace-preferences" aria-label="Workspace preferences">
+        <div className="workspace-preferences" aria-label={text.preferences}>
           <label>{text.language}
             <select value={locale} onChange={(event) => setLocale(resolveLocale(event.target.value, 'en-US'))}>
               <option value="zh-CN">中文</option><option value="en-US">English</option>
@@ -73,15 +79,17 @@ export function EmployeeWorkspaceHome() {
       </header>
 
       <main className="workspace-home">
-        <section className="workspace-stat-grid" aria-label="Workspace activity">
-          <article><strong>{summary.data?.activeRunCount ?? 0}</strong><span>{text.active}</span></article>
-          <article><strong>{summary.data?.pendingActionCount ?? 0}</strong>
+        <section className="workspace-stat-grid" aria-label={text.activity}>
+          <article><strong>{numberFormatter.format(summary.data?.activeRunCount ?? 0)}</strong><span>{text.active}</span></article>
+          <article><strong>{numberFormatter.format(summary.data?.pendingActionCount ?? 0)}</strong>
             <Link href="/workspace/pending">{text.pending}</Link></article>
         </section>
         <section aria-labelledby="recent-conversations-title">
           <h2 id="recent-conversations-title">{text.conversations}</h2>
           {failed ? <p className="error" role="alert">{text.loadError}</p> : null}
-          {!failed && conversations.isPending ? <div className="workspace-loading" aria-label="Loading" /> : null}
+          {!failed && conversations.isPending ? (
+            <div className="workspace-loading" aria-label={text.loading} />
+          ) : null}
           {!failed && conversations.data?.items.length === 0 ? (
             <div className="workspace-empty" role="status">
               <h3>{text.emptyTitle}</h3><p>{text.emptyBody}</p>
@@ -98,7 +106,11 @@ export function EmployeeWorkspaceHome() {
                 <div className="conversation-meta">
                   <time dateTime={conversation.updatedAt}>{new Intl.DateTimeFormat(locale, { dateStyle: 'medium', timeStyle: 'short' }).format(new Date(conversation.updatedAt))}</time>
                   {conversation.activity.latestRunStatus ? <span className="status-pill">{text.statuses[conversation.activity.latestRunStatus]}</span> : null}
-                  {conversation.activity.pendingActionCount > 0 ? <span>{text.pending}: {conversation.activity.pendingActionCount}</span> : null}
+                  {conversation.activity.pendingActionCount > 0 ? (
+                    <span>{text.pending}: {numberFormatter.format(
+                      conversation.activity.pendingActionCount,
+                    )}</span>
+                  ) : null}
                 </div>
               </article>
             ))}

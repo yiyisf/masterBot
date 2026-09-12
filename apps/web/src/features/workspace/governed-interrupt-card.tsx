@@ -84,7 +84,7 @@ export function GovernedInterruptCard({
     setFeedback(undefined);
     try {
       const result = await resolve(response);
-      setFeedback(result.kind === 'handled' ? text.handled
+      setFeedback(result.kind === 'handled' ? undefined
         : result.kind === 'still_pending' ? text.stillPending : text.inProgress);
     } catch {
       setFeedback(text.unavailable);

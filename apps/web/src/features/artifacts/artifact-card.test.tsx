@@ -31,6 +31,14 @@ afterEach(() => {
 });
 
 describe('Message Artifact Reference card', () => {
+  it('localizes bounded Artifact metadata', async () => {
+    render(<ArtifactCard locale="zh-CN" apiUrl=""
+      artifactId="10000000-0000-4000-8000-000000000001"
+      artifactVersionId="10000000-0000-4000-8000-000000000002" />);
+    expect(await screen.findByText('历史 Version 1')).toBeTruthy();
+    expect(screen.getByText(/18 字节/u)).toBeTruthy();
+  });
+
   it('loads only compact metadata until preview is explicitly requested', async () => {
     render(<ArtifactCard locale="en-US" apiUrl="" artifactId="10000000-0000-4000-8000-000000000001"
       artifactVersionId="10000000-0000-4000-8000-000000000002" />);

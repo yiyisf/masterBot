@@ -191,6 +191,9 @@ npm run next:web-development-smoke
 # 显式 PostgreSQL Integration Test（需要 DATABASE_URL）
 npm run next:test:integration
 
+# Playwright + axe 响应式 Browser Test（自动启动隔离的 Next.js）
+npm run next:test:browser
+
 # 显式真实模型 Smoke Eval（无凭据时 skip）
 npm run next:eval:model-smoke
 

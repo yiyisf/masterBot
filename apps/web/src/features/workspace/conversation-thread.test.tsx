@@ -1,8 +1,8 @@
 // @vitest-environment jsdom
 
-import { fireEvent, render, screen } from '@testing-library/react';
+import { QueryClient, QueryClientProvider, useQuery } from '@tanstack/react-query';
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { cleanup } from '@testing-library/react';
 import { ConversationThread } from './conversation-thread';
 
 afterEach(cleanup);
@@ -53,6 +53,41 @@ describe('Conversation Thread presentation', () => {
     );
     expect((screen.getByRole('button', { name: 'Run again' }) as HTMLButtonElement).disabled)
       .toBe(false);
+  });
+
+  it('does not rebuild 1,000 completed Message rows for an unrelated Query update', async () => {
+    let textReads = 0;
+    const manyMessages = Array.from({ length: 1_000 }, (_, index) => ({
+      ...messages[0]!,
+      id: `10000000-0000-4000-8000-${String(index + 1).padStart(12, '0')}`,
+      sequence: index + 1,
+      parts: [{
+        type: 'text' as const,
+        get text() { textReads += 1; return `Completed message ${index + 1}`; },
+      }],
+    }));
+    const commands = {
+      loadOlder: vi.fn(), loadOlderRuns: vi.fn(), showNewContent: vi.fn(), runAgain: vi.fn(),
+    };
+    const queryClient = new QueryClient();
+    queryClient.setQueryData(['unrelated'], 'before');
+    function QueryHarness() {
+      const unrelated = useQuery({
+        queryKey: ['unrelated'], queryFn: async () => 'before', staleTime: Infinity,
+      });
+      return <><output>{unrelated.data}</output><ConversationThread
+        conversationId={messages[0]!.conversationId} locale="en-US"
+        messages={manyMessages} runs={[]} canLoadOlder={false}
+        canLoadOlderRuns={false} hasNewContent={false} canRunAgain commands={commands} /></>;
+    }
+    render(<QueryClientProvider client={queryClient}><QueryHarness /></QueryClientProvider>);
+    const readsAfterInitialRender = textReads;
+
+    queryClient.setQueryData(['unrelated'], 'after');
+    await waitFor(() => expect(screen.getByText('after')).toBeTruthy());
+
+    expect(textReads).toBe(readsAfterInitialRender);
+    expect(screen.getAllByRole('article')).toHaveLength(1_000);
   });
 
   it('offers keyboard-accessible history and new-content commands without stealing focus', () => {

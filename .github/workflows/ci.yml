@@ -77,6 +77,12 @@ jobs:
       - name: Check workspace foundation
         run: npm run next:check
 
+      - name: Install Browser test runtime
+        run: npx playwright install --with-deps chromium
+
+      - name: Test responsive Workspace in Browser
+        run: npm run next:test:browser
+
       - name: Migrate PostgreSQL
         run: npm run next:db:migrate
 

@@ -53,18 +53,21 @@ const terminalStatuses = new Set(['completed', 'failed', 'cancelled']);
 const copy = {
   'zh-CN': {
     back: '返回 Conversation', loading: '正在加载…', connection: '连接', connecting: '连接中', connected: '已连接', reconnecting: '正在重连', closed: '已关闭',
-    messages: 'Messages', notFound: '无法读取这个 Run。', synchronized: '活动类型已更新，安全视图已重新同步。',
+    messages: 'Messages', detail: 'Run 详情', notFound: '无法读取这个 Run。', synchronized: '活动类型已更新，安全视图已重新同步。',
+    statuses: { queued: '排队中', working: '进行中', waiting: '等待处理', completed: '已完成', failed: '失败', cancelled: '已取消' },
   },
   'en-US': {
     back: 'Back to conversation', loading: 'Loading…', connection: 'Connection', connecting: 'Connecting', connected: 'Connected', reconnecting: 'Reconnecting', closed: 'Closed',
-    messages: 'Messages', notFound: 'This run could not be loaded.', synchronized: 'The activity type changed, and the safe view was synchronized again.',
+    messages: 'Messages', detail: 'Run Detail', notFound: 'This run could not be loaded.', synchronized: 'The activity type changed, and the safe view was synchronized again.',
+    statuses: { queued: 'Queued', working: 'Active', waiting: 'Waiting', completed: 'Completed', failed: 'Failed', cancelled: 'Cancelled' },
   },
 } as const;
 
 export function RunDetail({
   conversationId,
   runId,
-}: Readonly<{ conversationId: string; runId: string }>) {
+  embedded = false,
+}: Readonly<{ conversationId: string; runId: string; embedded?: boolean }>) {
   const headingRef = useRef<HTMLHeadingElement>(null);
   const controllerRef = useRef<RunUiProjectionController | undefined>(undefined);
   const cancelCommandIdRef = useRef<string | undefined>(undefined);
@@ -128,11 +131,11 @@ export function RunDetail({
   const assistantMessageId = projection?.assistantMessageId;
   const projectionRunId = projection?.runId;
   useEffect(() => {
-    if (!triggerMessageId) return;
+    if (embedded || !triggerMessageId) return;
     // 只在权威 Projection 表明 Message 可能变化时刷新持久历史。
     // eslint-disable-next-line react-hooks/set-state-in-effect
     void loadMessages(triggerMessageId).catch(() => setError(text.notFound));
-  }, [assistantMessageId, loadMessages, text.notFound, triggerMessageId]);
+  }, [assistantMessageId, embedded, loadMessages, text.notFound, triggerMessageId]);
 
   useEffect(() => {
     if (projectionRunId) headingRef.current?.focus();
@@ -188,7 +191,7 @@ export function RunDetail({
     const coordinator = new PendingResolutionCoordinator({
       api: projectionApi,
       operations: pendingOperations,
-      createCommandId: crypto.randomUUID,
+      createCommandId: () => crypto.randomUUID(),
       refresh: refreshPendingAuthority,
     });
     const result = await coordinator.resolve(governedInterrupt, response);
@@ -222,14 +225,19 @@ export function RunDetail({
     loadOlder: () => void loadOlderTimeline(),
   }), [loadOlderTimeline]);
 
+  const Root = embedded ? 'aside' : 'main';
   return (
-    <main>
+    <Root {...(embedded ? { 'aria-label': text.detail, className: 'run-detail-panel' } : {})}>
       <Link href={`/workspace/conversations/${conversationId}`} className="workspace-back">
         ← {text.back}
       </Link>
       <p className="eyebrow">Run {runId}</p>
-      <h1 ref={headingRef} tabIndex={-1}>{projection?.status ?? text.loading}</h1>
-      <p>{text.connection}: {text[connection]}</p>
+      <h1 ref={headingRef} tabIndex={-1}>
+        {projection ? text.statuses[projection.status] : text.loading}
+      </h1>
+      <p role="status" aria-live="polite" aria-atomic="true">
+        {text.connection}: {text[connection]}
+      </p>
       {projection ? (
         <RunCancelControl locale={locale} cancellable={projection.cancellable}
           cancel={cancel} refresh={refreshProjection} />
@@ -243,8 +251,8 @@ export function RunDetail({
         <RunActivity projection={displayProjection} locale={locale}
           unknownActivity={unknownActivity} commands={runActivityCommands} />
       ) : null}
-      <MessageHistory messages={messages} heading={text.messages} locale={locale} />
+      {!embedded ? <MessageHistory messages={messages} heading={text.messages} locale={locale} /> : null}
       {unknownActivity ? <p className="sr-only" role="status">{text.synchronized}</p> : null}
-    </main>
+    </Root>
   );
 }

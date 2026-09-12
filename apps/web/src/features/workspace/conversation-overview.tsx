@@ -4,6 +4,7 @@ import { useInfiniteQuery, useQuery, useQueryClient } from '@tanstack/react-quer
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import {
+  useCallback,
   useEffect,
   useLayoutEffect,
   useMemo,
@@ -36,28 +37,35 @@ const copy = {
   'zh-CN': {
     back: '返回工作区', untitled: '未命名 Conversation', loading: '正在读取 Conversation…', failed: '无法读取这个 Conversation。',
     rename: '重命名', saveTitle: '保存标题', cancelRename: '取消', titleLabel: 'Conversation 标题', renamed: '标题已保存。', renameFailed: '标题尚未保存。进度保留在当前标签页，可重试。',
-    activeRuns: (count: number) => `${count} 个 Run 正在处理`,
+    activeRuns: (count: number) => `${count.toLocaleString('zh-CN')} 个 Run 正在处理`,
     composerBlocked: '当前有 Run 正在处理。完成或取消后才能继续发送。',
     placeholder: '继续说明要完成的工作', send: '发送', sending: '正在保存…', continue: '继续创建 Run',
     blank: '请输入内容后再发送。', overLimit: `内容不能超过 ${maximumMessageLength.toLocaleString('zh-CN')} 个字符。`,
     messageSaved: 'Message 已保存，但 Run 尚未创建。你可以继续创建同一个 Run。',
     submissionFailed: '暂时无法完成发送。已保存的进度和内容仍保留在当前标签页。',
     runAgainFailed: '新的 Run 尝试尚未创建。原 Run 保持不变，你可以重试。',
+    composer: 'Message 编辑器', selectedRun: '当前 Run', employee: 'Employee',
+    thread: 'Conversation 线程',
   },
   'en-US': {
     back: 'Back to workspace', untitled: 'Untitled conversation', loading: 'Loading conversation…', failed: 'This conversation could not be loaded.',
     rename: 'Rename', saveTitle: 'Save title', cancelRename: 'Cancel', titleLabel: 'Conversation title', renamed: 'Title saved.', renameFailed: 'The title was not saved. Progress remains in this tab so you can retry.',
-    activeRuns: (count: number) => `${count} runs are active`,
+    activeRuns: (count: number) => `${count.toLocaleString('en-US')} runs are active`,
     composerBlocked: 'A run is active. Wait for it to finish or cancel it before sending another message.',
     placeholder: 'Continue describing the work', send: 'Send', sending: 'Saving…', continue: 'Continue creating run',
     blank: 'Enter a message before sending.', overLimit: `The message cannot exceed ${maximumMessageLength.toLocaleString('en-US')} characters.`,
     messageSaved: 'The message was saved, but its run was not created. You can continue creating the same run.',
     submissionFailed: 'Sending could not be completed. Saved progress and content remain in this browser tab.',
     runAgainFailed: 'The new run attempt was not created. The original run is unchanged, and you can retry.',
+    composer: 'Message composer', selectedRun: 'Selected Run', employee: 'Employee',
+    thread: 'Conversation Thread',
   },
 } as const;
 
-export function ConversationOverview({ conversationId }: Readonly<{ conversationId: string }>) {
+export function ConversationOverview({
+  conversationId,
+  embedded = false,
+}: Readonly<{ conversationId: string; embedded?: boolean }>) {
   const router = useRouter();
   const queryClient = useQueryClient();
   const { locale } = useWorkspacePreferences();
@@ -71,6 +79,7 @@ export function ConversationOverview({ conversationId }: Readonly<{ conversation
     ? undefined
     : createRenameOperationStore(window.sessionStorage, conversationId), [conversationId]);
   const viewportRef = useRef<HTMLDivElement>(null);
+  const conversationHeadingRef = useRef<HTMLHeadingElement>(null);
   const prependAnchor = useRef<{ scrollTop: number; scrollHeightBefore: number } | undefined>(undefined);
   const nearBottom = useRef(true);
   const previousNewestSequence = useRef(0);
@@ -96,7 +105,9 @@ export function ConversationOverview({ conversationId }: Readonly<{ conversation
     refetchInterval: (query) => query.state.data?.pages
       .some((page) => page.items.some((run) => activeStatuses.has(run.status))) ? 2_000 : false,
   });
-  const runItems = runs.data?.pages.flatMap((page) => page.items) ?? [];
+  const runItems = useMemo(() => (
+    runs.data?.pages.flatMap((page) => page.items) ?? []
+  ), [runs.data]);
   const messages = useInfiniteQuery({
     queryKey: ['conversation', conversationId, 'messages'],
     initialPageParam: undefined as number | undefined,
@@ -109,6 +120,11 @@ export function ConversationOverview({ conversationId }: Readonly<{ conversation
     : [], [messages.data]);
   const newestSequence = orderedMessages.at(-1)?.sequence ?? 0;
   const activeRunCount = runItems.filter((run) => activeStatuses.has(run.status)).length;
+  const loadedConversationId = conversation.data?.id;
+
+  useEffect(() => {
+    if (!embedded && loadedConversationId) conversationHeadingRef.current?.focus();
+  }, [embedded, loadedConversationId]);
   const runControlsUnavailable = runs.isPending || runs.isError || activeRunCount > 0;
   const defaultRunId = selectDefaultRun(runItems);
   const runVersion = runItems.map((run) => `${run.id}:${run.status}`).join('|');
@@ -271,7 +287,7 @@ export function ConversationOverview({ conversationId }: Readonly<{ conversation
     }
   }
 
-  async function runAgain(messageId: string): Promise<void> {
+  const runAgain = useCallback(async (messageId: string): Promise<void> => {
     if (!submissionStore || runControlsUnavailable
       || (operation && (operation.kind !== 'run-again' || operation.messageId !== messageId))) return;
     const coordinator = new ContinuingSubmissionCoordinator(
@@ -285,14 +301,19 @@ export function ConversationOverview({ conversationId }: Readonly<{ conversation
       setOperation(submissionStore.loadOperation());
       setComposerFeedback(text.runAgainFailed);
     }
-  }
+  }, [
+    conversationId, operation, router, runControlsUnavailable, submissionApi,
+    submissionStore, text.runAgainFailed,
+  ]);
 
   const failed = conversation.isError || messages.isError || runs.isError;
   const composerGuidance = composerFeedback
     ?? (activeRunCount > 0 ? text.composerBlocked : !draft.trim() ? text.blank : '');
 
+  const Root = embedded ? 'section' : 'main';
   return (
-    <main className="conversation-overview">
+    <Root className="conversation-overview"
+      {...(embedded ? { 'aria-label': text.thread } : {})}>
       <Link href="/workspace" className="workspace-back">← {text.back}</Link>
       {failed ? <p className="error" role="alert">{text.failed}</p> : null}
       {!failed && conversation.isPending ? <p role="status">{text.loading}</p> : null}
@@ -309,7 +330,9 @@ export function ConversationOverview({ conversationId }: Readonly<{ conversation
             </form>
           ) : (
             <>
-              <h1>{conversation.data.title ?? text.untitled}</h1>
+              <h1 ref={conversationHeadingRef} tabIndex={-1}>
+                {conversation.data.title ?? text.untitled}
+              </h1>
               <button className="button secondary" type="button" onClick={() => {
                 setTitleInput(renameStore?.load()?.title ?? conversation.data?.title ?? '');
                 setEditingTitle(true);
@@ -318,7 +341,9 @@ export function ConversationOverview({ conversationId }: Readonly<{ conversation
           )}
           {renameFeedback ? <p role="status">{renameFeedback}</p> : null}
           {activeRunCount > 1 ? <p role="status">{text.activeRuns(activeRunCount)}</p> : null}
-          {defaultRunId ? <span className="sr-only">Selected Run: {defaultRunId}</span> : null}
+          {defaultRunId ? (
+            <span className="sr-only">{text.selectedRun}: {defaultRunId}</span>
+          ) : null}
         </header>
       ) : null}
       <div className="conversation-thread-scroll" ref={viewportRef} onScroll={handleScroll}>
@@ -342,10 +367,10 @@ export function ConversationOverview({ conversationId }: Readonly<{ conversation
           }}
         />
       </div>
-      <section aria-label="Composer">
+      <section aria-label={text.composer}>
         {operation?.kind === 'continue' && operation.messageId ? (
           <article className="message saved-message" aria-label={text.messageSaved}>
-            <strong>Employee</strong>
+            <strong>{text.employee}</strong>
             <p>{draft}</p>
             <small>{text.messageSaved}</small>
           </article>
@@ -363,6 +388,6 @@ export function ConversationOverview({ conversationId }: Readonly<{ conversation
           {composerGuidance}
         </p>
       </section>
-    </main>
+    </Root>
   );
 }

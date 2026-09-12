@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import { cleanup, render, screen } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 vi.mock('@cmaster/contracts', async (loadOriginal) => {
@@ -31,5 +31,14 @@ describe('Employee Workspace navigation', () => {
     expect(pending.getAttribute('href')).toBe('/workspace/pending');
     expect(screen.getByRole('link', { name: 'Artifact Library' }).getAttribute('href'))
       .toBe('/workspace/artifacts');
+    const toggle = screen.getByRole('button', { name: 'Open navigation' });
+    expect(toggle.getAttribute('aria-expanded')).toBe('false');
+    fireEvent.click(toggle);
+    expect(toggle.getAttribute('aria-expanded')).toBe('true');
+    expect(toggle.getAttribute('aria-controls')).toBe('workspace-navigation-links');
+    toggle.focus();
+    fireEvent.keyDown(screen.getByRole('navigation'), { key: 'Escape' });
+    expect(toggle.getAttribute('aria-expanded')).toBe('false');
+    expect(document.activeElement).toBe(toggle);
   });
 });
