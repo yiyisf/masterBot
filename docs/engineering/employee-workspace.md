@@ -1,4 +1,6 @@
-# Employee Workspace Slice
+# Slice 5 Conversation Experience
+
+> **Historical implementation note:** this Slice used “Employee Workspace” for the whole UI. The accepted Filesystem Workspace design reserves **Workspace** for the Employee-owned file authority boundary and renames the UI **Employee Experience**. Replacement design: [`docs/design/filesystem-workspace.html`](../design/filesystem-workspace.html).
 
 Slice 5 replaces the minimal technical Workspace with a Conversation-centric employee experience. The normative self-contained design is [`docs/design/slice-5-employee-workspace.html`](../design/slice-5-employee-workspace.html), and implementation is tracked by [#118](https://github.com/yiyisf/masterBot/issues/118).
 
@@ -10,7 +12,7 @@ CMASTER_EMPLOYEE_WORKSPACE_ENABLED=false
 
 The flag requires Next Architecture, AI SDK Runtime, Tool Runtime, and Context/Artifacts. Invalid enabled combinations fail configuration. While disabled, the Slice 4 minimal Workspace and existing Contracts remain available; the complete Shell and Workspace Projection APIs are not mounted.
 
-This is a migration flag, not a permanent product option. Slice 6 removes all Slice migration flags, disabled replacement paths, and obsolete flag-matrix tests after the Production Starter becomes the single baseline.
+This is a migration flag, not a permanent product option. The Filesystem Workspace Slice removes this UI path after complete replacement; the subsequent Production Starter removes remaining migration flags, disabled replacement paths, and obsolete flag-matrix tests.
 
 ## Experience structure
 
@@ -136,13 +138,13 @@ Preview and download always read the same `artifactId + artifactVersionId`. `?di
 
 WCAG 2.2 AA is a merge gate. Core flows are keyboard complete; route/Dialog/Composer focus is deterministic; status is not color-only; stream announcements describe Run state rather than token-level Draft changes; and reduced motion disables smooth scrolling and non-essential animation. Desktop keeps navigation, Conversation Thread, and exact Run Detail together. Tablet uses a collapsible navigation and fixed, labelled Run/Artifact detail sheet. Mobile hides background Conversation context on exact detail routes, uses one content column, and fixes the primary navigation to the viewport bottom.
 
-Performance fixtures cover 1,000 loaded Messages and 2,000 Timeline items. Completed Message rows are memoized and Run attempts are indexed once, so unrelated UI updates do not rebuild them. Draft and Timeline stay outside those completed rows. Timeline mounts at most a 100-item ordered window, exposes total-position semantics and explicit earlier/later controls, and overscans the focused row across append updates. Production SLOs remain Slice 6 work.
+Performance fixtures cover 1,000 loaded Messages and 2,000 Timeline items. Completed Message rows are memoized and Run attempts are indexed once, so unrelated UI updates do not rebuild them. Draft and Timeline stay outside those completed rows. Timeline mounts at most a 100-item ordered window, exposes total-position semantics and explicit earlier/later controls, and overscans the focused row across append updates. Production SLOs remain Production Starter work.
 
 `npm run next:test:browser` starts an isolated flagged Next.js server and runs Playwright with Chromium device profiles. The scenarios exercise desktop/tablet composition, mobile send and governed work, exact Artifact preview/download, route and dialog Focus, bilingual preferences, light/dark/system themes, reduced motion, and axe WCAG 2.2 A/AA checks.
 
 ## Safe observability
 
-Slice 5 defines a typed `ClientObservability` seam with a no-op default. Runtime validation permits only approved feature-count, duration, reconnect/gap-result, safe-code, fallback-kind, Web Vital, and validated correlation-ID payloads; unknown keys and out-of-range values are dropped. It excludes Message/Draft/title/preview, Artifact title/body/hash, Tool input, Approval details, Provider errors, DOM, screenshots, and keystrokes. Exporter exceptions are isolated from product behavior. Slice 6 may send approved metrics through a same-origin intake to an internal OpenTelemetry Collector; Browser never holds Collector credentials.
+Slice 5 defines a typed `ClientObservability` seam with a no-op default. Runtime validation permits only approved feature-count, duration, reconnect/gap-result, safe-code, fallback-kind, Web Vital, and validated correlation-ID payloads; unknown keys and out-of-range values are dropped. It excludes Message/Draft/title/preview, Artifact title/body/hash, Tool input, Approval details, Provider errors, DOM, screenshots, and keystrokes. Exporter exceptions are isolated from product behavior. Production Starter may send approved metrics through a same-origin intake to an internal OpenTelemetry Collector; Browser never holds Collector credentials.
 
 ## Release verification
 

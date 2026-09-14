@@ -197,7 +197,7 @@
 - System/Light/Dark、zh-CN/en-US、自然非机器化文案、WCAG 2.2 AA
 - 桌面完整三栏；移动交付 Conversation/Run/处理/Artifact 下载最小核心
 - same-origin `/api/v1` 与开发 rewrite；业务写操作只走生成 Contract Client，不使用 Next.js Server Actions
-- 临时 `CMASTER_EMPLOYEE_WORKSPACE_ENABLED`，显式依赖 Slice 4；迁移 Flags 在 Slice 6 完成后统一删除
+- 临时 `CMASTER_EMPLOYEE_WORKSPACE_ENABLED`，显式依赖 Slice 4；Filesystem Workspace 替换完成后删除该 UI Flag，其余迁移 Flags 在 Production Starter 完成后统一删除
 
 ### 验收/退出
 
@@ -210,7 +210,39 @@
 - zh-CN/en-US 与 Light/Dark 的核心流程通过；未知 Renderer/Projection 类型不导致页面崩溃
 - Contract drift、Module boundaries、PostgreSQL/HTTP privacy 和完整 Browser E2E 通过
 
-## 8. Slice 6 — Production Starter
+## 8. Slice 6 — Filesystem Workspace
+
+**详细设计**：[`docs/design/filesystem-workspace.html`](../design/filesystem-workspace.html)
+
+**实施顺序**：[`docs/architecture/filesystem-workspace-slice.md`](./filesystem-workspace-slice.md)
+
+### 目标
+
+交付真实的 private, server-managed filesystem Workspace 权限边界，并将 Slice 5 的 Workspace-less 对话壳替换为 Balanced Workspace Employee Experience。Employee 在 Conversation 前选择 Workspace/Working Root；Run 固定 Workspace Revision 并只在隔离 Sandbox 内通过 Workspace Change Set 操作文件。
+
+### 交付
+
+- 新增 `packages/workspaces` 深 Module 与唯一 PostgreSQL/Content Storage 写路径
+- empty/Git Workspace provisioning、一个 Repository、多 Worktree、archive/delete 生命周期
+- Workspace Revision、`.cmasterignore`、受治理 list/search/read 与可跨 Worker恢复的 Sandbox
+- Observe/Edit with Confirmation/Trusted Automation 与所有写入统一 Change Set
+- Conversation/Run/Agent/Artifact/Pending 的 Workspace/Working Root scope
+- Apply/Commit/Push/PR/Merge 分离和 unknown external effect 恢复
+- `/workspaces/{workspaceId}/worktrees/{worktreeId}/...` versioned Contract/route
+- AI Elements + shadcn/ui + Tailwind + Lucide 的 Balanced Workspace Employee Experience
+- 完整替换后删除旧 `/workspace/*` UI、旧 Employee Workspace Flag 和被替代写路径
+
+### 验收/退出
+
+- 空 Workspace 与 deterministic Git remote 均完成 provision、多个 Worktree、多 Conversation 与 restart recovery
+- Run 只读取固定 Revision 和一个 Working Root；host path、symlink、hook、subprocess 与 network escape 被拒绝
+- Change Set 批准前不写文件；Trusted Automation 仍保留 Change Set；并发 overlap 不盲目覆盖
+- Git Apply/Commit/Push/PR/Merge identity 分离；Push uncertain outcome 不盲重试
+- Workspace File/Artifact Version、global/local Pending、archive/delete 与 Worktree history 语义完整
+- Balanced Workspace 完成 desktop/mobile、i18n/theme、keyboard/Focus/axe 与 bounded long-list gates
+- 只有 Workspace-aware 权威写路径保留，不迁移原型数据，不长期双写
+
+## 9. Slice 7 — Production Starter
 
 **分支**：`refactor/production-starter`
 
@@ -236,11 +268,11 @@
 - RPO ≤ 24h、RTO ≤ 4h 的恢复演练有证据
 - 无明文长期 Credential 进入 Event、Trace 或 Artifact metadata
 
-## 9. 第一里程碑完成定义
+## 10. 第一里程碑完成定义
 
-员工通过内部身份登录，创建 Conversation 和 Run；Worker 使用 AI SDK Engine，经 Policy 与 Tool Runtime 调用受控 Tool，必要时等待审批，生成 Message/Artifact；页面实时展示并可在刷新/断线后恢复；所有操作关联 Organization、Principal、Run、Audit 和 Trace。
+员工通过内部身份登录，选择私有 Workspace/Working Root，创建 Conversation 和 Run；Worker 使用 AI SDK Engine，经 Policy 与 Tool Runtime 调用受控 Tool，必要时等待审批，生成 Message/Artifact；页面实时展示并可在刷新/断线后恢复；所有操作关联 Organization、Principal、Run、Audit 和 Trace。
 
-## 10. 后续 Slice
+## 11. 后续 Slice
 
 优先顺序在第一里程碑真实反馈后重新评估：
 
@@ -252,7 +284,7 @@
 6. Claude SDK/Codex/Pi 等更多 Agent Engine
 7. HA Profile：多 API/Worker、S3/MinIO、Redis Streams/NATS、Kubernetes/OpenShift
 
-## 11. 每个 PR 的 Definition of Done
+## 12. 每个 PR 的 Definition of Done
 
 - 分支来自最新 `master`，禁止直接主分支开发
 - 公开 Interface 小且记录不变量、错误和性能约束
@@ -265,7 +297,7 @@
 - 文档、ADR/CONTEXT（如术语或硬决策改变）同步
 - 替代完成后删除旧代码和只验证旧实现细节的测试
 
-## 12. 主要风险与控制
+## 13. 主要风险与控制
 
 | 风险 | 控制 |
 |---|---|
@@ -278,6 +310,6 @@
 | 长期分支偏离 | 短分支、PR、Feature Flag；不使用 refactor 大合并 |
 | 范围再次膨胀 | 第一里程碑明确排除 Workflow、完整 Memory、HA、Vault |
 
-## 13. 暂缓技术选型
+## 14. 暂缓技术选型
 
 ORM/Query Builder、AI SDK 精确版本、向量检索、对象存储、实时 Broker、外部 Policy/Vault、容器平台在对应 Slice 开始时用小型技术 Spike 和 Contract 测试决策，不改变本文领域与 Module 基线。

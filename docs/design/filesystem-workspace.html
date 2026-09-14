@@ -1,0 +1,93 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>CMaster Filesystem Workspace — Accepted Design</title>
+<style>
+:root{color-scheme:light dark;--bg:#f6f7f9;--panel:#fff;--text:#18202d;--muted:#667085;--line:#d9dee7;--brand:#3157c8;--safe:#087a55;--warn:#9a5b00;--code:#eef1f6} @media(prefers-color-scheme:dark){:root{--bg:#0d1420;--panel:#151e2c;--text:#eef3fb;--muted:#a8b3c3;--line:#344155;--brand:#aab8ff;--safe:#70d6ad;--warn:#f5bd66;--code:#222d3c}}*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--text);font:15px/1.65 Inter,ui-sans-serif,system-ui,sans-serif}header,main,footer{width:min(1180px,calc(100% - 32px));margin:auto}header{padding:52px 0 26px}h1{margin:0 0 12px;font-size:clamp(2.2rem,5vw,4rem);line-height:1.05}h2{margin-top:46px;padding-bottom:8px;border-bottom:1px solid var(--line)}h3{margin:24px 0 8px}p{max-width:86ch}code,pre{font-family:ui-monospace,SFMono-Regular,Consolas,monospace}code{padding:.12em .35em;border-radius:5px;background:var(--code)}pre{padding:16px;overflow:auto;border:1px solid var(--line);border-radius:12px;background:var(--code)}.meta,.card,.decision,.warning,.flow,.wire{padding:18px 20px;margin:16px 0;border:1px solid var(--line);border-radius:13px;background:var(--panel)}.meta{display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:14px}.meta strong{display:block;color:var(--muted);font-size:.75rem;text-transform:uppercase;letter-spacing:.08em}.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(290px,1fr));gap:16px}.decision{border-left:5px solid var(--brand)}.warning{border-left:5px solid var(--warn)}.safe{color:var(--safe)}table{display:block;width:100%;overflow:auto;border-collapse:collapse}th,td{padding:10px 12px;border:1px solid var(--line);text-align:left;vertical-align:top}th{background:var(--code)}.tag{display:inline-block;margin-right:5px;padding:2px 9px;border:1px solid var(--line);border-radius:999px;font-size:.8rem}.wire{display:grid;grid-template-columns:230px minmax(360px,1fr) 380px;gap:10px}.wire>div{padding:14px;border:1px dashed var(--line);border-radius:10px;min-height:220px}.flow li{margin:.35em 0}footer{padding:48px 0;color:var(--muted)}@media(max-width:800px){.wire{grid-template-columns:1fr}}
+</style>
+</head>
+<body>
+<header>
+<p><span class="tag">Accepted Design</span><span class="tag">Grill Decision Record</span><span class="tag">Prototype Validated</span></p>
+<h1>Filesystem Workspace</h1>
+<p>把 CMaster 的员工端从“带侧栏的聊天页”演进为真正受权限约束的 Agent 工作空间：Employee 在 Conversation 前选择私有 Workspace 和 Git Worktree，Agent 只能在固定 Workspace Revision 的隔离 Sandbox 中读取文件或提出 Change Set。</p>
+<div class="meta"><div><strong>产品形态</strong>Web-first Employee Experience</div><div><strong>领域对象</strong>Workspace</div><div><strong>视觉基线</strong>Balanced Workspace A</div><div><strong>组件栈</strong>AI Elements + shadcn/ui</div><div><strong>原型分支</strong><code>prototype/workspace-ui-redesign</code></div><div><strong>状态</strong>待实施授权</div></div>
+</header>
+<main>
+<section><h2>1. 问题与目标</h2><p>Slice 5 验收证明了恢复、隐私、Run、治理和 Artifact 语义，但页面仍是传统后台式 Conversation UI；更关键的是，旧设计把“Employee Workspace”当作整个界面名称，没有表达 Employee 在开始 Conversation 前必须选择的文件权限范围。</p><div class="decision"><strong>目标：</strong>Workspace 成为单个 Employee Principal 私有拥有的、服务端管理的文件系统与权限边界。Employee Experience 是整个员工端产品；两者不再混名。</div></section>
+<section><h2>2. 领域模型</h2><pre><code>Organization
+└─ Employee Principal
+   ├─ Workspace A
+   │  ├─ optional Repository Binding (最多一个)
+   │  ├─ Git Worktree: main
+   │  │  ├─ Workspace Revisions
+   │  │  ├─ Workspace Files
+   │  │  └─ Conversations *
+   │  ├─ Git Worktree: feature/x
+   │  │  └─ Conversations *
+   │  └─ Artifacts *
+   └─ Workspace B
+      └─ default Working Root + Conversations *</code></pre>
+<table><thead><tr><th>术语</th><th>定义与不变量</th><th>禁止混用</th></tr></thead><tbody>
+<tr><td>Employee Experience</td><td>员工使用 CMaster 的完整 Web 体验。</td><td>不是 Workspace。</td></tr>
+<tr><td>Workspace</td><td>一个 Employee Principal 私有拥有的文件系统根与权限边界；可包含多次 Conversation。</td><td>不是 Organization、共享团队空间或标签。</td></tr>
+<tr><td>Repository Binding</td><td>Workspace 与最多一个受信任 Git Repository 的受治理关联。</td><td>不是 Credential 或 Worktree。</td></tr>
+<tr><td>Git Worktree</td><td>Repository 的独立 Branch 工作目录；Conversation 固定一个 Worktree。</td><td>不是 Workspace。</td></tr>
+<tr><td>Workspace Revision</td><td>一个 Working Root 的一致不可变状态标识；Run 固定读取它。</td><td>不是 Git Commit 或 Artifact Version。</td></tr>
+<tr><td>Workspace File</td><td>根目录内可变工作材料。</td><td>不是 Artifact。</td></tr>
+<tr><td>Workspace Change Set</td><td>针对一个 Revision 的不可变文件变更提案，整体批准或拒绝。</td><td>不是已应用文件、Git Commit 或可编辑审批表。</td></tr>
+<tr><td>Artifact Version</td><td>明确发布的不可变交付物版本，固定属于一个 Workspace。</td><td>不是可变 Workspace File。</td></tr>
+</tbody></table></section>
+<section><h2>3. 权限与隔离</h2><p>Workspace 位于 Employee Principal 私有边界之下，不支持 Workspace Membership、跨 Employee 授权或默认共享。有效能力为以下交集：</p><pre><code>Organization Policy 上限
+∩ Principal Entitlement
+∩ Workspace Operation Mode
+∩ Run 启动时模式上限
+∩ Agent Revision Tool Grant
+∩ Policy Decision
+∩ Delegation 限制</code></pre>
+<div class="grid"><article class="card"><h3>Observe</h3><p>允许列目录、搜索和读取；禁止文件写入。</p></article><article class="card"><h3>Edit with Confirmation（默认）</h3><p>读取可自动进行；写入形成 Change Set，批准前不修改文件。</p></article><article class="card"><h3>Trusted Automation</h3><p>仍形成 Change Set；Policy 允许时自动批准应用，不绕过 Revision、审计或冲突检测。</p></article></div>
+<ul><li>权限提升只影响新 Run；当前 Run 不静默扩权。</li><li>权限收缩立即限制尚未执行的 Tool Call；已完成副作用不回滚。</li><li>Push、高风险命令、网络和 Credential 可被 Policy 强制确认，Trusted Automation 也不能绕过。</li></ul></section>
+<section><h2>4. Workspace 创建与选择</h2><div class="flow"><ol><li>首次进入且没有 Workspace 时显示 Chooser，不创建无范围 Conversation。</li><li>Employee 选择“空 Workspace”或“从受信任 Git Repository 创建”。</li><li>Git 创建选择 Connector、Repository、Branch、显示名称和 Operation Mode；客户端不能提交 Server 绝对路径。</li><li>Server 异步 Provision；完成前不允许创建 Conversation。</li><li>已有 Workspace 时恢复上次选择，但 Switcher 始终显示当前范围。</li><li>一个 Workspace 包含多次 Conversation；Workspace Switcher 和 Worktree Switcher 是导航，不改变已有 Conversation 归属。</li></ol></div><div class="warning"><strong>首版来源：</strong>空目录 + 受信任 Git Repository。上传、企业存储导入和本机目录 Companion 后置。</div></section>
+<section><h2>5. Repository 与 Worktree</h2><ul><li>一个 Workspace 最多绑定一个根 Repository，可包含多个 Git Worktree。</li><li>新 Conversation 默认使用当前 Worktree，也可创建隔离 Worktree；已有写入型 Run 时 UI 主动推荐隔离。</li><li>Conversation 创建后固定 Worktree；一个 Run 不得修改多个 Worktree。</li><li>多个 Conversation 可并行读取和产生 Change Set；实际应用按 Revision 串行校验。</li><li>不重叠的 stale Change Set 可确定性重放；重叠或无法证明安全时进入冲突，不盲目覆盖。</li><li>Apply Change Set、Git Commit、Push、Create PR 和 Merge 是独立受治理动作；Push 始终确认。</li><li>隔离 Worktree 不自动 Commit、Merge 或删除。删除前处理未应用 Change Set 和未提交状态；删除后 Conversation 历史只读。</li></ul></section>
+<section><h2>6. Run、Revision 与 Sandbox</h2><pre><code>Run accepted
+  ├─ workspaceId
+  ├─ worktreeId / defaultWorkingRootId
+  ├─ baseWorkspaceRevisionId
+  ├─ maxWorkspaceOperationMode
+  └─ pinned Agent Revision / Policy versions
+        ↓
+Sandbox
+  ├─ /workspace  当前固定 Revision
+  ├─ /runtime    只读
+  ├─ /tmp        Invocation 私有
+  └─ host paths  不可见</code></pre>
+<ul><li>Run 默认读取固定 Revision 的一致快照；应用 Change Set 后通过显式记录推进。</li><li>每个 Run 只挂载一个 Working Root；路径规范化、符号链接、Git hooks、子进程和挂载均不能逃逸。</li><li>默认无外网；网络通过受治理能力开放。Credential 使用短期 Lease，不写入 Workspace。</li><li>Observe 的 Workspace mount 只读；mutating Run 只能写 Invocation-private ephemeral overlay。overlay finalize 为不可变 Change Set 后，只有中央 apply transition 能改变共享文件。</li><li>Workspace Files/Revisions 是共享持久权威数据，不依赖单 Worker 磁盘；其他 Worker 可恢复 Sandbox 与未完成 overlay。</li><li>该硬安全决策记录于 ADR-0045。</li></ul></section>
+<section><h2>7. Context 与文件访问</h2><ul><li>Workspace 定义 Agent 能访问哪里，不等于全部文件自动进入 Model Context。</li><li>Agent 通过 list/search/read Tool 按需读取，Context Manifest 记录实际文件、Revision、hash 和纳入方式。</li><li><code>.cmasterignore</code> 是强访问限制；Git Workspace 同时参考 <code>.gitignore</code>。</li><li>默认排除 <code>.git</code>、Secret、依赖缓存、构建产物、二进制和超限文件。</li><li>Employee 可见“本次读取的文件”，但看不到原始 Prompt 或 Chain-of-Thought；文件内容不进普通遥测。</li></ul></section>
+<section><h2>8. Change Set 与治理</h2><div class="flow"><ol><li>Agent 针对固定 Workspace Revision 生成不可变 Change Set。</li><li>Edit with Confirmation 创建不可变 Approval Subject；批准前文件不变。</li><li>Employee 可整体批准、拒绝或要求调整；要求调整会创建新 Change Set。</li><li>应用时重新校验 Principal、Workspace Mode、Policy 和 Base Revision。</li><li>成功原子产生新 Workspace Revision；失败返回结构化 conflict/denied/stale 结果。</li><li>Trusted Automation 走同一路径但可自动批准；不存在第二写路径。</li></ol></div><p>首版不提供逐文件或逐 Hunk 批准，也不允许在审批表中直接编辑内容。</p></section>
+<section><h2>9. Workspace File 与 Artifact</h2><ul><li>Workspace File 可反复修改；不会自动成为 Artifact。</li><li>明确发布时，从特定 Worktree/Workspace Revision/path 创建不可变 Artifact Version。</li><li>Artifact 固定属于 Workspace；同 Workspace 多个 Conversation 可引用。</li><li>跨 Workspace 使用必须显式治理复制并创建新的 Artifact；不直接共享。</li><li>Worktree 删除不删除 Artifact；Message 继续引用确切 Artifact Version。</li><li>首版 Browser 只读预览 Workspace File，不建设 IDE；Employee 通过 Conversation 和 Change Set 修改。</li></ul></section>
+<section><h2>10. Pending 与生命周期</h2><ul><li>全局 Pending Inbox 聚合该 Employee 所有 Workspace 的 Interrupt，并按 Workspace 分组。</li><li>Workspace 内显示局部 Pending；点击恢复准确 Workspace、Worktree、Conversation、Run。</li><li>Archive 禁止新 Conversation/Run/修改但保留可读历史，可恢复。</li><li>Delete 仅对已归档且无 Active/Waiting Run 的 Workspace开放；要求明确确认并遵循 Retention/GC。</li><li>Delete 不推送、不删除 Remote Branch，也不抹除必须保留的 Audit/Run Event。</li></ul></section>
+<section><h2>11. Agent 选择</h2><ul><li>Workspace 配置 Default Agent 与 Allowed Agents。</li><li>新 Conversation 使用默认 Agent；Composer 可为下一 Run 选择允许的 Agent。</li><li>Agent 切换仅影响未来 Run；每个 Run 固定实际 Agent Revision。</li><li>子 Agent 仍创建 child Invocation，不创建新 Conversation，也不能突破 Workspace。</li></ul></section>
+<section><h2>12. Employee Experience 与路由</h2><pre><code>/workspaces
+/workspaces/{workspaceId}
+/workspaces/{workspaceId}/worktrees/{worktreeId}
+/workspaces/{workspaceId}/worktrees/{worktreeId}/conversations/new
+/workspaces/{workspaceId}/worktrees/{worktreeId}/conversations/{conversationId}
+/workspaces/{workspaceId}/worktrees/{worktreeId}/conversations/{conversationId}/runs/{runId}</code></pre><p>空 Workspace 使用稳定 default Working Root identity，以保持统一路由。Scope 不匹配、未知和越权均使用不可区分的 not-found。旧 <code>/workspace/*</code> 在替换完成后删除，不增加兼容成本。</p>
+<div class="wire"><div><strong>Workspace Navigation</strong><hr>Workspace Switcher<br>Worktree Switcher<br>New Conversation<hr>Conversations<br>Global Pending<br>Workspace Artifacts</div><div><strong>Conversation Canvas</strong><hr>Employee Message<br>AI Elements Message<br>Plan / Tool / Confirmation<br>Artifact Reference<hr>Composer<br>Operation Mode / Agent</div><div><strong>Persistent Work Area</strong><hr>Overview<br>Files<br>Changes + Diff<br>Artifacts<hr>Branch / Revision / Runtime</div></div>
+<div class="decision"><strong>视觉决定：</strong>采用 Balanced Workspace A。桌面三块区域同时表达范围、沟通和工作状态；Conversation 与 Work Area 平衡。移动端切换“对话/工作”，不缩放桌面三栏。</div></section>
+<section><h2>13. UI 技术边界</h2><ul><li>真实组件基线：AI Elements 1.9 Registry、shadcn/ui、Tailwind CSS、Lucide Icons。</li><li>优先采用 Conversation、Message、Prompt Input、Tool、Confirmation、Plan、Artifact 与 shadcn Sidebar/Tabs/Sheet/Dialog/Dropdown。</li><li>不再自行重画 Button、Sidebar、Dialog、Tooltip、Composer 等基础组件。</li><li>CMaster 继续拥有 Contracts、View Models、TanStack Query 状态、sequence-aware UI Projection 和 Command recovery。</li><li>不使用默认 <code>useChat</code> 接管 Message/Run 生命周期；AI SDK/AI Elements 类型在 Web Adapter 终止。</li><li>不展示原始 Chain-of-Thought、Prompt、Tool payload 或 Provider raw error。</li><li>原型是 primary source，不直接提升为生产代码；生产实现按公开 Seam 和 TDD 重写。</li></ul></section>
+<section><h2>14. Workspaces Module</h2><p>新增 <code>packages/workspaces</code> 深 Module。它隐藏 Git、持久内容、Revision、冲突、Change Set、Provisioning 与 Sandbox materialization 的复杂性；调用者不学习路径或存储布局。</p><table><thead><tr><th>Module</th><th>拥有</th><th>禁止</th></tr></thead><tbody>
+<tr><td>Workspaces</td><td>Workspace、Repository Binding、Worktree、Revision、File metadata、Change Set、Operation Mode、lifecycle</td><td>不拥有 Conversation、Run、Approval、Artifact</td></tr>
+<tr><td>Conversations</td><td>Workspace/Worktree-scoped Conversation 与 Message</td><td>不读 Workspace 表或文件</td></tr>
+<tr><td>Execution</td><td>固定 Run scope、Checkpoint、事件与恢复</td><td>不管理 Git 或拼接路径</td></tr>
+<tr><td>Tools</td><td>通用 Tool Runtime 与 Ledger</td><td>不绕过 Workspace capability</td></tr>
+<tr><td>Context</td><td>按需选择 Workspace File references</td><td>不拥有文件或全量注入</td></tr>
+<tr><td>Artifacts</td><td>Workspace-scoped Artifact/Version/Content</td><td>不把 mutable file 当 Artifact</td></tr>
+<tr><td>Governance</td><td>Change Set/Commit/Push Approval 与 Policy</td><td>不应用文件变更</td></tr>
+</tbody></table></section>
+<section><h2>15. 实施顺序</h2><ol><li><strong>Foundation：</strong>Workspaces Domain、PostgreSQL schema、private list/create/archive、空 Workspace 持久内容。</li><li><strong>Git Provisioning：</strong>Repository Binding、clone/fetch、单 Repository、多 Worktree、状态与 Credential seam。</li><li><strong>Sandbox Read：</strong>隔离 Runtime、Workspace Revision materialization、list/search/read、<code>.cmasterignore</code>、Context Manifest。</li><li><strong>Change Sets：</strong>propose/approve/apply、conflict、Operation Mode、Trusted auto-apply、恢复。</li><li><strong>Conversation/Run Scope：</strong>Workspace/Worktree URL、Conversation ownership、Run pinning、Agent selection。</li><li><strong>Git Delivery：</strong>Commit/Push/PR/Merge 独立治理与 uncertain outcome。</li><li><strong>Artifact/Pending Scope：</strong>Workspace Artifact publish/copy、全局与局部 Pending。</li><li><strong>Employee Experience：</strong>按 Balanced Workspace A 用真实组件和 View Model Adapter 重写。</li><li><strong>Release Gate：</strong>真实 PostgreSQL/Worker/Sandbox/Git fixture/Browser 闭环；删除旧 Employee Workspace UI 和写路径。</li></ol><p>每项是独立短期分支/PR；前置能力通过后才开始下一项，不建立长期总重构分支，不长期双写，不迁移当前开发原型数据。</p></section>
+<section><h2>16. 发布验收</h2><ol><li>首次 Employee 创建空 Workspace 和 Git Workspace；Provisioning/失败/恢复行为明确。</li><li>Workspace/Worktree Switcher 只显示 owner 数据；Conversation 创建前 scope 已确定且 URL 可恢复。</li><li>同 Workspace 多 Conversation、同 Repository 多 Worktree 工作；Run 只访问固定 Revision 和一个 Working Root。</li><li>Observe 禁写；Edit 模式批准前无文件变化；Trusted 模式仍产生自动应用 Change Set。</li><li>并发不重叠 Change Set 可确定性应用，重叠 stale proposal 进入 conflict 且不覆盖。</li><li>Sandbox 阻止绝对路径、<code>../</code>、symlink、hook、subprocess 和 network escape；Worker 重启可恢复。</li><li>Git Apply/Commit/Push/PR/Merge 分离；Push unknown outcome 不盲重试。</li><li>Workspace File 可变、Artifact Version 不可变；跨 Workspace 显式复制；Worktree 删除后 Artifact 存续。</li><li>AI Elements/shadcn Employee Experience 完成 desktop/mobile、zh-CN/en-US、Light/Dark、keyboard、axe。</li><li>Contracts、Module Interface、PostgreSQL、Sandbox、Git Adapter、Projection、Browser 和恢复门禁全部通过后才替换旧 UI。</li></ol></section>
+<section><h2>17. 否决与延期</h2><div class="grid"><article class="card"><h3>明确否决</h3><ul><li>Workspace 只是前端筛选标签</li><li>Workspace 跨 Employee 共享或 Membership</li><li>浏览器直接提交 Server 绝对路径</li><li>宿主机运行 + 路径前缀检查</li><li>一个 Run 修改多个 Worktree</li><li>Trusted 模式绕过 Change Set</li><li>Change Set 自动 Commit/Push/Merge</li><li>把所有文件自动放入 Prompt</li><li>用 Workspace File 替代 Artifact</li><li>只换皮但伪造后端 Workspace</li></ul></article><article class="card"><h3>首版延期</h3><ul><li>Employee 本机目录 Companion</li><li>文件/目录上传和企业存储导入</li><li>multi-repository / multi-root Workspace</li><li>Browser 文本或代码 IDE</li><li>逐文件、逐 Hunk Change Set 批准</li><li>Workspace 跨 Principal 分享</li><li>自动 Merge 或自动 Worktree 清理</li><li>复杂二进制文件预览</li></ul></article></div></section>
+</main><footer>本文件是 Grill 达成共同理解后的自包含设计记录。规范词汇以 <code>CONTEXT.md</code> 为准；Sandbox 决策见 ADR-0045；生产实现必须等待明确授权。</footer>
+</body></html>

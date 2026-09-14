@@ -1,6 +1,6 @@
 flowchart TB
   subgraph UX[Web Experiences]
-    EW[Employee Workspace]
+    EW[Employee Experience]
     AC[Admin Console]
   end
 
@@ -11,6 +11,7 @@ flowchart TB
   end
 
   subgraph APP[Application Modules]
+    WS[Filesystem Workspaces]
     CONV[Conversations]
     EXEC[Execution / Harness]
     AGENT[Agents]
@@ -31,6 +32,8 @@ flowchart TB
   subgraph DATA[State and Integration Adapters]
     PG[(PostgreSQL)]
     BLOBS[(Artifact Content Store)]
+    WFILES[(Workspace Content Store)]
+    SANDBOX[Isolated Workspace Sandbox]
     IDP[Internal OIDC Provider]
     LLMS[Model Providers]
     EXTERNAL[Enterprise Systems / MCP]
@@ -41,6 +44,7 @@ flowchart TB
   AC --> API
   EW <-->|UI stream| SSE
   AUTH <--> IDP
+  API --> WS
   API --> CONV
   API --> EXEC
   API --> AGENT
@@ -54,6 +58,10 @@ flowchart TB
   TOOL --> PROVIDERS
   MODEL --> LLMS
   PROVIDERS --> EXTERNAL
+  WS --> PG
+  WS --> WFILES
+  EXEC --> SANDBOX
+  SANDBOX --> WFILES
   CONV --> PG
   EXEC --> PG
   AGENT --> PG

@@ -1,0 +1,5 @@
+# Introduce private filesystem Workspaces
+
+CMaster reserves **Workspace** for a private, server-managed filesystem and authority boundary owned by one Employee Principal; the overall employee UI is the **Employee Experience**. A Workspace may contain many Conversations, optionally binds one governed Git Repository with multiple Worktrees, and requires each Conversation and Run to pin one Working Root; Workspace sharing and cross-Principal membership are not supported. This supersedes only the earlier use of “Employee Workspace” as a UI name in ADR-0008/ADR-0041/ADR-0044, not their separation, accessibility, or creator-private decisions.
+
+We rejected treating Workspace as a presentation filter, a shared Organization area, or an Employee-device directory because none provides a durable Server/Worker authority boundary. A dedicated `packages/workspaces` Module owns lifecycle, Repository Binding, Worktree, Revision, File metadata, Change Set, Operation Mode, persistent content, and Sandbox preparation while Conversations, Execution, Tools, Context, Artifacts, and Governance retain their existing domain ownership.

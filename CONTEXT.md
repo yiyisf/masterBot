@@ -9,8 +9,36 @@ An assistant provided and governed by an enterprise for employees to complete wo
 _Avoid_: Personal assistant, desktop assistant, generic chatbot
 
 **Organization**:
-The enterprise data, policy, and administrative isolation scope within which the Enterprise Assistant operates.
-_Avoid_: Tenant account, workspace
+The enterprise data, policy, and administrative isolation scope within which the Enterprise Assistant operates. An Organization may contain multiple Workspaces.
+_Avoid_: Tenant account, Workspace
+
+**Workspace**:
+A private, filesystem-rooted work and authority boundary owned by one Employee Principal under an Organization and selected before a Conversation begins. It may contain many Conversations, optionally bind one Git Repository, and expose multiple isolated Git Worktrees; it does not support cross-Principal sharing and cannot expand its owner's existing authority.
+_Avoid_: Employee Experience, Organization, Organization shared team space, unbounded filesystem access, project label
+
+**Repository Binding**:
+The governed association between one Workspace and at most one Git Repository source, including the authority needed for controlled fetch and push operations. It is not a credential embedded in Workspace Files.
+_Avoid_: Git Worktree, Connector credential, arbitrary clone URL
+
+**Git Worktree**:
+An isolated working directory and Branch of a Workspace's bound Git Repository. A Git Workspace may contain multiple Worktrees, but each Conversation is fixed to exactly one of them and a Run cannot modify more than one.
+_Avoid_: Workspace, Repository Binding, cross-Worktree Run
+
+**Workspace File**:
+A mutable file within one Workspace's filesystem root that serves as working material for its Conversations and Runs. It is distinct from an immutable Artifact Version and becomes a durable work output only through an explicit publication.
+_Avoid_: Artifact Version, Message attachment, unrestricted host file
+
+**Workspace Operation Mode**:
+A Workspace-level restriction on how its Agent Runs may interact with Workspace Files. Observe permits reads only, Edit with Confirmation requires approval before a proposed write is applied, and Trusted Automation permits policy-bounded writes without per-change approval; no mode can exceed the owning Principal's authority or the Workspace root.
+_Avoid_: Principal Entitlement, Tool Grant, unrestricted filesystem permission
+
+**Workspace Revision**:
+An immutable identity for one consistent state of a Git Worktree or an empty Workspace's working directory. A Run pins the Revision it reads and advances only through an explicit recorded transition after applying a compatible Workspace Change Set.
+_Avoid_: Git Commit, Artifact Version, floating latest files
+
+**Workspace Change Set**:
+An immutable proposal from one Run to create, modify, move, or delete a bounded set of Workspace Files against an identified Workspace Revision. It is approved or rejected as a whole; requesting an adjustment creates a new Change Set, and a stale overlapping proposal conflicts rather than blindly overwriting current files.
+_Avoid_: Applied file mutation, editable approval form, Artifact Version, Git commit
 
 **Principal**:
 An authenticated human or system identity to which organizational permissions can be assigned.
@@ -55,8 +83,8 @@ _Avoid_: Authentication claim, Tool Grant, mutable rule configuration
 ## Conversations and Execution
 
 **Conversation**:
-A continuing employee-visible exchange that contains an ordered history of Messages. It is not an execution lifecycle. A Conversation is private to its creating Principal by default; access by another Principal requires an explicit future sharing or Policy decision.
-_Avoid_: Chat session, thread session, Organization-wide chat
+A continuing employee-visible exchange within exactly one Workspace that contains an ordered history of Messages. In a Git-backed Workspace it is also fixed to exactly one Git Worktree; it is not an execution lifecycle and inherits the private owner boundary of its Workspace.
+_Avoid_: Chat session, thread session, Workspace, cross-Worktree session, Organization-wide chat
 
 **Message**:
 An immutable employee-visible item in a Conversation, authored by an employee or the Enterprise Assistant.
@@ -234,17 +262,17 @@ _Avoid_: Run Event, reasoning UI, audit log
 
 ## User Experiences
 
-**Employee Workspace**:
-The employee-facing experience organized around Conversations, Tasks, approvals, and work outputs rather than platform internals.
-_Avoid_: Admin console, feature dashboard
+**Employee Experience**:
+The employee-facing experience organized around Workspaces, Conversations, Tasks, approvals, and work outputs rather than platform internals.
+_Avoid_: Workspace, Admin Console, feature dashboard
 
 **Admin Console**:
 The governed administrative experience for configuring and operating Agents, Tools, Models, policies, automation, and platform oversight.
-_Avoid_: Employee Workspace, employee settings
+_Avoid_: Employee Experience, employee settings
 
 **Artifact**:
-A durable, versioned work output produced or used by a Run, such as a document, table, chart, file, workflow, or code bundle. A Message may reference an Artifact but does not own it.
-_Avoid_: Attachment, tool result, message part
+A durable, versioned work output produced or used by a Run and fixed to one Workspace, such as a document, table, chart, file, workflow, or code bundle. It may retain provenance to a source Worktree, Workspace Revision, and path but survives Worktree deletion; use in another Workspace requires an explicit governed copy that creates a distinct Artifact.
+_Avoid_: Workspace File, cross-Workspace shared file, attachment, tool result, message part
 
 **Artifact Reference**:
 A stable reference to one exact Artifact Version without embedding its content or storage location.

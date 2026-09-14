@@ -41,7 +41,7 @@ CMaster Bot 正从本地技术验证原型增量重构为企业内网 Web-first 
 
 - 模块化单体，npm Workspaces
 - `apps/server` 支持 `api | worker | all` 运行角色
-- `apps/web` 提供 Employee Workspace 与 Admin Console
+- `apps/web` 提供 Employee Experience 与 Admin Console；Employee 通过私有 Filesystem Workspace 限制 Conversation/Run 的文件权限范围
 - PostgreSQL 为生产 System of Record；SQLite 仅用于开发调试 Adapter
 - Conversation / Message / Run / Invocation 分离
 - Provider-neutral Harness
@@ -98,6 +98,7 @@ apps/web
 packages/contracts
 packages/kernel
 packages/identity
+packages/workspaces
 packages/conversations
 packages/execution
 packages/agents

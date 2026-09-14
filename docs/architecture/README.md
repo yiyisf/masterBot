@@ -10,12 +10,14 @@
 - [Module 接口清单](./module-interfaces.md) — Module 所有权、公开 Interface 和 Adapter Seam
 - [领域数据模型](./data-model.md) — 聚合、关系、持久化映射和不变量
 - [增量重构计划](./refactor-plan.md) — 分支、Slice、验收、退出条件与后续路线
+- [Filesystem Workspace Slice](./filesystem-workspace-slice.md) — Workspaces Module、Sandbox、Git Worktree、Change Set 与 Employee Experience 替换顺序
 - [旧文档状态](./legacy-document-status.md) — 历史资料的非规范性说明
 - [领域语言](../../CONTEXT.md) — 项目统一术语
 - [架构决策](../adr/) — 关键取舍及原因
 - [Slice 3 Governed Tool Runtime 设计](../design/slice-3-governed-tool-runtime.html) — Grill 对齐后的自包含实施设计
 - [Slice 4 Context & Artifacts 设计](../design/slice-4-context-artifacts.html) — Context 压缩、Manifest、Artifact 存储与最小消费闭环
-- [Slice 5 Employee Workspace 设计](../design/slice-5-employee-workspace.html) — Conversation-centric Workspace、UI Projection、治理交互与可访问体验
+- [Slice 5 Employee Workspace 设计](../design/slice-5-employee-workspace.html) — 已完成的 Conversation-centric UI Projection、治理交互与可访问体验
+- [Filesystem Workspace 设计](../design/filesystem-workspace.html) — 私有文件权限边界、Git Worktree、Revision、Change Set、Sandbox 与 Balanced Workspace UI
 
 ## 架构图
 
