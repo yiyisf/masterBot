@@ -10,6 +10,7 @@ apps/web                Web 组合根
 packages/contracts      外部版本化 DTO/Event
 packages/kernel         极少量 ID/Clock/Result 原语
 packages/identity
+packages/workspaces
 packages/conversations
 packages/execution
 packages/agents
@@ -39,9 +40,51 @@ interface IdentityModule {
 - OIDC、开发身份和未来 SCIM 是 Adapter。
 - 不负责 Tool/Artifact/Agent 授权；授权属于 Governance。
 
-## 3. Conversations
+## 3. Workspaces
 
-**拥有**：Conversation、Message 和员工可见历史。
+**拥有**：Workspace、Repository Binding、Git Worktree、Workspace Revision、Workspace File metadata、Workspace Change Set、Workspace Operation Mode、Provisioning 与 archive/delete 生命周期。
+
+```ts
+interface WorkspaceCatalog {
+  provision(command: ProvisionWorkspace): Promise<WorkspaceOperation>;
+  get(query: GetWorkspace): Promise<WorkspaceView>;
+  list(query: ListWorkspaces): Promise<Page<WorkspaceSummary>>;
+  transition(command: TransitionWorkspaceLifecycle): Promise<WorkspaceView>;
+}
+
+interface WorkspaceWorkingRoots {
+  createWorktree(command: CreateWorktree): Promise<WorktreeOperation>;
+  listWorktrees(query: ListWorktrees): Promise<Page<WorktreeSummary>>;
+  listFiles(query: ListWorkspaceFiles): Promise<Page<WorkspaceFileEntry>>;
+  openFile(query: OpenWorkspaceFile): Promise<WorkspaceFileContent>;
+}
+
+interface WorkspaceChanges {
+  propose(command: ProposeWorkspaceChangeSet): Promise<WorkspaceChangeSet>;
+  resolve(command: ResolveWorkspaceChangeSet): Promise<WorkspaceChangeSet>;
+  apply(command: ApplyWorkspaceChangeSet): Promise<ApplyWorkspaceChangeResult>;
+}
+
+interface WorkspaceRunEnvironments {
+  prepare(request: PrepareWorkspaceRunEnvironment): Promise<WorkspaceRunEnvironment>;
+  release(command: ReleaseWorkspaceRunEnvironment): Promise<void>;
+}
+```
+
+- 一个 Workspace 由一个 trusted Organization/Employee Principal 私有拥有；不提供 Membership 或跨 Principal share Interface。
+- Workspace 固定 Default Agent 与 Allowed Agents 范围；Conversation 默认使用它，Composer 选择只影响未来 Run，每个 Run 仍由 Agents Module 解析并固定实际 Agent Revision。
+- `provision` 只接受 empty 或受信任 Repository Binding，不接受 Browser 绝对路径。一个 Workspace 最多一个 Repository，可有多个 Worktree。
+- Conversation/Run 只保存 stable Workspace/Working Root/Revision ID，不获得 host path、storage key 或 Git Adapter 类型。
+- Run Environment 固定一个 Working Root、一个 Revision 和最大 Operation Mode；Observe 只读，mutating Run 只能写 Invocation-private overlay 并产出 Change Set，不能直接改共享内容；每次恢复可由另一 Worker 确定性 materialize。
+- list/search/read 受 `.cmasterignore`、Policy、大小/media type 与 canonical-path 检查约束；ignored 文件表现为不可见。
+- 所有普通文件写入都形成 Change Set。应用以 base Revision 做 optimistic concurrency；不重叠重放必须确定性，重叠/未知返回 conflict，禁止 force overwrite。
+- Edit with Confirmation 的批准前不得修改 Workspace File；Trusted Automation 仍通过相同 Change Set Interface 自动批准/应用；Observe 拒绝 propose。
+- Apply、Commit、Push、PR 与 Merge 使用不同 Command/ToolCall/Approval identity。Workspace Module 管理 Git 状态但不拥有 Approval 或 Run。
+- Workspace Content Store、Git Adapter 与 Sandbox Adapter 是 Module 内真实 Seam；公开 Interface 不泄漏其实现。
+
+## 4. Conversations
+
+**拥有**：Workspace/Working Root-scoped Conversation、Message 和员工可见历史。
 
 ```ts
 interface ConversationModule {
@@ -53,7 +96,8 @@ interface ConversationModule {
 ```
 
 - Message 追加后不可修改；修订通过新 Message 或显式元数据表达。
-- Conversation 默认创建者私有；所有 get/list/Message 读写同时使用 trusted Organization 与 Principal，跨 Principal 与不存在使用相同 not-found 语义。
+- Conversation 必须固定一个 Workspace 和一个 Working Root；Git-backed Conversation 固定一个 Worktree。一个 Workspace 可有多次 Conversation，Conversation 不可迁移 scope。
+- Conversation 继承 Workspace owner 私有边界；所有 get/list/Message 读写同时使用 trusted Organization、Principal 与 scope，跨 Principal、scope 不匹配和不存在使用相同 not-found 语义。
 - Run 只引用 Message，不由 Conversation Module 执行。
 - Context Builder 通过受控读接口获取历史，不能直查表。
 - Slice 1 的 Browser Command 明确拆分为创建 Conversation、追加 Employee Message、以 Message Trigger 创建 Run；不提供重新耦合三者的 `/chat` Command。
@@ -61,7 +105,7 @@ interface ConversationModule {
 - Slice 4 为 Context Builder 提供受控历史读取：只返回同 Organization、截至 Trigger Message sequence 的不可变 Message；Conversation Module 不做选择、预算或摘要。
 - Slice 5 补齐 creator-private Conversation 分页、最新/向前 Message page、确定性首条 Message 标题、有界 preview 与 rename。列表 cursor 稳定且对 Browser opaque；不引入 archive/delete/read receipt/search 生命周期。
 
-## 4. Execution
+## 5. Execution
 
 **拥有**：Run、Trigger、Invocation、Run Event、Checkpoint、Interrupt、Dispatcher 状态和 Harness。
 
@@ -84,6 +128,7 @@ interface RunQueries {
 }
 ```
 
+- Workspace-scoped Run start 固定 `workspaceId + workingRootId + baseWorkspaceRevisionId + maxWorkspaceOperationMode`；启动后 mode 提升不扩权，当前 mode/Policy 收缩立即限制尚未执行的 Tool Call。
 - Run start 在返回前必须持久化接受事实和 Dispatch/Outbox。
 - Run Event 按 Run 严格 sequence，传输为 at-least-once。
 - Harness 只通过 Agent Engine、Tool Runtime、Context Builder、Policy、Artifact 等公开 Interface 协作。
@@ -105,7 +150,7 @@ interface AgentEngine {
 
 AI SDK 是默认 Adapter；Claude SDK、Codex、Pi 等是可选 Adapter。Engine Session 只存在于 Adapter 状态。
 
-## 5. Agents
+## 6. Agents
 
 **拥有**：Agent 稳定身份、Draft、不可变 Agent Revision、发布/激活和 Eval Evidence 关联。
 
@@ -124,7 +169,7 @@ interface AgentModule {
 - Run 固定实际使用的 Agent/Engine/Model/Policy 版本。
 - Slice 4 新建不可变 Development Agent Revision，固定 baseline Context Policy Revision，并在原有 Grant 上增加 `cmaster.artifact.create_text`；不得修改 Slice 3 已发布 Revision。
 
-## 6. Models
+## 7. Models
 
 **拥有**：Model Profile、Catalog、能力、路由、Gateway、usage 和 Fallback Policy。
 
@@ -147,7 +192,7 @@ interface ModelModule {
 - Slice 4 使用新的不可变 Model Profile ID，显式固定 `contextWindowTokens` 与 `maxOutputTokens`。Context 输入预算同时容纳输出与安全余量，并取 Primary、可用 Fallback 和 Context Policy 限制的最小值。
 - 摘要调用仍通过 Models Module，禁用 Tool，ModelCall 标记 `purpose = context_summary` 并记录实际 Profile/usage；首版复用 Run 的 Primary 与受限 Fallback，不建设独立 Summarizer Catalog。
 
-## 7. Tools
+## 8. Tools
 
 **拥有**：Tool Capability、不可变 Tool Revision、Skill Descriptor、Tool Provider、Connector、Tool Grant、Tool-call Ledger。
 
@@ -172,7 +217,7 @@ interface ToolRuntime {
 - Tool 安装/Provider 管理不暴露在执行 Interface；Agent Skills/Legacy Parser 与完整隔离 Provider 管理后置到独立 Slice。
 - Slice 4 增加低风险、无需 Employee Confirmation 的 `cmaster.artifact.create_text` Capability，只接受 title、`plain_text | markdown` 和最多 48 KiB UTF-8 内容。Provider Adapter 由 Artifacts Module 拥有，并使用稳定 `sourceToolCallId` 调用 Artifact Module；Tools 继续只拥有通用治理与 Ledger。
 
-## 8. Context
+## 9. Context
 
 **拥有**：Context Policy、Context Manifest、Invocation Context 构建；Memory/Knowledge 可分别成为内部或后续独立 Module。
 
@@ -188,10 +233,11 @@ interface ContextBuilder {
 - 有效预算为 Model Profile、Primary/Fallback、Context Policy、输出预留和安全余量的交集。首版以 UTF-8 bytes 加结构开销做确定性保守估算。
 - 固定优先级为 Agent instructions/Tool contract、完整 Trigger Message、最近完整 Conversation Turns 与其可读 Text/Markdown Artifact、较早连续历史的 Context Summary。
 - Context Summary 使用固定通用结构；它和 Artifact 内容始终是低信任参考资料，不能提升为 Agent instructions。极端历史若连一次摘要请求也无法容纳则明确失败，不静默丢弃。
-- Manifest 保存来源 ID/sequence、content hash、纳入方式、预算和 Summary 引用，不复制 Message 或 Artifact 正文；恢复时重新读取并校验 hash。
+- Manifest 保存来源 ID/sequence、content hash、纳入方式、预算和 Summary 引用，不复制 Message、Workspace File 或 Artifact 正文；恢复时重新读取并校验 hash。
+- Workspace File 来源固定 Workspace/Working Root/Revision/path；Context Builder 只通过受治理的 Workspaces read capability 按需读取，不遍历存储或绕过 `.cmasterignore`。
 - 输出是 Engine-neutral 的有限投影；不拥有 Conversation 存储、Knowledge ingestion、Tool 执行或 Provider 消息格式。
 
-## 9. Artifacts
+## 10. Artifacts
 
 **拥有**：Artifact、Artifact Version、Artifact Content metadata、访问控制和派生内容。
 
@@ -216,7 +262,8 @@ interface ArtifactContentStore {
 }
 ```
 
-- Domain/Contract 不暴露路径和 S3 key。Message、ToolOutcome 和 Run Event 使用确切 `artifactId + artifactVersionId`，不得指向可变化的 latest version。
+- Artifact 固定属于一个 Workspace；可记录 source Working Root/Workspace Revision/path provenance，但不拥有 mutable Workspace File。跨 Workspace 使用必须经显式治理复制并创建新 Artifact identity。
+- Domain/Contract 不暴露存储路径和 S3 key。Message、ToolOutcome 和 Run Event 使用确切 `artifactId + artifactVersionId`，不得指向可变化的 latest version。
 - Slice 4 的 Artifact 默认由 initiating Principal 私有；metadata、完整读取和 Range read 均执行同 Organization、同 Principal 权限检查。
 - 写入顺序为 staging → UTF-8/大小/media type 检查 → SHA-256 → atomic promote → ArtifactContent/Artifact/Version 单事务 metadata commit。数据库只记录已正式可用的 Content。
 - `(organizationId, sourceToolCallId)` 唯一且校验 request hash；恢复同一 ToolCall 返回原 Artifact，不同内容冲突。同 Organization、相同 bytes 和 media type 复用 ArtifactContent/Blob。
@@ -224,7 +271,7 @@ interface ArtifactContentStore {
 - Browser 只开放 metadata 与指定 Version 内容读取，不提供创建、编辑或删除 Command。删除最终仍由引用检查和 GC 完成。
 - Slice 5 补齐 private Artifact list、Version list/current exact Version ID 与安全 download disposition；Library 与 Message 预览始终导航到确切 Version，不暴露浮动 latest 内容 URL。
 
-## 10. Governance
+## 11. Governance
 
 **拥有**：Policy/Revision、Decision、Obligation、Approval、Audit 与授权组合。
 
@@ -257,7 +304,7 @@ interface CredentialBroker {
 
 完整企业实现后置，但 Domain 从一开始只保存 Credential Reference。
 
-## 11. Automation
+## 12. Automation
 
 **拥有**：Task、Task Dependency、Workflow/Revision、Workflow Execution、Runbook、Schedule/Trigger 定义。
 
@@ -274,7 +321,7 @@ interface AutomationModule {
 - Workflow Execution 协调 Task，Task 的执行尝试可启动 Run。
 - Runbook 复用同一 Workflow Engine；RPA 是 Tool。
 
-## 12. Contracts 与 Presenter
+## 13. Contracts 与 Presenter
 
 外部 Contract 位于 `packages/contracts`：
 
@@ -297,9 +344,10 @@ interface StreamEnvelope<T> {
 - Slice 4 增加 `invocation.context_built` 与 `artifact.created` 安全事件，只携带 ID、计数、策略/媒体类型和估算用量，不携带正文、hash、Prompt 或 storage key。Context Manifest/Summary 正文不提供 Browser REST。
 - Artifact 内容端点支持完整读取和单一 `bytes` Range（含 open-ended/suffix）；非法、越界或多区间请求返回 416。最小 Registry 提供安全 Text/Markdown Renderer 与未知类型 Fallback。
 - Slice 5 增加只读 Workspace Summary/Conversation/Pending/Artifact Projection，以及按需构造的 Run UI Projection Snapshot 和 sequence stream。Server Experience Adapter 只组合 Module 公开 Query，不拥有表或跨 Module SQL；Command 继续走领域 REST，不建立 `/chat` 或 Next.js Server Action 写路径。
-- Workspace React Feature 只消费 CMaster-owned Projection Contract；AI Elements、AI SDK UI 或其他框架类型在 Web Adapter 终止。
+- Employee Experience React Feature 只消费 CMaster-owned Projection Contract；AI Elements、AI SDK UI 或其他框架类型在 Web Adapter 终止。
+- Filesystem Workspace Contract 以 Workspace/Worktree/Conversation 层级 URL 表达 scope，并提供 bounded Workspace list、Worktree list、File tree/open、Change Set/Revision 与 Work Area Projection；Browser 不提交可信 path、owner 或 Operation Mode 上限。
 
-## 13. Persistence、Messaging 与 Observability Ports
+## 14. Persistence、Messaging 与 Observability Ports
 
 ```ts
 interface RunDispatcher {

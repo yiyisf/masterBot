@@ -28,16 +28,41 @@
 
 Invocation 保存执行 Agent 和父 Invocation；有效权限由 Principal 权限、Agent Grant、Policy 和 Invocation 限制取交集，子级不能扩权。
 
-## 3. Conversation 与执行
+## 3. Filesystem Workspace
+
+```text
+Employee Principal 1 ── * Workspace
+Workspace 0..1 ── 1 Repository Binding
+Workspace 1 ── * Working Root
+Git Working Root 1 ── 1 Git Worktree
+Working Root 1 ── * Workspace Revision
+Workspace Revision 1 ── * Workspace File state
+Workspace Revision 1 ── * proposed Workspace Change Set
+Workspace 1 ── * Conversation
+Workspace 1 ── * Artifact
+```
+
+- Workspace 由一个 Employee Principal 私有拥有且不可跨 Principal 分享；Organization scope 仍显式保存。Workspace 状态至少区分 `provisioning | ready | failed | archived | deleting`。
+- Workspace 来源为 `empty | git`。Git 来源最多一个 Repository Binding；它保存受信任 Connector/Credential reference、remote identity 和默认 Branch，不保存 Credential 或 Browser 提交的 Server path。
+- 空 Workspace 有一个 stable default Working Root；Git Workspace 可有多个 Worktree。Conversation 固定一个 Working Root，Run 不跨 Root。
+- Workspace Revision 是一个 Working Root 的一致不可变状态 identity，不等于 Git Commit。Workspace File content 存共享持久 Workspace Content Storage；PostgreSQL 保存 owner、路径、media/size/hash、Revision 关系和 Adapter opaque reference。
+- Change Set 固定 source Run、Working Root、base Revision、request hash、文件 create/modify/move/delete entries、Approval reference 与 `proposed | approved | rejected | applying | applied | conflicted | failed` 状态。调整创建新 Change Set，不修改旧 Subject。
+- Apply 以 current Revision 比较 base；确定性证明不重叠时可重放到新 base，重叠或未知时进入 conflict。成功应用原子产生一个新 Revision 和 receipt。
+- Workspace Operation Mode 为 `observe | edit_with_confirmation | trusted_automation`。Run 保存启动时最大模式；当前 Workspace/Policy 收缩可立即限制后续 Tool Call，提升不改变现有 Run。
+- Archive 可恢复且禁止新工作；Delete 受 active Run、dirty Worktree、未解决 Change Set 和 Retention 约束，不自动修改 Git Remote。
+
+## 4. Conversation 与执行
 
 ### Conversation / Message
 
 ```text
+Workspace 1 ── * Conversation
+Working Root 1 ── * Conversation
 Conversation 1 ── * Message
 ```
 
 - Message 是员工可见内容的不可变事实。
-- Conversation 默认由 `createdByPrincipalId` 标识的创建 Principal 私有；Organization 隔离不等于共享授权，未来共享需要显式参与者或 Policy 模型。
+- Conversation 固定 `workspaceId + workingRootId` 并继承 Workspace owner 私有边界；不存在 Membership 或跨 Principal共享授权。scope 不匹配、跨 Principal 与不存在使用相同 not-found 语义。
 - Conversation 可包含多次 Run 的输入与输出。
 - Employee 外部输入仍只有 Text Part；Slice 4 的 Assistant Message 可包含 Text Part 和指向确切 Artifact Version 的 Artifact Reference Part，旧 Message 不随 Artifact 新版本变化。
 - 后一次 Run 的 Context Manifest 引用历史 Message ID，不复制 Message 内容到 Run；Message Trigger 的 sequence 是该 Run 可见历史的固定上界。
@@ -60,6 +85,8 @@ Run
 ├── id / organizationId / initiatingPrincipalId
 ├── status / triggerType / triggerRef
 ├── conversationId?
+├── workspaceId? / workingRootId? / baseWorkspaceRevisionId?
+├── maxWorkspaceOperationMode?
 ├── agentId / agentRevisionId
 ├── resolvedEngineProfileId / resolvedModelProfileId
 ├── resolvedPolicyRevisionIds
@@ -101,7 +128,7 @@ approvalId? / startedAt / completedAt
 
 一个 ToolCall 可以有多个带有限 Lease 的 Dispatch Attempt，但 request、Tool Revision 和 idempotency key 不变。Attempt Lease 到期后，`retry_same_call`/`idempotency_key` 可建立 fenced 重试 Attempt，`reconcile` 只能建立查询外部状态的 Attempt；迟到结果不能覆盖新 Attempt。未知非幂等或 reconciliation 无法确认的副作用使用 `requires_review`，不得自动假定成功或失败；Employee 只能带着不确定性继续或取消 Run，不能改写审计事实或直接重试原 ToolCall。
 
-## 4. Event、Checkpoint 与一致性
+## 5. Event、Checkpoint 与一致性
 
 ### RunEvent
 
@@ -121,7 +148,7 @@ Checkpoint 保存安全恢复所需 Working State、Engine Adapter/version、Con
 
 ### ContextManifest / ContextSummary
 
-ContextManifest 是一次 Invocation 实际 Context 选择的不可变、Organization-scoped 记录，`(organizationId, invocationId)` 唯一。它保存 Trigger Message sequence、Context Policy version、预算/估算用量，以及有序来源项的 source ID/sequence、content hash、分类与 `verbatim | summary` 纳入方式；不复制 Message 或 Artifact 正文。
+ContextManifest 是一次 Invocation 实际 Context 选择的不可变、Organization-scoped 记录，`(organizationId, invocationId)` 唯一。Workspace File 来源同时固定 Workspace/Working Root/Revision/path。Manifest 保存 Trigger Message sequence、Context Policy version、预算/估算用量，以及有序来源项的 source ID/sequence、content hash、分类与 `verbatim | summary` 纳入方式；不复制 Message、Workspace File 或 Artifact 正文。
 
 ContextSummary 是对一个明确连续来源区间的有损派生内容。首版使用固定的 Employee Goal、Explicit Constraints、Established Facts、Decisions and Commitments、Relevant Artifacts、Unresolved Items 结构；它不是 Message、Memory 或 Knowledge，也不能提升来源内容的指令权限。恢复通过 Manifest 重新读取权威来源并校验 hash；已完成 Manifest 不重新选择或摘要。
 
@@ -133,7 +160,7 @@ Slice 5 的 Run UI Projection Snapshot 与 sequence stream 是从 Run 状态、I
 
 当前状态表是查询权威；RunEvent 是时间线权威。应用事务同时写状态、Event 和 Outbox，不采用完整 Event Sourcing。Context/Execution 和 Artifact/Tools 的跨 Module 提交不使用分布式事务，分别以稳定 invocationId 与 sourceToolCallId 幂等收敛。
 
-## 5. Agent、Model 与 Policy 版本
+## 6. Agent、Model 与 Policy 版本
 
 ### Agent / AgentRevision
 
@@ -160,7 +187,7 @@ Decision 保存实际 Policy Revision 与 obligation。Run 固定关键 Revision
 
 Evidence 固定 Suite、Case、Candidate Revision、Model/Tool/Policy/Data set 与 evaluator 版本，支持发布门禁和 Canary 对比。
 
-## 6. Tool、Skill 与 Connector
+## 7. Tool、Skill 与 Connector
 
 ```text
 ToolProvider 1 ── * Tool
@@ -174,14 +201,14 @@ Connector 1 ── * contributed Tool
 - Connector 保存系统配置和 `credentialRef`，不保存领域可见明文 Secret。
 - Slice 3 不建设本地逐 Principal/逐 Tool RBAC；Principal Entitlement 来自可信 Identity/Policy 输入。
 
-## 7. Artifact
+## 8. Artifact
 
 ```text
 Artifact 1 ── * ArtifactVersion
 ArtifactVersion * ── 1 ArtifactContent
 ```
 
-Artifact 保存种类、标题、访问 Policy、`createdForPrincipalId` 和当前版本；Version 保存 provenance、`createdByInvocationId/sourceToolCallId` 与 `contentId`；Content 保存 Organization、storage adapter、opaque key、SHA-256、media type、size 和状态。
+Artifact 保存 `workspaceId`、种类、标题、访问 Policy、`createdForPrincipalId` 和当前版本；Version 保存 provenance、`createdByInvocationId/sourceToolCallId`、可选 source Working Root/Workspace Revision/path 与 `contentId`；Content 保存 Organization、storage adapter、opaque key、SHA-256、media type、size 和状态。Artifact 随 Workspace 存续而不随 source Worktree 删除；跨 Workspace copy 创建新 Artifact identity。
 
 - Version 不可原地覆盖；Message 固定引用确切 Version，而不是可变化的 current version。
 - `(organizationId, sourceToolCallId)` 唯一并关联 request hash；同一 ToolCall 恢复返回原 Artifact，不同内容产生幂等冲突。
@@ -190,7 +217,7 @@ Artifact 保存种类、标题、访问 Policy、`createdForPrincipalId` 和当�
 - Storage migration 只改变 Content location，不改变 Artifact/Version identity。
 - Blob 在无引用后由 GC 延迟清理；quarantine、derivative、trash 和完整 GC 在有上传、预览、删除调用者后实现。
 
-## 8. Task 与 Workflow
+## 9. Task 与 Workflow
 
 ```text
 Workflow 1 ── * WorkflowRevision
@@ -202,11 +229,12 @@ Task 1 ── * attempt Run
 
 Plan 不是持久 Task。Schedule/Webhook 只产生 Trigger。Runbook 是带风险、审批、证据和补偿要求的 Workflow Revision，不使用第二套引擎。
 
-## 9. 推荐 Schema 所有权
+## 10. 推荐 Schema 所有权
 
 | Module | 代表性表/集合 |
 |---|---|
 | identity | organizations, principals, external_identities, sessions |
+| workspaces | workspaces, repository_bindings, workspace_roots, git_worktrees, workspace_revisions, workspace_file_entries, workspace_change_sets, workspace_change_entries, workspace_operation_receipts |
 | conversations | conversations, messages |
 | execution | runs, invocations, run_events, checkpoints, interrupts, run_dispatch, outbox |
 | agents | agents, agent_revisions, agent_drafts, eval_suites, eval_evidence |
@@ -221,11 +249,14 @@ Plan 不是持久 Task。Schedule/Webhook 只产生 Trigger。Runbook 是带风�
 
 首个模块化单体使用同一 PostgreSQL `public` Schema，不按 Module 拆分 Schema 或数据库 Role。Migration 和 Repository 留在所属 Package；同 Module 建立完整 FK，跨 Module FK 只沿单向依赖建立。只有真实权限隔离或独立部署需求出现后，才重新评估多 Schema。
 
-## 10. 索引与保留基线
+## 11. 索引与保留基线
 
 必须支持的访问路径：
 
-- Organization + Principal 的 Conversation 最近列表
+- Organization + Principal 的 Workspace list 与 lifecycle status
+- Workspace + Working Root 的 Conversation 最近列表
+- Working Root current Revision、Change Set status/base Revision 与 file path
+- Repository Binding provisioning、Worktree Branch/status 与 cleanup eligibility
 - Run by ID、status、Trigger、created time
 - RunEvent by `(run_id, sequence)`
 - Worker 可租约的 pending Run 与 lease expiry

@@ -1,6 +1,14 @@
 erDiagram
   ORGANIZATION ||--o{ PRINCIPAL : contains
-  ORGANIZATION ||--o{ CONVERSATION : owns
+  PRINCIPAL ||--o{ WORKSPACE : privately_owns
+  WORKSPACE ||--o| REPOSITORY_BINDING : binds
+  WORKSPACE ||--|{ WORKING_ROOT : contains
+  WORKING_ROOT ||--o| GIT_WORKTREE : realizes
+  WORKING_ROOT ||--|{ WORKSPACE_REVISION : versions
+  WORKSPACE_REVISION ||--o{ WORKSPACE_FILE_ENTRY : contains
+  WORKSPACE_REVISION ||--o{ WORKSPACE_CHANGE_SET : bases
+  WORKSPACE ||--o{ CONVERSATION : contains
+  WORKING_ROOT ||--o{ CONVERSATION : scopes
   CONVERSATION ||--o{ MESSAGE : contains
   ORGANIZATION ||--o{ RUN : owns
   MESSAGE o|--o{ RUN : triggers
@@ -10,6 +18,7 @@ erDiagram
   INVOCATION ||--o{ TOOL_CALL : makes
   RUN ||--o{ RUN_EVENT : records
   RUN ||--o{ CHECKPOINT : saves
+  WORKSPACE ||--o{ ARTIFACT : contains
   RUN ||--o{ ARTIFACT : produces
   ARTIFACT ||--|{ ARTIFACT_VERSION : versions
   ARTIFACT_VERSION }o--|| ARTIFACT_CONTENT : references
