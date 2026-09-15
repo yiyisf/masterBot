@@ -7,6 +7,7 @@ Only create a business Module when its Slice introduces a real public interface,
 | `@cmaster/kernel` | 0 | Minimal `Brand` and `Clock` primitives |
 | `@cmaster/contracts` | 0 | Versioned external Zod/OpenAPI contracts and typed client |
 | `@cmaster/identity` | 1 | Development Organization, Principal, trusted Request Identity |
+| `@cmaster/workspaces` | 6 | Principal-private Workspace lifecycle, Working Roots, Revisions, Change Sets, Git and Sandbox adapters |
 | `@cmaster/agents` | 1 | Development Echo Agent and immutable Revision foundation |
 | `@cmaster/conversations` | 1 | Conversation and immutable Message behavior |
 | `@cmaster/execution` | 1 | Run, Invocation, Run Event, Outbox, Lease, Echo/AI SDK Engines, durable output generations |

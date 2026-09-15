@@ -140,6 +140,23 @@ describe('loadServerConfig', () => {
     }, [])).toThrow('Agent Revision ID must be distinct');
   });
 
+  it('keeps Filesystem Workspace disabled by default and requires next architecture', () => {
+    expect(loadServerConfig({
+      DATABASE_URL: 'postgresql://localhost/cmaster',
+    }, []).features.filesystemWorkspace).toBe(false);
+
+    expect(() => loadServerConfig({
+      DATABASE_URL: 'postgresql://localhost/cmaster',
+      CMASTER_FILESYSTEM_WORKSPACE_ENABLED: 'true',
+    }, [])).toThrow('Filesystem Workspace requires the next architecture');
+
+    expect(loadServerConfig({
+      DATABASE_URL: 'postgresql://localhost/cmaster',
+      NEXT_ARCHITECTURE_ENABLED: 'true',
+      CMASTER_FILESYSTEM_WORKSPACE_ENABLED: 'true',
+    }, []).features.filesystemWorkspace).toBe(true);
+  });
+
   it('keeps Employee Workspace disabled by default and requires every Slice 4 prerequisite', () => {
     expect(loadServerConfig({
       DATABASE_URL: 'postgresql://localhost/cmaster',

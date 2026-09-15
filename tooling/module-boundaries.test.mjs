@@ -51,6 +51,9 @@ test('public Contracts expose no framework, runtime, database, or filesystem typ
 test('PostgreSQL adapters query only tables owned by their Module', async () => {
   const ownership = {
     identity: new Set(['organizations', 'principals']),
+    workspaces: new Set([
+      'workspaces', 'workspace_roots', 'workspace_revisions', 'workspace_operation_receipts',
+    ]),
     agents: new Set(['agents', 'agent_revisions']),
     conversations: new Set(['conversations', 'messages', 'conversation_rename_receipts']),
     artifacts: new Set(['artifacts', 'artifact_versions', 'artifact_contents']),
@@ -68,6 +71,7 @@ test('PostgreSQL adapters query only tables owned by their Module', async () => 
   };
   const files = {
     identity: 'packages/identity/src/index.ts',
+    workspaces: 'packages/workspaces/src/index.ts',
     agents: 'packages/agents/src/index.ts',
     conversations: 'packages/conversations/src/index.ts',
     artifacts: 'packages/artifacts/src/postgres.ts',

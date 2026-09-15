@@ -2,6 +2,10 @@ import { systemStatusSchema } from '@cmaster/contracts';
 import cors from '@fastify/cors';
 import Fastify, { type FastifyInstance } from 'fastify';
 import { registerRunUiPresenter } from './run-ui-presenter.js';
+import {
+  registerFilesystemWorkspaceApi,
+  type FilesystemWorkspaceApiDependencies,
+} from './filesystem-workspace-api.js';
 import { registerArtifactApi, type ArtifactApiDependencies } from './artifact-api.js';
 import type { ServerConfig } from './config.js';
 import { EnvironmentFeatureFlags, type FeatureFlags } from './feature-flags.js';
@@ -17,6 +21,7 @@ export interface ApiDependencies {
   runApi?: RunApiDependencies;
   artifactApi?: ArtifactApiDependencies;
   workspaceApi?: WorkspaceApiDependencies;
+  filesystemWorkspaceApi?: FilesystemWorkspaceApiDependencies;
   toolConfirmationCoordinator?: ToolConfirmationCoordinator;
 }
 
@@ -27,6 +32,7 @@ export function buildApi(dependencies: ApiDependencies): FastifyInstance {
     toolRuntime: dependencies.config.features.toolRuntime,
     contextArtifacts: dependencies.config.features.contextArtifacts,
     employeeWorkspace: dependencies.config.features.employeeWorkspace,
+    filesystemWorkspace: dependencies.config.features.filesystemWorkspace,
   });
 
   if (featureFlags.isEnabled('toolRuntime') && !dependencies.toolConfirmationCoordinator) {
@@ -37,6 +43,9 @@ export function buildApi(dependencies: ApiDependencies): FastifyInstance {
   }
   if (featureFlags.isEnabled('employeeWorkspace') && !dependencies.workspaceApi) {
     throw new Error('Employee Workspace requires a Workspace API');
+  }
+  if (featureFlags.isEnabled('filesystemWorkspace') && !dependencies.filesystemWorkspaceApi) {
+    throw new Error('Filesystem Workspace requires a Workspace Catalog API');
   }
 
   void app.register(cors, {
@@ -58,6 +67,9 @@ export function buildApi(dependencies: ApiDependencies): FastifyInstance {
     }
     if (featureFlags.isEnabled('employeeWorkspace') && dependencies.workspaceApi) {
       registerWorkspaceApi(app, dependencies.workspaceApi);
+    }
+    if (featureFlags.isEnabled('filesystemWorkspace') && dependencies.filesystemWorkspaceApi) {
+      registerFilesystemWorkspaceApi(app, dependencies.filesystemWorkspaceApi);
     }
     if (dependencies.runApi) {
       registerRunApi(app, {

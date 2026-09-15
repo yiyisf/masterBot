@@ -57,7 +57,20 @@ describe('next API skeleton', () => {
     expect((await app.inject({
       method: 'GET', url: '/api/v1/workspace/conversations',
     })).statusCode).toBe(404);
+    expect((await app.inject({
+      method: 'GET', url: '/api/v1/workspaces',
+    })).statusCode).toBe(404);
     await app.close();
+  });
+
+  it('fails closed when Filesystem Workspace is enabled without its Catalog Adapter', () => {
+    expect(() => buildApi({
+      config,
+      database: database(true),
+      featureFlags: new InMemoryFeatureFlags({
+        nextArchitecture: true, filesystemWorkspace: true,
+      }),
+    })).toThrow('Filesystem Workspace requires a Workspace Catalog API');
   });
 
   it('fails closed when Employee Workspace is enabled without its Experience Adapter', () => {
