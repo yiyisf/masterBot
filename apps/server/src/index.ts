@@ -44,6 +44,7 @@ import {
   PostgresDevelopmentIdentity,
   principalId,
 } from '@cmaster/identity';
+import { PostgresWorkspaceCatalog } from '@cmaster/workspaces';
 import { buildApi } from './app.js';
 import { GovernedAgentToolRuntime } from './governed-agent-tools.js';
 import { loadServerConfig, resolveDevelopmentAgentConfig } from './config.js';
@@ -75,6 +76,7 @@ const agents = new PostgresAgentModule(
 const conversations = new PostgresConversationModule(database.pool);
 const execution = new PostgresExecutionModule(database.pool);
 const approvals = new PostgresApprovalModule(database.pool);
+const workspaces = new PostgresWorkspaceCatalog(database.pool);
 
 let models: ModelGateway | undefined;
 let artifacts: PostgresArtifactModule | undefined;
@@ -224,6 +226,9 @@ const api = config.role === 'worker' ? undefined : buildApi({
     runApi: { identity, agents, conversations, execution, notifier },
     ...(config.features.employeeWorkspace
       ? { workspaceApi: { identity, conversations, execution, approvals } }
+      : {}),
+    ...(config.features.filesystemWorkspace
+      ? { filesystemWorkspaceApi: { identity, catalog: workspaces } }
       : {}),
     ...(artifacts ? { artifactApi: { identity, artifacts } } : {}),
     ...(toolConfirmationCoordinator ? { toolConfirmationCoordinator } : {}),

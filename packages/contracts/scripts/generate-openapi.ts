@@ -11,6 +11,7 @@ import { z } from 'zod';
 extendZodWithOpenApi(z);
 const artifacts = await import('../src/artifacts.js');
 const conversations = await import('../src/conversations.js');
+const filesystemWorkspaces = await import('../src/filesystem-workspaces.js');
 const composer = await import('../src/composer.js');
 const pendingInteractions = await import('../src/pending-interactions.js');
 const runs = await import('../src/runs.js');
@@ -29,6 +30,12 @@ const artifactVersionPage = registry.register(
   'ArtifactVersionPage', artifacts.artifactVersionPageSchema,
 );
 const conversation = registry.register('Conversation', conversations.conversationSchema);
+const filesystemWorkspace = registry.register(
+  'FilesystemWorkspace', filesystemWorkspaces.filesystemWorkspaceSchema,
+);
+const filesystemWorkspacePage = registry.register(
+  'FilesystemWorkspacePage', filesystemWorkspaces.filesystemWorkspacePageSchema,
+);
 const conversationRunPage = registry.register('ConversationRunPage', composer.conversationRunPageSchema);
 const message = registry.register('Message', conversations.messageSchema);
 const messagePage = registry.register('MessagePage', conversations.messagePageSchema);
@@ -72,6 +79,70 @@ const problemResponse = (description: string) => ({
 registry.registerPath({
   method: 'get', path: '/api/v1/system/status', summary: 'Read system status',
   responses: { 200: { description: 'Current status', content: { 'application/json': { schema: systemStatus } } } },
+});
+registry.registerPath({
+  method: 'post', path: '/api/v1/workspaces', summary: 'Provision an empty private Workspace',
+  request: {
+    headers: idempotencyHeaders,
+    body: { required: true, content: { 'application/json': { schema: filesystemWorkspaces.createFilesystemWorkspaceRequestSchema } } },
+  },
+  responses: {
+    201: { description: 'Current Workspace after provision acceptance or replay', headers: idempotencyReplayHeaders, content: { 'application/json': { schema: filesystemWorkspace } } },
+    400: problemResponse('Invalid command'), 409: problemResponse('Idempotency conflict'),
+  },
+});
+registry.registerPath({
+  method: 'get', path: '/api/v1/workspaces', summary: 'List private Workspaces',
+  request: {
+    query: z.object({
+      cursor: z.string().min(1).optional(),
+      limit: z.coerce.number().int().min(1).max(50).default(20),
+    }),
+  },
+  responses: {
+    200: { description: 'Private Workspace page', content: { 'application/json': { schema: filesystemWorkspacePage } } },
+    400: problemResponse('Invalid request'),
+  },
+});
+registry.registerPath({
+  method: 'get', path: '/api/v1/workspaces/by-command/{commandId}',
+  summary: 'Reconcile a provision-Workspace Command',
+  request: { params: idPath('commandId') },
+  responses: {
+    200: { description: 'Current Workspace for the accepted provision Command', content: { 'application/json': { schema: filesystemWorkspace } } },
+    400: problemResponse('Invalid request'), 404: problemResponse('Command result not found'),
+  },
+});
+registry.registerPath({
+  method: 'get', path: '/api/v1/workspaces/{workspaceId}', summary: 'Read a private Workspace',
+  request: { params: idPath('workspaceId') },
+  responses: {
+    200: { description: 'Private Workspace', content: { 'application/json': { schema: filesystemWorkspace } } },
+    400: problemResponse('Invalid request'), 404: problemResponse('Not found'),
+  },
+});
+for (const [action, targetStatus] of [
+  ['archive', 'archived'], ['restore', 'ready'],
+] as const) {
+  registry.registerPath({
+    method: 'post', path: `/api/v1/workspaces/{workspaceId}/${action}`,
+    summary: `${action === 'archive' ? 'Archive' : 'Restore'} a private Workspace`,
+    request: { params: idPath('workspaceId'), headers: idempotencyHeaders },
+    responses: {
+      200: { description: `Current Workspace after ${targetStatus} Command acceptance or replay`, headers: idempotencyReplayHeaders, content: { 'application/json': { schema: filesystemWorkspace } } },
+      400: problemResponse('Invalid command'), 404: problemResponse('Not found'),
+      409: problemResponse('Idempotency conflict'),
+    },
+  });
+}
+registry.registerPath({
+  method: 'get', path: '/api/v1/workspaces/{workspaceId}/lifecycle-commands/{commandId}',
+  summary: 'Reconcile a Workspace lifecycle Command',
+  request: { params: z.object({ workspaceId: z.uuid(), commandId: z.uuid() }) },
+  responses: {
+    200: { description: 'Current Workspace for the accepted lifecycle Command', content: { 'application/json': { schema: filesystemWorkspace } } },
+    400: problemResponse('Invalid request'), 404: problemResponse('Command result not found'),
+  },
 });
 registry.registerPath({
   method: 'get', path: '/api/v1/workspace/summary', summary: 'Read bounded Employee Workspace summary',

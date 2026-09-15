@@ -1,6 +1,6 @@
 # Filesystem Workspace Slice
 
-> **Status: Accepted design; implementation requires explicit authorization.**
+> **Status: Accepted design; sequential implementation authorized.**
 >
 > Detailed product and interaction record: [`docs/design/filesystem-workspace.html`](../design/filesystem-workspace.html).
 

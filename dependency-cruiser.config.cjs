@@ -32,6 +32,12 @@ module.exports = {
       to: { path: '^(apps|packages/(?!identity/|kernel/))' },
     },
     {
+      name: 'workspaces-must-not-depend-on-runtime-modules',
+      severity: 'error',
+      from: { path: '^packages/workspaces/' },
+      to: { path: '^(apps|packages/(agents|artifacts|context|conversations|execution|governance|models|tools)/)' },
+    },
+    {
       name: 'agents-must-not-depend-on-downstream-modules',
       severity: 'error',
       from: { path: '^packages/agents/' },

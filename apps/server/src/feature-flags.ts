@@ -1,4 +1,9 @@
-export type FeatureFlag = 'nextArchitecture' | 'toolRuntime' | 'contextArtifacts' | 'employeeWorkspace';
+export type FeatureFlag =
+  | 'nextArchitecture'
+  | 'toolRuntime'
+  | 'contextArtifacts'
+  | 'employeeWorkspace'
+  | 'filesystemWorkspace';
 
 export interface FeatureFlags {
   isEnabled(flag: FeatureFlag): boolean;

@@ -10,6 +10,7 @@
     { "path": "../../packages/artifacts" },
     { "path": "../../packages/context" },
     { "path": "../../packages/identity" },
+    { "path": "../../packages/workspaces" },
     { "path": "../../packages/agents" },
     { "path": "../../packages/conversations" },
     { "path": "../../packages/models" },

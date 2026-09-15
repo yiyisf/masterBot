@@ -43,6 +43,16 @@ export {
   type ConversationRunPageContract,
   type ConversationRunSummaryContract,
 } from '#internal/composer';
+export {
+  createFilesystemWorkspaceRequestSchema,
+  filesystemWorkspaceLifecycleStatusSchema,
+  filesystemWorkspacePageSchema,
+  filesystemWorkspaceSchema,
+  workspaceOperationModeSchema,
+  type FilesystemWorkspaceContract,
+  type FilesystemWorkspacePageContract,
+  type WorkspaceOperationModeContract,
+} from '#internal/filesystem-workspaces';
 export { problemDetailsSchema, type ProblemDetails } from '#internal/problem';
 export {
   acceptRunResponseSchema,
