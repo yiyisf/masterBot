@@ -5,10 +5,18 @@ import {
   principalId,
 } from '@cmaster/identity';
 import {
+  GitWorkspaceProvisioningError,
   PostgresWorkspaceCatalog,
+  PostgresWorkspaceProvisioningWorker,
+  PostgresWorkspaceWorktreeWorker,
+  PostgresWorkspaceWorkingRoots,
   WorkspaceIdempotencyConflictError,
+  WorkspaceLifecycleConflictError,
   WorkspaceNotFoundError,
   workspaceCommandId,
+  workspaceConnectorId,
+  workspaceRepositoryId,
+  type GitWorkspaceProvisioner,
 } from '@cmaster/workspaces';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { Pool } from 'pg';
@@ -37,6 +45,216 @@ beforeAll(async () => {
 afterAll(async () => pool.end());
 
 describe('PostgreSQL WorkspaceCatalog', () => {
+  it('durably accepts and completes a Git provision exactly once through a recoverable Worker lease', async () => {
+    const accepted = await new PostgresWorkspaceCatalog(pool).provisionGit(owner.resolveRequest(), {
+      commandId: workspaceCommandId(randomUUID()),
+      name: 'Worker provisioned Git',
+      operationMode: 'observe',
+      source: {
+        connectorId: workspaceConnectorId(randomUUID()),
+        repositoryId: workspaceRepositoryId(randomUUID()),
+        defaultBranch: 'main',
+      },
+    });
+    expect(accepted).toMatchObject({
+      replayed: false,
+      value: {
+        name: 'Worker provisioned Git',
+        lifecycleStatus: 'provisioning',
+        defaultWorkingRoot: null,
+        provisioningFailure: null,
+      },
+    });
+    await expect(new PostgresWorkspaceCatalog(pool).get(
+      owner.resolveRequest(), accepted.value.id,
+    )).resolves.toEqual(accepted.value);
+
+    const requests: unknown[] = [];
+    const provisioner: GitWorkspaceProvisioner = {
+      async provision(request) {
+        requests.push(request);
+        return {
+          headCommit: '1111111111111111111111111111111111111111',
+          contentManifestHash: 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+        };
+      },
+      async createWorktree(request) {
+        requests.push(request);
+        return {
+          headCommit: '1111111111111111111111111111111111111111',
+          contentManifestHash: 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+        };
+      },
+    };
+    const worker = new PostgresWorkspaceProvisioningWorker(pool, provisioner, {
+      workerId: 'workspace-test-worker',
+      leaseTtlMs: 30_000,
+    });
+
+    await expect(worker.executeOne()).resolves.toBe(true);
+    await expect(worker.executeOne()).resolves.toBe(false);
+    expect(requests).toHaveLength(1);
+    await expect(new PostgresWorkspaceCatalog(pool).get(
+      owner.resolveRequest(), accepted.value.id,
+    )).resolves.toMatchObject({
+      id: accepted.value.id,
+      lifecycleStatus: 'ready',
+      defaultWorkingRoot: { kind: 'git_worktree' },
+      provisioningFailure: null,
+    });
+    const workingRoots = new PostgresWorkspaceWorkingRoots(pool);
+    await expect(workingRoots.listWorktrees(
+      owner.resolveRequest(), accepted.value.id, { limit: 20 },
+    )).resolves.toMatchObject({
+      items: [{
+        workspaceId: accepted.value.id,
+        branchName: 'main',
+        lifecycleStatus: 'ready',
+        isDefault: true,
+      }],
+    });
+    const commandId = workspaceCommandId(randomUUID());
+    const worktreeOperation = await workingRoots.createWorktree(
+      owner.resolveRequest(), accepted.value.id,
+      { commandId, branchName: 'feature/private-work' },
+    );
+    expect(worktreeOperation).toMatchObject({
+      replayed: false,
+      value: {
+        workspaceId: accepted.value.id,
+        branchName: 'feature/private-work',
+        status: 'pending',
+      },
+    });
+    await expect(new PostgresWorkspaceWorkingRoots(pool).createWorktree(
+      owner.resolveRequest(), accepted.value.id,
+      { commandId, branchName: 'feature/private-work' },
+    )).resolves.toEqual({ ...worktreeOperation, replayed: true });
+    await expect(new PostgresWorkspaceWorkingRoots(pool).createWorktree(
+      owner.resolveRequest(), accepted.value.id,
+      { commandId, branchName: 'feature/changed-request' },
+    )).rejects.toBeInstanceOf(WorkspaceIdempotencyConflictError);
+
+    const worktreeWorker = new PostgresWorkspaceWorktreeWorker(pool, provisioner, {
+      workerId: 'worktree-test-worker',
+      leaseTtlMs: 30_000,
+    });
+    await expect(worktreeWorker.executeOne()).resolves.toBe(true);
+    await expect(worktreeWorker.executeOne()).resolves.toBe(false);
+    const completedRoots = new PostgresWorkspaceWorkingRoots(pool);
+    const worktrees = await completedRoots.listWorktrees(
+      owner.resolveRequest(), accepted.value.id, { limit: 20 },
+    );
+    expect(worktrees).toMatchObject({
+      items: [
+        { branchName: 'main', isDefault: true },
+        { branchName: 'feature/private-work', isDefault: false },
+      ],
+    });
+    const firstWorktreePage = await completedRoots.listWorktrees(
+      owner.resolveRequest(), accepted.value.id, { limit: 1 },
+    );
+    expect(firstWorktreePage.items).toMatchObject([{ branchName: 'main', isDefault: true }]);
+    expect(firstWorktreePage.nextCursor).toBeTypeOf('string');
+    if (!firstWorktreePage.nextCursor) throw new Error('Expected another Worktree page');
+    await expect(completedRoots.listWorktrees(
+      owner.resolveRequest(), accepted.value.id,
+      { limit: 1, cursor: firstWorktreePage.nextCursor },
+    )).resolves.toMatchObject({
+      items: [{ branchName: 'feature/private-work', isDefault: false }],
+    });
+
+    const feature = worktrees.items.find((worktree) => !worktree.isDefault);
+    if (!feature) throw new Error('Expected the isolated Worktree');
+    const archiveCommand = workspaceCommandId(randomUUID());
+    await expect(completedRoots.archiveWorktree(
+      owner.resolveRequest(), accepted.value.id, feature.id,
+      { commandId: archiveCommand },
+    )).resolves.toMatchObject({
+      replayed: false,
+      value: { id: feature.id, lifecycleStatus: 'archived' },
+    });
+    await expect(new PostgresWorkspaceWorkingRoots(pool).archiveWorktree(
+      owner.resolveRequest(), accepted.value.id, feature.id,
+      { commandId: archiveCommand },
+    )).resolves.toMatchObject({
+      replayed: true,
+      value: { id: feature.id, lifecycleStatus: 'archived' },
+    });
+    await expect(completedRoots.archiveWorktree(
+      colleague.resolveRequest(), accepted.value.id, feature.id,
+      { commandId: workspaceCommandId(randomUUID()) },
+    )).rejects.toBeInstanceOf(WorkspaceNotFoundError);
+  });
+
+  it('records safe provisioning failure and recovers an expired Worker lease after restart', async () => {
+    const source = {
+      connectorId: workspaceConnectorId(randomUUID()),
+      repositoryId: workspaceRepositoryId(randomUUID()),
+      defaultBranch: 'main',
+    };
+    const failed = await new PostgresWorkspaceCatalog(pool).provisionGit(owner.resolveRequest(), {
+      commandId: workspaceCommandId(randomUUID()),
+      name: 'Failed Git provision',
+      operationMode: 'observe',
+      source,
+    });
+    const failingProvisioner: GitWorkspaceProvisioner = {
+      async provision() {
+        throw new GitWorkspaceProvisioningError('top-secret-credential-value', false);
+      },
+      async createWorktree() {
+        throw new Error('Not used');
+      },
+    };
+    await new PostgresWorkspaceProvisioningWorker(pool, failingProvisioner, {
+      workerId: 'failed-provision-worker', leaseTtlMs: 30_000,
+    }).executeOne();
+    const failedCatalog = new PostgresWorkspaceCatalog(pool);
+    await expect(failedCatalog.get(
+      owner.resolveRequest(), failed.value.id,
+    )).resolves.toMatchObject({
+      lifecycleStatus: 'failed',
+      defaultWorkingRoot: null,
+      provisioningFailure: { code: 'git_provision_failed', retryable: true },
+    });
+    await expect(failedCatalog.transitionLifecycle(
+      owner.resolveRequest(), failed.value.id,
+      { commandId: workspaceCommandId(randomUUID()), targetStatus: 'ready' },
+    )).rejects.toBeInstanceOf(WorkspaceLifecycleConflictError);
+
+    const recoverable = await new PostgresWorkspaceCatalog(pool).provisionGit(
+      owner.resolveRequest(), {
+        commandId: workspaceCommandId(randomUUID()),
+        name: 'Restarted Git provision',
+        operationMode: 'observe',
+        source,
+      },
+    );
+    await pool.query(
+      `UPDATE workspace_operations
+          SET status = 'running', lease_owner = 'lost-worker',
+              lease_expires_at = now() - interval '1 second'
+        WHERE organization_id = $1 AND workspace_id = $2 AND operation_type = 'provision_git'`,
+      [organization, recoverable.value.id],
+    );
+    const succeedingProvisioner: GitWorkspaceProvisioner = {
+      async provision() {
+        return {
+          headCommit: '2222222222222222222222222222222222222222',
+          contentManifestHash: 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',
+        };
+      },
+      async createWorktree() { throw new Error('Not used'); },
+    };
+    await expect(new PostgresWorkspaceProvisioningWorker(pool, succeedingProvisioner, {
+      workerId: 'restarted-provision-worker', leaseTtlMs: 30_000,
+    }).executeOne()).resolves.toBe(true);
+    await expect(new PostgresWorkspaceCatalog(pool).get(
+      owner.resolveRequest(), recoverable.value.id,
+    )).resolves.toMatchObject({ lifecycleStatus: 'ready', provisioningFailure: null });
+  });
+
   it('reopens an empty Workspace through a new adapter without exposing it to a colleague', async () => {
     const created = await new PostgresWorkspaceCatalog(pool).provisionEmpty(owner.resolveRequest(), {
       commandId: workspaceCommandId(randomUUID()),

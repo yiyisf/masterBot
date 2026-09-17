@@ -45,13 +45,20 @@ export {
 } from '#internal/composer';
 export {
   createFilesystemWorkspaceRequestSchema,
+  createGitWorktreeRequestSchema,
   filesystemWorkspaceLifecycleStatusSchema,
   filesystemWorkspacePageSchema,
   filesystemWorkspaceSchema,
+  gitWorktreePageSchema,
+  gitWorktreeSchema,
   workspaceOperationModeSchema,
+  worktreeOperationSchema,
   type FilesystemWorkspaceContract,
   type FilesystemWorkspacePageContract,
+  type GitWorktreeContract,
+  type GitWorktreePageContract,
   type WorkspaceOperationModeContract,
+  type WorktreeOperationContract,
 } from '#internal/filesystem-workspaces';
 export { problemDetailsSchema, type ProblemDetails } from '#internal/problem';
 export {

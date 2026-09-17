@@ -36,6 +36,13 @@ const filesystemWorkspace = registry.register(
 const filesystemWorkspacePage = registry.register(
   'FilesystemWorkspacePage', filesystemWorkspaces.filesystemWorkspacePageSchema,
 );
+const gitWorktree = registry.register('GitWorktree', filesystemWorkspaces.gitWorktreeSchema);
+const gitWorktreePage = registry.register(
+  'GitWorktreePage', filesystemWorkspaces.gitWorktreePageSchema,
+);
+const worktreeOperation = registry.register(
+  'WorktreeOperation', filesystemWorkspaces.worktreeOperationSchema,
+);
 const conversationRunPage = registry.register('ConversationRunPage', composer.conversationRunPageSchema);
 const message = registry.register('Message', conversations.messageSchema);
 const messagePage = registry.register('MessagePage', conversations.messagePageSchema);
@@ -81,7 +88,7 @@ registry.registerPath({
   responses: { 200: { description: 'Current status', content: { 'application/json': { schema: systemStatus } } } },
 });
 registry.registerPath({
-  method: 'post', path: '/api/v1/workspaces', summary: 'Provision an empty private Workspace',
+  method: 'post', path: '/api/v1/workspaces', summary: 'Provision a private Workspace',
   request: {
     headers: idempotencyHeaders,
     body: { required: true, content: { 'application/json': { schema: filesystemWorkspaces.createFilesystemWorkspaceRequestSchema } } },
@@ -141,6 +148,66 @@ registry.registerPath({
   request: { params: z.object({ workspaceId: z.uuid(), commandId: z.uuid() }) },
   responses: {
     200: { description: 'Current Workspace for the accepted lifecycle Command', content: { 'application/json': { schema: filesystemWorkspace } } },
+    400: problemResponse('Invalid request'), 404: problemResponse('Command result not found'),
+  },
+});
+registry.registerPath({
+  method: 'get', path: '/api/v1/workspaces/{workspaceId}/worktrees',
+  summary: 'List private Git Worktrees',
+  request: {
+    params: idPath('workspaceId'),
+    query: z.object({
+      cursor: z.string().min(1).optional(),
+      limit: z.coerce.number().int().min(1).max(50).default(20),
+    }),
+  },
+  responses: {
+    200: { description: 'Private Worktree page', content: { 'application/json': { schema: gitWorktreePage } } },
+    400: problemResponse('Invalid request'), 404: problemResponse('Workspace not found'),
+  },
+});
+registry.registerPath({
+  method: 'post', path: '/api/v1/workspaces/{workspaceId}/worktrees',
+  summary: 'Accept an isolated Git Worktree Command',
+  request: {
+    params: idPath('workspaceId'), headers: idempotencyHeaders,
+    body: { required: true, content: { 'application/json': { schema: filesystemWorkspaces.createGitWorktreeRequestSchema } } },
+  },
+  responses: {
+    202: { description: 'Accepted Worktree operation', headers: idempotencyReplayHeaders, content: { 'application/json': { schema: worktreeOperation } } },
+    400: problemResponse('Invalid command'), 404: problemResponse('Workspace not found'),
+    409: problemResponse('Worktree or idempotency conflict'),
+  },
+});
+registry.registerPath({
+  method: 'get', path: '/api/v1/workspaces/{workspaceId}/worktree-commands/{commandId}',
+  summary: 'Reconcile a Worktree creation Command',
+  request: { params: z.object({ workspaceId: z.uuid(), commandId: z.uuid() }) },
+  responses: {
+    200: { description: 'Current Worktree operation', content: { 'application/json': { schema: worktreeOperation } } },
+    400: problemResponse('Invalid request'), 404: problemResponse('Command result not found'),
+  },
+});
+registry.registerPath({
+  method: 'post', path: '/api/v1/workspaces/{workspaceId}/worktrees/{worktreeId}/archive',
+  summary: 'Archive a private Git Worktree',
+  request: {
+    params: z.object({ workspaceId: z.uuid(), worktreeId: z.uuid() }),
+    headers: idempotencyHeaders,
+  },
+  responses: {
+    200: { description: 'Archived Worktree', headers: idempotencyReplayHeaders, content: { 'application/json': { schema: gitWorktree } } },
+    400: problemResponse('Invalid command'), 404: problemResponse('Worktree not found'),
+    409: problemResponse('Worktree or idempotency conflict'),
+  },
+});
+registry.registerPath({
+  method: 'get',
+  path: '/api/v1/workspaces/{workspaceId}/worktrees/{worktreeId}/lifecycle-commands/{commandId}',
+  summary: 'Reconcile a Worktree lifecycle Command',
+  request: { params: z.object({ workspaceId: z.uuid(), worktreeId: z.uuid(), commandId: z.uuid() }) },
+  responses: {
+    200: { description: 'Current Worktree', content: { 'application/json': { schema: gitWorktree } } },
     400: problemResponse('Invalid request'), 404: problemResponse('Command result not found'),
   },
 });

@@ -81,7 +81,7 @@ export interface paths {
             };
         };
         put?: never;
-        /** Provision an empty private Workspace */
+        /** Provision a private Workspace */
         post: {
             parameters: {
                 query?: never;
@@ -100,6 +100,18 @@ export interface paths {
                          * @enum {string}
                          */
                         operationMode?: "observe" | "edit_with_confirmation" | "trusted_automation";
+                        source?: {
+                            /** @enum {string} */
+                            kind: "empty";
+                        } | {
+                            /** @enum {string} */
+                            kind: "git";
+                            /** Format: uuid */
+                            connectorId: string;
+                            /** Format: uuid */
+                            repositoryId: string;
+                            defaultBranch: string;
+                        };
                     };
                 };
             };
@@ -415,6 +427,307 @@ export interface paths {
                     };
                     content: {
                         "application/json": components["schemas"]["FilesystemWorkspace"];
+                    };
+                };
+                /** @description Invalid request */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/problem+json": components["schemas"]["ProblemDetails"];
+                    };
+                };
+                /** @description Command result not found */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/problem+json": components["schemas"]["ProblemDetails"];
+                    };
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/workspaces/{workspaceId}/worktrees": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List private Git Worktrees */
+        get: {
+            parameters: {
+                query?: {
+                    cursor?: string;
+                    limit?: number;
+                };
+                header?: never;
+                path: {
+                    workspaceId: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Private Worktree page */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["GitWorktreePage"];
+                    };
+                };
+                /** @description Invalid request */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/problem+json": components["schemas"]["ProblemDetails"];
+                    };
+                };
+                /** @description Workspace not found */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/problem+json": components["schemas"]["ProblemDetails"];
+                    };
+                };
+            };
+        };
+        put?: never;
+        /** Accept an isolated Git Worktree Command */
+        post: {
+            parameters: {
+                query?: never;
+                header: {
+                    "idempotency-key": string;
+                };
+                path: {
+                    workspaceId: string;
+                };
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": {
+                        branchName: string;
+                    };
+                };
+            };
+            responses: {
+                /** @description Accepted Worktree operation */
+                202: {
+                    headers: {
+                        "Idempotency-Replayed": "true" | "false";
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["WorktreeOperation"];
+                    };
+                };
+                /** @description Invalid command */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/problem+json": components["schemas"]["ProblemDetails"];
+                    };
+                };
+                /** @description Workspace not found */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/problem+json": components["schemas"]["ProblemDetails"];
+                    };
+                };
+                /** @description Worktree or idempotency conflict */
+                409: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/problem+json": components["schemas"]["ProblemDetails"];
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/workspaces/{workspaceId}/worktree-commands/{commandId}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Reconcile a Worktree creation Command */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    workspaceId: string;
+                    commandId: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Current Worktree operation */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["WorktreeOperation"];
+                    };
+                };
+                /** @description Invalid request */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/problem+json": components["schemas"]["ProblemDetails"];
+                    };
+                };
+                /** @description Command result not found */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/problem+json": components["schemas"]["ProblemDetails"];
+                    };
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/workspaces/{workspaceId}/worktrees/{worktreeId}/archive": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Archive a private Git Worktree */
+        post: {
+            parameters: {
+                query?: never;
+                header: {
+                    "idempotency-key": string;
+                };
+                path: {
+                    workspaceId: string;
+                    worktreeId: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Archived Worktree */
+                200: {
+                    headers: {
+                        "Idempotency-Replayed": "true" | "false";
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["GitWorktree"];
+                    };
+                };
+                /** @description Invalid command */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/problem+json": components["schemas"]["ProblemDetails"];
+                    };
+                };
+                /** @description Worktree not found */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/problem+json": components["schemas"]["ProblemDetails"];
+                    };
+                };
+                /** @description Worktree or idempotency conflict */
+                409: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/problem+json": components["schemas"]["ProblemDetails"];
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/workspaces/{workspaceId}/worktrees/{worktreeId}/lifecycle-commands/{commandId}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Reconcile a Worktree lifecycle Command */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    workspaceId: string;
+                    worktreeId: string;
+                    commandId: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Current Worktree */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["GitWorktree"];
                     };
                 };
                 /** @description Invalid request */
@@ -2215,19 +2528,31 @@ export interface components {
             source: {
                 /** @enum {string} */
                 kind: "empty";
+            } | {
+                /** @enum {string} */
+                kind: "git";
+                /** Format: uuid */
+                connectorId: string;
+                /** Format: uuid */
+                repositoryId: string;
+                defaultBranch: string;
             };
             /** @enum {string} */
             operationMode: "observe" | "edit_with_confirmation" | "trusted_automation";
             /** @enum {string} */
-            lifecycleStatus: "ready" | "archived";
+            lifecycleStatus: "provisioning" | "ready" | "failed" | "archived";
             defaultWorkingRoot: {
                 /** Format: uuid */
                 id: string;
                 /** @enum {string} */
-                kind: "default";
+                kind: "default" | "git_worktree";
                 /** Format: uuid */
                 currentRevisionId: string;
-            };
+            } | null;
+            provisioningFailure?: {
+                code: string;
+                retryable: boolean;
+            } | null;
             /** Format: date-time */
             createdAt: string;
             /** Format: date-time */
@@ -2241,25 +2566,91 @@ export interface components {
                 source: {
                     /** @enum {string} */
                     kind: "empty";
+                } | {
+                    /** @enum {string} */
+                    kind: "git";
+                    /** Format: uuid */
+                    connectorId: string;
+                    /** Format: uuid */
+                    repositoryId: string;
+                    defaultBranch: string;
                 };
                 /** @enum {string} */
                 operationMode: "observe" | "edit_with_confirmation" | "trusted_automation";
                 /** @enum {string} */
-                lifecycleStatus: "ready" | "archived";
+                lifecycleStatus: "provisioning" | "ready" | "failed" | "archived";
                 defaultWorkingRoot: {
                     /** Format: uuid */
                     id: string;
                     /** @enum {string} */
-                    kind: "default";
+                    kind: "default" | "git_worktree";
                     /** Format: uuid */
                     currentRevisionId: string;
-                };
+                } | null;
+                provisioningFailure?: {
+                    code: string;
+                    retryable: boolean;
+                } | null;
                 /** Format: date-time */
                 createdAt: string;
                 /** Format: date-time */
                 updatedAt: string;
             }[];
             nextCursor: string | null;
+        };
+        GitWorktree: {
+            /** Format: uuid */
+            id: string;
+            /** Format: uuid */
+            workspaceId: string;
+            /** Format: uuid */
+            workingRootId: string;
+            branchName: string;
+            headCommit: string;
+            /** @enum {string} */
+            lifecycleStatus: "ready" | "archived";
+            isDefault: boolean;
+            /** Format: uuid */
+            currentRevisionId: string;
+            /** Format: date-time */
+            createdAt: string;
+            /** Format: date-time */
+            updatedAt: string;
+        };
+        GitWorktreePage: {
+            items: {
+                /** Format: uuid */
+                id: string;
+                /** Format: uuid */
+                workspaceId: string;
+                /** Format: uuid */
+                workingRootId: string;
+                branchName: string;
+                headCommit: string;
+                /** @enum {string} */
+                lifecycleStatus: "ready" | "archived";
+                isDefault: boolean;
+                /** Format: uuid */
+                currentRevisionId: string;
+                /** Format: date-time */
+                createdAt: string;
+                /** Format: date-time */
+                updatedAt: string;
+            }[];
+            nextCursor: string | null;
+        };
+        WorktreeOperation: {
+            /** Format: uuid */
+            id: string;
+            /** Format: uuid */
+            workspaceId: string;
+            branchName: string;
+            /** @enum {string} */
+            status: "pending" | "running" | "succeeded" | "failed";
+            failure: {
+                code: string;
+                retryable: boolean;
+            } | null;
         };
         ConversationRunPage: {
             items: {

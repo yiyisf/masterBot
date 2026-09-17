@@ -53,6 +53,8 @@ test('PostgreSQL adapters query only tables owned by their Module', async () => 
     identity: new Set(['organizations', 'principals']),
     workspaces: new Set([
       'workspaces', 'workspace_roots', 'workspace_revisions', 'workspace_operation_receipts',
+      'workspace_repository_bindings', 'workspace_git_worktrees', 'workspace_operations',
+      'workspace_outbox',
     ]),
     agents: new Set(['agents', 'agent_revisions']),
     conversations: new Set(['conversations', 'messages', 'conversation_rename_receipts']),
@@ -85,7 +87,13 @@ test('PostgreSQL adapters query only tables owned by their Module', async () => 
     const source = await readFile(path.join(root, relativeFile), 'utf8');
     const referenced = [...source.matchAll(/\b(?:FROM|JOIN|INTO|UPDATE)\s+([a-z][a-z0-9_]*)/g)]
       .map((match) => match[1]);
-    const foreign = referenced.filter((table) => !ownership[moduleName].has(table));
+    const commonTableExpressions = new Set(
+      [...source.matchAll(/(?:\bWITH|,)\s*([a-z][a-z0-9_]*)\s+AS\s*\(/g)]
+        .map((match) => match[1]),
+    );
+    const foreign = referenced.filter((table) => (
+      !ownership[moduleName].has(table) && !commonTableExpressions.has(table)
+    ));
     assert.deepEqual(foreign, [], `${moduleName} queries foreign tables: ${foreign.join(', ')}`);
   }
 });
