@@ -5,6 +5,9 @@ import {
   filesystemWorkspacePageSchema,
   filesystemWorkspaceSchema,
   gitWorktreePageSchema,
+  workspaceFileContentSchema,
+  workspaceFilePageSchema,
+  workspaceFileSearchPageSchema,
   worktreeOperationSchema,
 } from './filesystem-workspaces.js';
 
@@ -88,6 +91,32 @@ describe('Filesystem Workspace contracts', () => {
       }],
       nextCursor: null,
     })).toMatchObject({ items: [{ branchName: 'main', isDefault: true }] });
+  });
+
+  it('represents bounded fixed-Revision file reads without storage locations', () => {
+    const file = {
+      path: 'src/index.ts',
+      mediaType: 'text/plain',
+      sizeBytes: 24,
+      sha256: 'a'.repeat(64),
+    };
+    expect(workspaceFilePageSchema.parse({ items: [file], nextCursor: null }))
+      .toEqual({ items: [file], nextCursor: null });
+    expect(workspaceFileContentSchema.parse({
+      ...file,
+      encoding: 'utf8',
+      content: 'export const ready = true;',
+    })).toMatchObject({ path: 'src/index.ts', encoding: 'utf8' });
+    expect(workspaceFileSearchPageSchema.parse({
+      items: [{ path: 'src/index.ts', line: 1, column: 14, preview: 'const ready = true' }],
+      nextCursor: null,
+    })).toMatchObject({ items: [{ path: 'src/index.ts', line: 1 }] });
+    expect(workspaceFileContentSchema.safeParse({
+      ...file,
+      encoding: 'utf8',
+      content: 'safe',
+      storagePath: '/srv/cmaster/private',
+    }).success).toBe(false);
   });
 
   it('represents a bounded private Workspace page with an opaque cursor', () => {

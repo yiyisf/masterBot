@@ -43,6 +43,15 @@ const gitWorktreePage = registry.register(
 const worktreeOperation = registry.register(
   'WorktreeOperation', filesystemWorkspaces.worktreeOperationSchema,
 );
+const workspaceFilePage = registry.register(
+  'WorkspaceFilePage', filesystemWorkspaces.workspaceFilePageSchema,
+);
+const workspaceFileContent = registry.register(
+  'WorkspaceFileContent', filesystemWorkspaces.workspaceFileContentSchema,
+);
+const workspaceFileSearchPage = registry.register(
+  'WorkspaceFileSearchPage', filesystemWorkspaces.workspaceFileSearchPageSchema,
+);
 const conversationRunPage = registry.register('ConversationRunPage', composer.conversationRunPageSchema);
 const message = registry.register('Message', conversations.messageSchema);
 const messagePage = registry.register('MessagePage', conversations.messagePageSchema);
@@ -209,6 +218,61 @@ registry.registerPath({
   responses: {
     200: { description: 'Current Worktree', content: { 'application/json': { schema: gitWorktree } } },
     400: problemResponse('Invalid request'), 404: problemResponse('Command result not found'),
+  },
+});
+const workspaceFileScopeParams = z.object({
+  workspaceId: z.uuid(), workingRootId: z.uuid(), revisionId: z.uuid(),
+});
+registry.registerPath({
+  method: 'get',
+  path: '/api/v1/workspaces/{workspaceId}/working-roots/{workingRootId}/revisions/{revisionId}/files',
+  summary: 'List files in a fixed Workspace Revision',
+  request: {
+    params: workspaceFileScopeParams,
+    query: z.object({
+      cursor: z.string().min(1).optional(),
+      limit: z.coerce.number().int().min(1).max(100).default(50),
+    }),
+  },
+  responses: {
+    200: { description: 'Bounded fixed-Revision file page', content: { 'application/json': { schema: workspaceFilePage } } },
+    400: problemResponse('Invalid request'), 404: problemResponse('Revision not found'),
+    413: problemResponse('File indexing limit exceeded'),
+    503: problemResponse('Revision content unavailable'),
+  },
+});
+registry.registerPath({
+  method: 'get',
+  path: '/api/v1/workspaces/{workspaceId}/working-roots/{workingRootId}/revisions/{revisionId}/files/open',
+  summary: 'Open one text file in a fixed Workspace Revision',
+  request: {
+    params: workspaceFileScopeParams,
+    query: z.object({ path: filesystemWorkspaces.workspaceRelativePathSchema }),
+  },
+  responses: {
+    200: { description: 'Exact fixed-Revision file content', content: { 'application/json': { schema: workspaceFileContent } } },
+    400: problemResponse('Invalid request'), 404: problemResponse('File not found'),
+    413: problemResponse('File limit exceeded'),
+    503: problemResponse('Revision content unavailable'),
+  },
+});
+registry.registerPath({
+  method: 'get',
+  path: '/api/v1/workspaces/{workspaceId}/working-roots/{workingRootId}/revisions/{revisionId}/files/search',
+  summary: 'Search text files in a fixed Workspace Revision',
+  request: {
+    params: workspaceFileScopeParams,
+    query: z.object({
+      query: z.string().min(1).max(200),
+      cursor: z.string().min(1).optional(),
+      limit: z.coerce.number().int().min(1).max(50).default(20),
+    }),
+  },
+  responses: {
+    200: { description: 'Bounded fixed-Revision search result page', content: { 'application/json': { schema: workspaceFileSearchPage } } },
+    400: problemResponse('Invalid request'), 404: problemResponse('Revision not found'),
+    413: problemResponse('Search limit exceeded'),
+    503: problemResponse('Revision content unavailable'),
   },
 });
 registry.registerPath({

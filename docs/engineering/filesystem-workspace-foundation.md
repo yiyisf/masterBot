@@ -1,6 +1,6 @@
 # Filesystem Workspace foundation and trusted Git provisioning
 
-Slices 6.1–6.2 expose the authoritative Workspace backend behind:
+Slices 6.1–6.3a expose the authoritative Workspace backend behind:
 
 ```text
 NEXT_ARCHITECTURE_ENABLED=true
@@ -41,7 +41,10 @@ Only credential-free `https`, `http`, `ssh`, and `file` URLs are accepted in thi
 - Operation Mode and Workspace archive/restore lifecycle;
 - operation-specific idempotency receipts and reconciliation;
 - durable operations, outbox records, Worker leases, expired-lease recovery, and safe structured failures;
-- bounded opaque-cursor Workspace and Worktree pagination.
+- bounded opaque-cursor Workspace, Worktree, and fixed-Revision file pagination;
+- exact-Revision text file list/search/open backed by persisted safe metadata;
+- mandatory `.cmasterignore` and applicable `.gitignore` filtering;
+- denial of traversal, symbolic links, Gitlinks/nested repositories, binary files, and oversized content.
 
 PostgreSQL and shared Workspace Content Storage are authoritative. Git provisioning is accepted transactionally before any Git I/O. The `api` role only accepts and reads Commands; the `worker` or `all` role materializes repositories and Worktrees. A Worker restart can reclaim an expired lease, and operation-scoped content receipts prevent a completed Git side effect from being repeated after response loss.
 
@@ -61,6 +64,10 @@ POST /api/v1/workspaces/{workspaceId}/worktrees
 GET  /api/v1/workspaces/{workspaceId}/worktree-commands/{commandId}
 POST /api/v1/workspaces/{workspaceId}/worktrees/{worktreeId}/archive
 GET  /api/v1/workspaces/{workspaceId}/worktrees/{worktreeId}/lifecycle-commands/{commandId}
+
+GET  /api/v1/workspaces/{workspaceId}/working-roots/{workingRootId}/revisions/{revisionId}/files
+GET  /api/v1/workspaces/{workspaceId}/working-roots/{workingRootId}/revisions/{revisionId}/files/open
+GET  /api/v1/workspaces/{workspaceId}/working-roots/{workingRootId}/revisions/{revisionId}/files/search
 ```
 
 Commands require an `Idempotency-Key` UUID. Repeating the same operation-specific Command with the same normalized request returns `Idempotency-Replayed: true`; key reuse with another request returns 409. Reconciliation returns current authoritative state. Unknown, cross-Organization, and cross-Principal reads/transitions return the same 404 representation apart from the request-specific `instance` URI.
@@ -71,9 +78,11 @@ A Git Workspace is initially `provisioning`. Successful materialization creates 
 
 Additional Worktrees are asynchronous. Their Command first returns a `pending` operation; clients reconcile the operation until `succeeded` or `failed`, then refresh the bounded Worktree list. Branch names are validated by both the Module and Git. Active branch names are unique within a Workspace. The default Worktree cannot be archived.
 
+File reads always identify an exact Workspace, Working Root, and immutable Revision. The first authorized read builds a bounded safe metadata index from the pinned Git commit (or the canonical empty Revision), then persists only relative path, media type, byte size, and SHA-256. Content remains in shared Workspace storage and is revalidated against metadata when opened. Only canonical UTF-8 regular files up to 1 MiB are readable. Search is literal, case-sensitive, and bounded to 1,000 files / 8 MiB per request. Ignored and unsupported entries are absent rather than exposing host or Git details.
+
 ## Explicitly absent
 
-This slice does not add Sandbox execution, governed file Tools, Change Sets, Conversation/Run/Artifact Workspace scope, Git commit/push/PR/merge delivery, Pending composition, Worktree deletion, or the replacement Employee Experience.
+This slice does not add Sandbox execution, governed file Tools, Invocation temp/overlay, Change Sets, Conversation/Run/Artifact Workspace scope, Git commit/push/PR/merge delivery, Pending composition, Worktree deletion, or the replacement Employee Experience.
 
 ## Verification
 

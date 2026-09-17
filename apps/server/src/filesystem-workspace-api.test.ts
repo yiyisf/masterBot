@@ -25,6 +25,9 @@ const unavailableWorkingRoots: WorkspaceWorkingRoots = {
   async archiveWorktree() { throw new Error('Not used by this test'); },
   async getWorktreeOperationByCommand() { throw new Error('Not used by this test'); },
   async getWorktreeLifecycleByCommand() { throw new Error('Not used by this test'); },
+  async listFiles() { throw new Error('Not used by this test'); },
+  async openFile() { throw new Error('Not used by this test'); },
+  async searchFiles() { throw new Error('Not used by this test'); },
 };
 function dependencies(catalog: WorkspaceCatalog) {
   return { identity, catalog, workingRoots: unavailableWorkingRoots };
