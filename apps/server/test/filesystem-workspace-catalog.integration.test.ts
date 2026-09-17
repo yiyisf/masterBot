@@ -135,6 +135,16 @@ describe('PostgreSQL WorkspaceCatalog', () => {
       { commandId, branchName: 'feature/changed-request' },
     )).rejects.toBeInstanceOf(WorkspaceIdempotencyConflictError);
 
+    await expect(workingRoots.getWorktreeOperationByCommand(
+      colleague.resolveRequest(), accepted.value.id, commandId,
+    )).rejects.toBeInstanceOf(WorkspaceNotFoundError);
+    await pool.query(
+      `UPDATE workspace_operations
+          SET status = 'running', lease_owner = 'lost-worktree-worker',
+              lease_expires_at = now() - interval '1 second'
+        WHERE organization_id = $1 AND id = $2 AND operation_type = 'create_worktree'`,
+      [organization, worktreeOperation.value.id],
+    );
     const worktreeWorker = new PostgresWorkspaceWorktreeWorker(pool, provisioner, {
       workerId: 'worktree-test-worker',
       leaseTtlMs: 30_000,
