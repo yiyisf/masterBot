@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { PostgresDevelopmentIdentity, organizationId, principalId } from '@cmaster/identity';
 import {
+  createConfiguredWorkspaceRevisionContentReader,
   PostgresWorkspaceCatalog,
   PostgresWorkspaceProvisioningWorker,
   PostgresWorkspaceWorkingRoots,
@@ -49,7 +50,11 @@ function api() {
     filesystemWorkspaceApi: {
       identity,
       catalog: new PostgresWorkspaceCatalog(pool),
-      workingRoots: new PostgresWorkspaceWorkingRoots(pool),
+      workingRoots: new PostgresWorkspaceWorkingRoots(pool, {
+        revisionContent: createConfiguredWorkspaceRevisionContentReader({
+          storageRoot: config.workspaceRuntime.storageRoot,
+        }),
+      }),
     },
   });
 }
@@ -189,7 +194,25 @@ describe('Filesystem Workspace HTTP privacy and recovery', () => {
       url: `/api/v1/workspaces/${workspaceId}/lifecycle-commands/${archiveCommandId}`,
     })).json()).toMatchObject({ id: workspaceId, lifecycleStatus: 'ready' });
 
+    const root = created.json().defaultWorkingRoot as { id: string; currentRevisionId: string };
+    const filesUrl = `/api/v1/workspaces/${workspaceId}/working-roots/${root.id}/revisions/${root.currentRevisionId}/files`;
+    expect((await restartedApi.inject({ method: 'GET', url: filesUrl })).json())
+      .toEqual({ items: [], nextCursor: null });
+    const traversal = await restartedApi.inject({
+      method: 'GET', url: `${filesUrl}/open?path=../server-secret`,
+    });
+    expect(traversal.statusCode).toBe(400);
+    expect(traversal.json()).toMatchObject({ code: 'invalid_request', status: 400 });
+
     currentIdentity = colleague.resolveRequest();
+    const forbiddenFiles = await restartedApi.inject({ method: 'GET', url: filesUrl });
+    const unknownFiles = await restartedApi.inject({
+      method: 'GET',
+      url: `/api/v1/workspaces/${randomUUID()}/working-roots/${root.id}/revisions/${root.currentRevisionId}/files`,
+    });
+    expect(forbiddenFiles.statusCode).toBe(404);
+    expect({ ...forbiddenFiles.json(), instance: undefined })
+      .toEqual({ ...unknownFiles.json(), instance: undefined });
     const forbidden = await restartedApi.inject({
       method: 'GET', url: `/api/v1/workspaces/${workspaceId}`,
     });

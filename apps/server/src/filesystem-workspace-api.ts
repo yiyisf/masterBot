@@ -6,6 +6,9 @@ import {
   gitWorktreePageSchema,
   gitWorktreeSchema,
   problemDetailsSchema,
+  workspaceFileContentSchema,
+  workspaceFilePageSchema,
+  workspaceFileSearchPageSchema,
   uuidSchema,
   worktreeOperationSchema,
 } from '@cmaster/contracts';
@@ -15,7 +18,11 @@ import {
   InvalidWorkspaceNameError,
   InvalidWorkspacePageLimitError,
   InvalidGitBranchNameError,
+  InvalidWorkspaceFilePathError,
+  InvalidWorkspaceFileQueryError,
   WorkspaceBranchConflictError,
+  WorkspaceFileContentUnavailableError,
+  WorkspaceFileLimitError,
   WorkspaceIdempotencyConflictError,
   WorkspaceLifecycleConflictError,
   WorkspaceNotFoundError,
@@ -24,6 +31,8 @@ import {
   workspaceConnectorId,
   workspaceId,
   workspaceRepositoryId,
+  workspaceRevisionId,
+  workingRootId,
   type GitWorktree,
   type Workspace,
   type WorkspaceCatalog,
@@ -84,7 +93,9 @@ function sendError(error: unknown, request: FastifyRequest, reply: FastifyReply)
   if (error instanceof ZodError || error instanceof InvalidWorkspaceCursorError
     || error instanceof InvalidWorkspaceNameError
     || error instanceof InvalidWorkspacePageLimitError
-    || error instanceof InvalidGitBranchNameError) {
+    || error instanceof InvalidGitBranchNameError
+    || error instanceof InvalidWorkspaceFilePathError
+    || error instanceof InvalidWorkspaceFileQueryError) {
     return problem(reply, request, 400, 'invalid_request', 'Invalid request',
       'The request does not match the API contract.');
   }
@@ -95,6 +106,14 @@ function sendError(error: unknown, request: FastifyRequest, reply: FastifyReply)
   if (error instanceof WorkspaceIdempotencyConflictError) {
     return problem(reply, request, 409, 'idempotency_conflict', 'Idempotency conflict',
       'The Idempotency-Key was already used for another command.');
+  }
+  if (error instanceof WorkspaceFileLimitError) {
+    return problem(reply, request, 413, 'workspace_file_limit_exceeded',
+      'Workspace file limit exceeded', 'The bounded Workspace file operation limit was exceeded.');
+  }
+  if (error instanceof WorkspaceFileContentUnavailableError) {
+    return problem(reply, request, 503, 'workspace_content_unavailable',
+      'Workspace content unavailable', 'The fixed Workspace Revision content is unavailable.');
   }
   if (error instanceof WorkspaceBranchConflictError
     || error instanceof WorkspaceLifecycleConflictError) {
@@ -108,6 +127,20 @@ function sendError(error: unknown, request: FastifyRequest, reply: FastifyReply)
 
 function idempotencyKey(request: FastifyRequest): string {
   return uuidSchema.parse(request.headers['idempotency-key']);
+}
+
+const workspaceFileScopeParamsSchema = z.object({
+  workspaceId: uuidSchema,
+  workingRootId: uuidSchema,
+  revisionId: uuidSchema,
+});
+
+function workspaceFileScope(params: z.infer<typeof workspaceFileScopeParamsSchema>) {
+  return {
+    workspaceId: workspaceId(params.workspaceId),
+    workingRootId: workingRootId(params.workingRootId),
+    revisionId: workspaceRevisionId(params.revisionId),
+  };
 }
 
 export function registerFilesystemWorkspaceApi(
@@ -226,6 +259,65 @@ export function registerFilesystemWorkspaceApi(
         workspaceCommandId(params.commandId),
       );
       return reply.send(gitWorktreeContract(worktree));
+    } catch (error) {
+      return sendError(error, request, reply);
+    }
+  });
+
+  app.get('/api/v1/workspaces/:workspaceId/working-roots/:workingRootId/revisions/:revisionId/files', async (request, reply) => {
+    try {
+      const params = workspaceFileScopeParamsSchema.parse(request.params);
+      const query = z.object({
+        cursor: z.string().min(1).optional(),
+        limit: z.coerce.number().int().min(1).max(100).default(50),
+      }).parse(request.query);
+      const page = await dependencies.workingRoots.listFiles(
+        dependencies.identity.resolveRequest(), workspaceFileScope(params),
+        { limit: query.limit, ...(query.cursor ? { cursor: query.cursor } : {}) },
+      );
+      return reply.send(workspaceFilePageSchema.parse({
+        items: page.items,
+        nextCursor: page.nextCursor ?? null,
+      }));
+    } catch (error) {
+      return sendError(error, request, reply);
+    }
+  });
+
+  app.get('/api/v1/workspaces/:workspaceId/working-roots/:workingRootId/revisions/:revisionId/files/open', async (request, reply) => {
+    try {
+      const params = workspaceFileScopeParamsSchema.parse(request.params);
+      const query = z.object({ path: z.string().min(1).max(1024) }).parse(request.query);
+      const file = await dependencies.workingRoots.openFile(
+        dependencies.identity.resolveRequest(),
+        { ...workspaceFileScope(params), path: query.path },
+      );
+      return reply.send(workspaceFileContentSchema.parse(file));
+    } catch (error) {
+      return sendError(error, request, reply);
+    }
+  });
+
+  app.get('/api/v1/workspaces/:workspaceId/working-roots/:workingRootId/revisions/:revisionId/files/search', async (request, reply) => {
+    try {
+      const params = workspaceFileScopeParamsSchema.parse(request.params);
+      const query = z.object({
+        query: z.string().min(1).max(200),
+        cursor: z.string().min(1).optional(),
+        limit: z.coerce.number().int().min(1).max(50).default(20),
+      }).parse(request.query);
+      const page = await dependencies.workingRoots.searchFiles(
+        dependencies.identity.resolveRequest(), workspaceFileScope(params),
+        {
+          query: query.query,
+          limit: query.limit,
+          ...(query.cursor ? { cursor: query.cursor } : {}),
+        },
+      );
+      return reply.send(workspaceFileSearchPageSchema.parse({
+        items: page.items,
+        nextCursor: page.nextCursor ?? null,
+      }));
     } catch (error) {
       return sendError(error, request, reply);
     }

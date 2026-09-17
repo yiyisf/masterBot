@@ -46,6 +46,7 @@ import {
 } from '@cmaster/identity';
 import {
   createConfiguredGitWorkspaceProvisioner,
+  createConfiguredWorkspaceRevisionContentReader,
   PostgresWorkspaceCatalog,
   PostgresWorkspaceProvisioningWorker,
   PostgresWorkspaceWorkingRoots,
@@ -85,7 +86,11 @@ const conversations = new PostgresConversationModule(database.pool);
 const execution = new PostgresExecutionModule(database.pool);
 const approvals = new PostgresApprovalModule(database.pool);
 const workspaces = new PostgresWorkspaceCatalog(database.pool);
-const workspaceWorkingRoots = new PostgresWorkspaceWorkingRoots(database.pool);
+const workspaceWorkingRoots = new PostgresWorkspaceWorkingRoots(database.pool, {
+  revisionContent: createConfiguredWorkspaceRevisionContentReader({
+    storageRoot: config.workspaceRuntime.storageRoot,
+  }),
+});
 
 let models: ModelGateway | undefined;
 let artifacts: PostgresArtifactModule | undefined;

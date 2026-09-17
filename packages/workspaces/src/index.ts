@@ -7,6 +7,13 @@ import type { OrganizationId, PrincipalId, RequestIdentity } from '@cmaster/iden
 import type { Brand, Clock } from '@cmaster/kernel';
 import { SystemClock } from '@cmaster/kernel';
 import type { Pool, PoolClient } from 'pg';
+import {
+  WorkspaceFileNotFoundError,
+  WorkspaceRevisionContentError,
+  type WorkspaceFileEntry,
+  type WorkspaceRevisionContentReader,
+  type WorkspaceRevisionContentScope,
+} from './revision-content.js';
 
 export type WorkspaceId = Brand<string, 'WorkspaceId'>;
 export type WorkingRootId = Brand<string, 'WorkingRootId'>;
@@ -57,6 +64,10 @@ export class InvalidWorkspacePageLimitError extends Error {}
 export class InvalidGitBranchNameError extends Error {}
 export class WorkspaceBranchConflictError extends Error {}
 export class WorkspaceLifecycleConflictError extends Error {}
+export class InvalidWorkspaceFilePathError extends Error {}
+export class InvalidWorkspaceFileQueryError extends Error {}
+export class WorkspaceFileLimitError extends Error {}
+export class WorkspaceFileContentUnavailableError extends Error {}
 
 export interface WorkspaceCommandResult<Value> {
   readonly value: Value;
@@ -850,6 +861,34 @@ export interface GitWorktreePage {
   readonly nextCursor?: string;
 }
 
+export interface WorkspaceFileScope {
+  readonly workspaceId: WorkspaceId;
+  readonly workingRootId: WorkingRootId;
+  readonly revisionId: WorkspaceRevisionId;
+}
+
+export interface WorkspaceFilePage {
+  readonly items: readonly WorkspaceFileEntry[];
+  readonly nextCursor?: string;
+}
+
+export interface WorkspaceFileContent extends WorkspaceFileEntry {
+  readonly encoding: 'utf8';
+  readonly content: string;
+}
+
+export interface WorkspaceFileSearchResult {
+  readonly path: string;
+  readonly line: number;
+  readonly column: number;
+  readonly preview: string;
+}
+
+export interface WorkspaceFileSearchPage {
+  readonly items: readonly WorkspaceFileSearchResult[];
+  readonly nextCursor?: string;
+}
+
 export interface WorktreeOperation {
   readonly id: string;
   readonly workspaceId: WorkspaceId;
@@ -886,6 +925,20 @@ export interface WorkspaceWorkingRoots {
     worktreeId: GitWorktreeId,
     commandId: WorkspaceCommandId,
   ): Promise<GitWorktree>;
+  listFiles(
+    identity: RequestIdentity,
+    scope: WorkspaceFileScope,
+    query: { readonly cursor?: string; readonly limit: number },
+  ): Promise<WorkspaceFilePage>;
+  openFile(
+    identity: RequestIdentity,
+    request: WorkspaceFileScope & { readonly path: string },
+  ): Promise<WorkspaceFileContent>;
+  searchFiles(
+    identity: RequestIdentity,
+    scope: WorkspaceFileScope,
+    query: { readonly query: string; readonly cursor?: string; readonly limit: number },
+  ): Promise<WorkspaceFileSearchPage>;
 }
 
 interface WorktreeOperationRow {
@@ -1002,12 +1055,112 @@ async function selectWorktreeForOwner(
   return mapGitWorktree(row);
 }
 
+interface WorkspaceFileRow {
+  readonly path: string;
+  readonly media_type: string;
+  readonly size_bytes: number;
+  readonly sha256: string;
+}
+
+interface WorkspaceRevisionScopeRow {
+  readonly source_kind: 'empty' | 'git';
+  readonly git_commit_sha: string | null;
+  readonly file_index_status: 'pending' | 'ready';
+}
+
+function normalizeWorkspaceFilePath(value: string): string {
+  if (value.length === 0 || value.length > 1024 || value !== value.normalize('NFC')
+    || value.startsWith('/') || value.includes('\\')
+    || /[\u0000-\u001f\u007f]/u.test(value)
+    || value.split('/').some((segment) => segment.length === 0
+      || segment === '.' || segment === '..')) {
+    throw new InvalidWorkspaceFilePathError();
+  }
+  return value;
+}
+
+function validateFilePageLimit(value: number, maximum: number): void {
+  if (!Number.isInteger(value) || value < 1 || value > maximum) {
+    throw new WorkspaceFileLimitError();
+  }
+}
+
+function encodeFileCursor(value: unknown): string {
+  return Buffer.from(JSON.stringify(value), 'utf8').toString('base64url');
+}
+
+function decodeFileListCursor(value: string): { readonly path: string } {
+  try {
+    const decoded = Buffer.from(value, 'base64url');
+    if (decoded.toString('base64url') !== value) throw new InvalidWorkspaceCursorError();
+    const parsed: unknown = JSON.parse(decoded.toString('utf8'));
+    if (!parsed || typeof parsed !== 'object' || Object.keys(parsed).length !== 1
+      || !('path' in parsed) || typeof parsed.path !== 'string') {
+      throw new InvalidWorkspaceCursorError();
+    }
+    return { path: normalizeWorkspaceFilePath(parsed.path) };
+  } catch (error) {
+    if (error instanceof InvalidWorkspaceCursorError) throw error;
+    throw new InvalidWorkspaceCursorError();
+  }
+}
+
+interface WorkspaceSearchCursor {
+  readonly path: string;
+  readonly line: number;
+  readonly column: number;
+}
+
+function decodeFileSearchCursor(value: string): WorkspaceSearchCursor {
+  try {
+    const decoded = Buffer.from(value, 'base64url');
+    if (decoded.toString('base64url') !== value) throw new InvalidWorkspaceCursorError();
+    const parsed: unknown = JSON.parse(decoded.toString('utf8'));
+    if (!parsed || typeof parsed !== 'object' || Object.keys(parsed).length !== 3
+      || !('path' in parsed) || typeof parsed.path !== 'string'
+      || !('line' in parsed) || typeof parsed.line !== 'number'
+      || !Number.isInteger(parsed.line) || parsed.line < 1
+      || !('column' in parsed) || typeof parsed.column !== 'number'
+      || !Number.isInteger(parsed.column) || parsed.column < 1) {
+      throw new InvalidWorkspaceCursorError();
+    }
+    return {
+      path: normalizeWorkspaceFilePath(parsed.path),
+      line: parsed.line as number,
+      column: parsed.column as number,
+    };
+  } catch (error) {
+    if (error instanceof InvalidWorkspaceCursorError) throw error;
+    throw new InvalidWorkspaceCursorError();
+  }
+}
+
+function mapWorkspaceFile(row: WorkspaceFileRow): WorkspaceFileEntry {
+  return {
+    path: row.path,
+    mediaType: row.media_type,
+    sizeBytes: row.size_bytes,
+    sha256: row.sha256,
+  };
+}
+
 export class PostgresWorkspaceWorkingRoots implements WorkspaceWorkingRoots {
+  private readonly clock: Clock;
+  private readonly generateId: () => string;
+  private readonly revisionContent: WorkspaceRevisionContentReader | undefined;
+
   constructor(
     private readonly pool: Pool,
-    private readonly clock: Clock = new SystemClock(),
-    private readonly generateId: () => string = randomUUID,
-  ) {}
+    options: {
+      readonly clock?: Clock;
+      readonly generateId?: () => string;
+      readonly revisionContent?: WorkspaceRevisionContentReader;
+    } = {},
+  ) {
+    this.clock = options.clock ?? new SystemClock();
+    this.generateId = options.generateId ?? randomUUID;
+    this.revisionContent = options.revisionContent;
+  }
 
   async listWorktrees(
     identity: RequestIdentity,
@@ -1250,6 +1403,226 @@ export class PostgresWorkspaceWorkingRoots implements WorkspaceWorkingRoots {
     } finally {
       client.release();
     }
+  }
+
+  async listFiles(
+    identity: RequestIdentity,
+    scope: WorkspaceFileScope,
+    query: { readonly cursor?: string; readonly limit: number },
+  ): Promise<WorkspaceFilePage> {
+    validateFilePageLimit(query.limit, 100);
+    const cursor = query.cursor === undefined ? undefined : decodeFileListCursor(query.cursor);
+    await this.ensureRevisionIndexed(identity, scope);
+    const result = await this.pool.query<WorkspaceFileRow>(
+      `SELECT path, media_type, size_bytes, sha256
+         FROM workspace_file_entries
+        WHERE organization_id = $1 AND workspace_id = $2
+          AND working_root_id = $3 AND revision_id = $4
+          ${cursor ? 'AND path > $5' : ''}
+        ORDER BY path
+        LIMIT $${cursor ? '6' : '5'}`,
+      cursor
+        ? [identity.organizationId, scope.workspaceId, scope.workingRootId,
+          scope.revisionId, cursor.path, query.limit + 1]
+        : [identity.organizationId, scope.workspaceId, scope.workingRootId,
+          scope.revisionId, query.limit + 1],
+    );
+    const hasNext = result.rows.length > query.limit;
+    const items = result.rows.slice(0, query.limit).map(mapWorkspaceFile);
+    return hasNext
+      ? { items, nextCursor: encodeFileCursor({ path: items.at(-1)!.path }) }
+      : { items };
+  }
+
+  async openFile(
+    identity: RequestIdentity,
+    request: WorkspaceFileScope & { readonly path: string },
+  ): Promise<WorkspaceFileContent> {
+    const path = normalizeWorkspaceFilePath(request.path);
+    const scope = await this.ensureRevisionIndexed(identity, request);
+    const metadata = await this.pool.query<WorkspaceFileRow>(
+      `SELECT path, media_type, size_bytes, sha256
+         FROM workspace_file_entries
+        WHERE organization_id = $1 AND workspace_id = $2
+          AND working_root_id = $3 AND revision_id = $4 AND path = $5`,
+      [identity.organizationId, request.workspaceId, request.workingRootId,
+        request.revisionId, path],
+    );
+    const row = metadata.rows[0];
+    if (!row || !this.revisionContent) throw new WorkspaceNotFoundError();
+    let bytes: Buffer;
+    try {
+      bytes = await this.revisionContent.open({ ...scope, path });
+    } catch (error) {
+      if (error instanceof WorkspaceFileNotFoundError) throw new WorkspaceNotFoundError();
+      this.translateContentError(error);
+    }
+    if (bytes!.length !== row.size_bytes
+      || createHash('sha256').update(bytes!).digest('hex') !== row.sha256) {
+      throw new WorkspaceFileContentUnavailableError();
+    }
+    let content: string;
+    try {
+      content = new TextDecoder('utf-8', { fatal: true }).decode(bytes!);
+    } catch {
+      throw new WorkspaceNotFoundError();
+    }
+    return { ...mapWorkspaceFile(row), encoding: 'utf8', content };
+  }
+
+  async searchFiles(
+    identity: RequestIdentity,
+    scope: WorkspaceFileScope,
+    query: { readonly query: string; readonly cursor?: string; readonly limit: number },
+  ): Promise<WorkspaceFileSearchPage> {
+    validateFilePageLimit(query.limit, 50);
+    if (query.query.length === 0 || query.query.length > 200
+      || query.query !== query.query.normalize('NFC')
+      || /[\u0000-\u001f\u007f]/u.test(query.query)) {
+      throw new InvalidWorkspaceFileQueryError();
+    }
+    const cursor = query.cursor === undefined ? undefined : decodeFileSearchCursor(query.cursor);
+    await this.ensureRevisionIndexed(identity, scope);
+    const indexed = await this.pool.query<WorkspaceFileRow>(
+      `SELECT path, media_type, size_bytes, sha256
+         FROM workspace_file_entries
+        WHERE organization_id = $1 AND workspace_id = $2
+          AND working_root_id = $3 AND revision_id = $4
+        ORDER BY path`,
+      [identity.organizationId, scope.workspaceId, scope.workingRootId, scope.revisionId],
+    );
+    if (indexed.rows.length > 1_000
+      || indexed.rows.reduce((total, row) => total + row.size_bytes, 0) > 8 * 1_048_576) {
+      throw new WorkspaceFileLimitError();
+    }
+    const matches: WorkspaceFileSearchResult[] = [];
+    for (const file of indexed.rows) {
+      const opened = await this.openFile(identity, { ...scope, path: file.path });
+      const lines = opened.content.split('\n');
+      for (let lineIndex = 0; lineIndex < lines.length; lineIndex += 1) {
+        const line = lines[lineIndex]!;
+        let from = 0;
+        while (from <= line.length) {
+          const found = line.indexOf(query.query, from);
+          if (found < 0) break;
+          const match = {
+            path: file.path,
+            line: lineIndex + 1,
+            column: found + 1,
+            preview: line.length <= 500 ? line : line.slice(Math.max(0, found - 200), found + 300),
+          };
+          const afterCursor = cursor === undefined
+            || match.path > cursor.path
+            || (match.path === cursor.path && (match.line > cursor.line
+              || (match.line === cursor.line && match.column > cursor.column)));
+          if (afterCursor) matches.push(match);
+          if (matches.length > query.limit) break;
+          from = found + Math.max(1, query.query.length);
+        }
+        if (matches.length > query.limit) break;
+      }
+      if (matches.length > query.limit) break;
+    }
+    const hasNext = matches.length > query.limit;
+    const items = matches.slice(0, query.limit);
+    const last = items.at(-1);
+    return hasNext && last
+      ? { items, nextCursor: encodeFileCursor({
+        path: last.path, line: last.line, column: last.column,
+      }) }
+      : { items };
+  }
+
+  private async ensureRevisionIndexed(
+    identity: RequestIdentity,
+    scope: WorkspaceFileScope,
+  ): Promise<WorkspaceRevisionContentScope> {
+    const selected = await this.pool.query<WorkspaceRevisionScopeRow>(
+      `SELECT workspace.source_kind, revision.git_commit_sha, revision.file_index_status
+         FROM workspaces workspace
+         JOIN workspace_roots root
+           ON root.organization_id = workspace.organization_id
+          AND root.workspace_id = workspace.id
+         JOIN workspace_revisions revision
+           ON revision.organization_id = root.organization_id
+          AND revision.working_root_id = root.id
+        WHERE workspace.organization_id = $1 AND workspace.owner_principal_id = $2
+          AND workspace.id = $3 AND root.id = $4 AND revision.id = $5`,
+      [identity.organizationId, identity.principalId, scope.workspaceId,
+        scope.workingRootId, scope.revisionId],
+    );
+    const revision = selected.rows[0];
+    if (!revision) throw new WorkspaceNotFoundError();
+    const contentScope: WorkspaceRevisionContentScope = {
+      organizationId: identity.organizationId,
+      ...scope,
+      source: revision.source_kind === 'empty'
+        ? { kind: 'empty' }
+        : { kind: 'git', commit: revision.git_commit_sha! },
+    };
+    if (revision.file_index_status === 'ready') return contentScope;
+    if (!this.revisionContent) throw new WorkspaceFileContentUnavailableError();
+    let entries: readonly WorkspaceFileEntry[];
+    try {
+      entries = await this.revisionContent.list(contentScope);
+      const paths = new Set<string>();
+      if (entries.length > 10_000) throw new WorkspaceFileLimitError();
+      for (const entry of entries) {
+        const path = normalizeWorkspaceFilePath(entry.path);
+        if (path !== entry.path || paths.has(path)
+          || entry.mediaType.length < 1 || entry.mediaType.length > 100
+          || !Number.isInteger(entry.sizeBytes) || entry.sizeBytes < 0
+          || entry.sizeBytes > 1_048_576 || !/^[0-9a-f]{64}$/u.test(entry.sha256)) {
+          throw new WorkspaceFileContentUnavailableError();
+        }
+        paths.add(path);
+      }
+    } catch (error) {
+      if (error instanceof WorkspaceFileLimitError
+        || error instanceof WorkspaceFileContentUnavailableError) throw error;
+      this.translateContentError(error);
+    }
+    const client = await this.pool.connect();
+    try {
+      await client.query('BEGIN');
+      const locked = await client.query<{ file_index_status: 'pending' | 'ready' }>(
+        `SELECT file_index_status FROM workspace_revisions
+          WHERE organization_id = $1 AND working_root_id = $2 AND id = $3 FOR UPDATE`,
+        [identity.organizationId, scope.workingRootId, scope.revisionId],
+      );
+      if (!locked.rows[0]) throw new WorkspaceNotFoundError();
+      if (locked.rows[0].file_index_status === 'pending') {
+        const now = this.clock.now();
+        for (const entry of entries!) {
+          await client.query(
+            `INSERT INTO workspace_file_entries (
+               organization_id, workspace_id, working_root_id, revision_id,
+               path, media_type, size_bytes, sha256, created_at
+             ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+            [identity.organizationId, scope.workspaceId, scope.workingRootId, scope.revisionId,
+              entry.path, entry.mediaType, entry.sizeBytes, entry.sha256, now],
+          );
+        }
+        await client.query(
+          `UPDATE workspace_revisions SET file_index_status = 'ready'
+            WHERE organization_id = $1 AND working_root_id = $2 AND id = $3`,
+          [identity.organizationId, scope.workingRootId, scope.revisionId],
+        );
+      }
+      await client.query('COMMIT');
+      return contentScope;
+    } catch (error) {
+      await client.query('ROLLBACK');
+      throw error;
+    } finally {
+      client.release();
+    }
+  }
+
+  private translateContentError(error: unknown): never {
+    if (error instanceof WorkspaceRevisionContentError
+      && error.code === 'content_limit_exceeded') throw new WorkspaceFileLimitError();
+    throw new WorkspaceFileContentUnavailableError();
   }
 }
 
@@ -1994,3 +2367,20 @@ export function workspaceRepositoryId(value: string): WorkspaceRepositoryId {
 export function gitWorktreeId(value: string): GitWorktreeId {
   return value as GitWorktreeId;
 }
+
+export function workingRootId(value: string): WorkingRootId {
+  return value as WorkingRootId;
+}
+
+export function workspaceRevisionId(value: string): WorkspaceRevisionId {
+  return value as WorkspaceRevisionId;
+}
+
+export {
+  createConfiguredWorkspaceRevisionContentReader,
+  WorkspaceFileNotFoundError,
+  WorkspaceRevisionContentError,
+  type WorkspaceFileEntry,
+  type WorkspaceRevisionContentReader,
+  type WorkspaceRevisionContentScope,
+} from './revision-content.js';
