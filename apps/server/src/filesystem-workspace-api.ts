@@ -1,21 +1,33 @@
 import {
   createFilesystemWorkspaceRequestSchema,
+  createGitWorktreeRequestSchema,
   filesystemWorkspacePageSchema,
   filesystemWorkspaceSchema,
+  gitWorktreePageSchema,
+  gitWorktreeSchema,
   problemDetailsSchema,
   uuidSchema,
+  worktreeOperationSchema,
 } from '@cmaster/contracts';
 import type { IdentityModule } from '@cmaster/identity';
 import {
   InvalidWorkspaceCursorError,
   InvalidWorkspaceNameError,
   InvalidWorkspacePageLimitError,
+  InvalidGitBranchNameError,
+  WorkspaceBranchConflictError,
   WorkspaceIdempotencyConflictError,
+  WorkspaceLifecycleConflictError,
   WorkspaceNotFoundError,
+  gitWorktreeId,
   workspaceCommandId,
+  workspaceConnectorId,
   workspaceId,
+  workspaceRepositoryId,
+  type GitWorktree,
   type Workspace,
   type WorkspaceCatalog,
+  type WorkspaceWorkingRoots,
 } from '@cmaster/workspaces';
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { ZodError, z } from 'zod';
@@ -23,6 +35,7 @@ import { ZodError, z } from 'zod';
 export interface FilesystemWorkspaceApiDependencies {
   readonly identity: IdentityModule;
   readonly catalog: WorkspaceCatalog;
+  readonly workingRoots: WorkspaceWorkingRoots;
 }
 
 function workspaceContract(value: Workspace): unknown {
@@ -33,6 +46,17 @@ function workspaceContract(value: Workspace): unknown {
     operationMode: value.operationMode,
     lifecycleStatus: value.lifecycleStatus,
     defaultWorkingRoot: value.defaultWorkingRoot,
+    ...(value.source.kind === 'git'
+      ? { provisioningFailure: value.provisioningFailure ?? null }
+      : {}),
+    createdAt: value.createdAt.toISOString(),
+    updatedAt: value.updatedAt.toISOString(),
+  });
+}
+
+function gitWorktreeContract(value: GitWorktree): unknown {
+  return gitWorktreeSchema.parse({
+    ...value,
     createdAt: value.createdAt.toISOString(),
     updatedAt: value.updatedAt.toISOString(),
   });
@@ -59,7 +83,8 @@ function problem(
 function sendError(error: unknown, request: FastifyRequest, reply: FastifyReply): FastifyReply {
   if (error instanceof ZodError || error instanceof InvalidWorkspaceCursorError
     || error instanceof InvalidWorkspaceNameError
-    || error instanceof InvalidWorkspacePageLimitError) {
+    || error instanceof InvalidWorkspacePageLimitError
+    || error instanceof InvalidGitBranchNameError) {
     return problem(reply, request, 400, 'invalid_request', 'Invalid request',
       'The request does not match the API contract.');
   }
@@ -70,6 +95,11 @@ function sendError(error: unknown, request: FastifyRequest, reply: FastifyReply)
   if (error instanceof WorkspaceIdempotencyConflictError) {
     return problem(reply, request, 409, 'idempotency_conflict', 'Idempotency conflict',
       'The Idempotency-Key was already used for another command.');
+  }
+  if (error instanceof WorkspaceBranchConflictError
+    || error instanceof WorkspaceLifecycleConflictError) {
+    return problem(reply, request, 409, 'workspace_conflict', 'Workspace conflict',
+      'The requested Worktree transition conflicts with current Workspace state.');
   }
   request.log.error({ requestId: request.id }, 'Filesystem Workspace API request failed');
   return problem(reply, request, 500, 'internal_error', 'Internal error',
@@ -110,6 +140,92 @@ export function registerFilesystemWorkspaceApi(
         dependencies.identity.resolveRequest(), workspaceCommandId(params.commandId),
       );
       return reply.send(workspaceContract(value));
+    } catch (error) {
+      return sendError(error, request, reply);
+    }
+  });
+
+  app.get('/api/v1/workspaces/:workspaceId/worktrees', async (request, reply) => {
+    try {
+      const params = z.object({ workspaceId: uuidSchema }).parse(request.params);
+      const query = z.object({
+        cursor: z.string().min(1).optional(),
+        limit: z.coerce.number().int().min(1).max(50).default(20),
+      }).parse(request.query);
+      const page = await dependencies.workingRoots.listWorktrees(
+        dependencies.identity.resolveRequest(),
+        workspaceId(params.workspaceId),
+        { limit: query.limit, ...(query.cursor ? { cursor: query.cursor } : {}) },
+      );
+      return reply.send(gitWorktreePageSchema.parse({
+        items: page.items.map(gitWorktreeContract),
+        nextCursor: page.nextCursor ?? null,
+      }));
+    } catch (error) {
+      return sendError(error, request, reply);
+    }
+  });
+
+  app.post('/api/v1/workspaces/:workspaceId/worktrees', async (request, reply) => {
+    try {
+      const params = z.object({ workspaceId: uuidSchema }).parse(request.params);
+      const body = createGitWorktreeRequestSchema.parse(request.body);
+      const result = await dependencies.workingRoots.createWorktree(
+        dependencies.identity.resolveRequest(),
+        workspaceId(params.workspaceId),
+        { commandId: workspaceCommandId(idempotencyKey(request)), branchName: body.branchName },
+      );
+      reply.header('Idempotency-Replayed', String(result.replayed));
+      return reply.status(202).send(worktreeOperationSchema.parse(result.value));
+    } catch (error) {
+      return sendError(error, request, reply);
+    }
+  });
+
+  app.get('/api/v1/workspaces/:workspaceId/worktree-commands/:commandId', async (request, reply) => {
+    try {
+      const params = z.object({ workspaceId: uuidSchema, commandId: uuidSchema })
+        .parse(request.params);
+      const operation = await dependencies.workingRoots.getWorktreeOperationByCommand(
+        dependencies.identity.resolveRequest(),
+        workspaceId(params.workspaceId),
+        workspaceCommandId(params.commandId),
+      );
+      return reply.send(worktreeOperationSchema.parse(operation));
+    } catch (error) {
+      return sendError(error, request, reply);
+    }
+  });
+
+  app.post('/api/v1/workspaces/:workspaceId/worktrees/:worktreeId/archive', async (request, reply) => {
+    try {
+      const params = z.object({ workspaceId: uuidSchema, worktreeId: uuidSchema })
+        .parse(request.params);
+      const result = await dependencies.workingRoots.archiveWorktree(
+        dependencies.identity.resolveRequest(),
+        workspaceId(params.workspaceId),
+        gitWorktreeId(params.worktreeId),
+        { commandId: workspaceCommandId(idempotencyKey(request)) },
+      );
+      reply.header('Idempotency-Replayed', String(result.replayed));
+      return reply.send(gitWorktreeContract(result.value));
+    } catch (error) {
+      return sendError(error, request, reply);
+    }
+  });
+
+  app.get('/api/v1/workspaces/:workspaceId/worktrees/:worktreeId/lifecycle-commands/:commandId', async (request, reply) => {
+    try {
+      const params = z.object({
+        workspaceId: uuidSchema, worktreeId: uuidSchema, commandId: uuidSchema,
+      }).parse(request.params);
+      const worktree = await dependencies.workingRoots.getWorktreeLifecycleByCommand(
+        dependencies.identity.resolveRequest(),
+        workspaceId(params.workspaceId),
+        gitWorktreeId(params.worktreeId),
+        workspaceCommandId(params.commandId),
+      );
+      return reply.send(gitWorktreeContract(worktree));
     } catch (error) {
       return sendError(error, request, reply);
     }
@@ -167,14 +283,24 @@ export function registerFilesystemWorkspaceApi(
   app.post('/api/v1/workspaces', async (request, reply) => {
     try {
       const body = createFilesystemWorkspaceRequestSchema.parse(request.body);
-      const result = await dependencies.catalog.provisionEmpty(
-        dependencies.identity.resolveRequest(),
-        {
-          commandId: workspaceCommandId(idempotencyKey(request)),
+      const commandId = workspaceCommandId(idempotencyKey(request));
+      const requestIdentity = dependencies.identity.resolveRequest();
+      const result = body.source?.kind === 'git'
+        ? await dependencies.catalog.provisionGit(requestIdentity, {
+          commandId,
           name: body.name,
           operationMode: body.operationMode,
-        },
-      );
+          source: {
+            connectorId: workspaceConnectorId(body.source.connectorId),
+            repositoryId: workspaceRepositoryId(body.source.repositoryId),
+            defaultBranch: body.source.defaultBranch,
+          },
+        })
+        : await dependencies.catalog.provisionEmpty(requestIdentity, {
+          commandId,
+          name: body.name,
+          operationMode: body.operationMode,
+        });
       reply.header('Idempotency-Replayed', String(result.replayed));
       return reply.status(201).send(workspaceContract(result.value));
     } catch (error) {

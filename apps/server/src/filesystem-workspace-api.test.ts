@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import {
   createInMemoryWorkspaceCatalog,
   type WorkspaceCatalog,
+  type WorkspaceWorkingRoots,
 } from '@cmaster/workspaces';
 import { organizationId, principalId, type IdentityModule } from '@cmaster/identity';
 import Fastify from 'fastify';
@@ -18,12 +19,22 @@ const identity: IdentityModule = {
   async provision() {},
   resolveRequest: () => requestIdentity,
 };
+const unavailableWorkingRoots: WorkspaceWorkingRoots = {
+  async listWorktrees() { return { items: [] }; },
+  async createWorktree() { throw new Error('Not used by this test'); },
+  async archiveWorktree() { throw new Error('Not used by this test'); },
+  async getWorktreeOperationByCommand() { throw new Error('Not used by this test'); },
+  async getWorktreeLifecycleByCommand() { throw new Error('Not used by this test'); },
+};
+function dependencies(catalog: WorkspaceCatalog) {
+  return { identity, catalog, workingRoots: unavailableWorkingRoots };
+}
 
 describe('Filesystem Workspace API', () => {
   it('provisions an empty Workspace from trusted identity and returns its public Contract', async () => {
     const app = Fastify();
     const catalog: WorkspaceCatalog = createInMemoryWorkspaceCatalog();
-    registerFilesystemWorkspaceApi(app, { identity, catalog });
+    registerFilesystemWorkspaceApi(app, dependencies(catalog));
 
     const response = await app.inject({
       method: 'POST',
@@ -46,12 +57,41 @@ describe('Filesystem Workspace API', () => {
     await app.close();
   });
 
+  it('accepts trusted Git references without accepting a Browser server path', async () => {
+    const app = Fastify();
+    registerFilesystemWorkspaceApi(app, dependencies(createInMemoryWorkspaceCatalog()));
+    const source = {
+      kind: 'git',
+      connectorId: randomUUID(),
+      repositoryId: randomUUID(),
+      defaultBranch: 'main',
+    };
+
+    const accepted = await app.inject({
+      method: 'POST', url: '/api/v1/workspaces',
+      headers: { 'idempotency-key': randomUUID() },
+      payload: { name: 'Trusted Git', source },
+    });
+    const rejected = await app.inject({
+      method: 'POST', url: '/api/v1/workspaces',
+      headers: { 'idempotency-key': randomUUID() },
+      payload: { name: 'Untrusted path', source: { ...source, serverPath: '/srv/private' } },
+    });
+
+    expect(accepted.statusCode, accepted.body).toBe(201);
+    expect(accepted.json()).toMatchObject({
+      source,
+      lifecycleStatus: 'provisioning',
+      defaultWorkingRoot: null,
+      provisioningFailure: null,
+    });
+    expect(rejected.statusCode).toBe(400);
+    await app.close();
+  });
+
   it('lists only bounded Workspace Contracts from the Catalog', async () => {
     const app = Fastify();
-    registerFilesystemWorkspaceApi(app, {
-      identity,
-      catalog: createInMemoryWorkspaceCatalog(),
-    });
+    registerFilesystemWorkspaceApi(app, dependencies(createInMemoryWorkspaceCatalog()));
     await app.inject({
       method: 'POST', url: '/api/v1/workspaces',
       headers: { 'idempotency-key': randomUUID() }, payload: { name: 'Planning' },
@@ -69,10 +109,7 @@ describe('Filesystem Workspace API', () => {
 
   it('reads, archives, replays, and restores one private Workspace', async () => {
     const app = Fastify();
-    registerFilesystemWorkspaceApi(app, {
-      identity,
-      catalog: createInMemoryWorkspaceCatalog(),
-    });
+    registerFilesystemWorkspaceApi(app, dependencies(createInMemoryWorkspaceCatalog()));
     const created = await app.inject({
       method: 'POST', url: '/api/v1/workspaces',
       headers: { 'idempotency-key': randomUUID() }, payload: { name: 'Lifecycle' },
@@ -104,10 +141,7 @@ describe('Filesystem Workspace API', () => {
 
   it('reconciles provision and lifecycle Commands through operation-specific routes', async () => {
     const app = Fastify();
-    registerFilesystemWorkspaceApi(app, {
-      identity,
-      catalog: createInMemoryWorkspaceCatalog(),
-    });
+    registerFilesystemWorkspaceApi(app, dependencies(createInMemoryWorkspaceCatalog()));
     const provisionCommandId = randomUUID();
     const created = await app.inject({
       method: 'POST', url: '/api/v1/workspaces',

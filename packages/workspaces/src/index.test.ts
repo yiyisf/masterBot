@@ -3,12 +3,15 @@ import { organizationId, principalId, type RequestIdentity } from '@cmaster/iden
 import { FixedClock } from '@cmaster/kernel';
 import {
   createInMemoryWorkspaceCatalog,
+  InvalidGitBranchNameError,
   InvalidWorkspaceCursorError,
   InvalidWorkspaceNameError,
   InvalidWorkspacePageLimitError,
   WorkspaceIdempotencyConflictError,
   WorkspaceNotFoundError,
   workspaceCommandId,
+  workspaceConnectorId,
+  workspaceRepositoryId,
 } from './index.js';
 
 const identity: RequestIdentity = {
@@ -28,6 +31,60 @@ function sequentialIds(): () => string {
 }
 
 describe('WorkspaceCatalog', () => {
+  it('accepts one trusted Git Repository as a private asynchronous Workspace provision', async () => {
+    const catalog = createInMemoryWorkspaceCatalog({
+      clock: new FixedClock(new Date('2026-09-15T00:00:00.000Z')),
+      generateId: sequentialIds(),
+    });
+
+    const result = await catalog.provisionGit(identity, {
+      commandId: workspaceCommandId('00000000-0000-4000-8000-000000000104'),
+      name: 'Trusted repository',
+      operationMode: 'edit_with_confirmation',
+      source: {
+        connectorId: workspaceConnectorId('00000000-0000-4000-8000-000000000201'),
+        repositoryId: workspaceRepositoryId('00000000-0000-4000-8000-000000000202'),
+        defaultBranch: 'main',
+      },
+    });
+
+    expect(result).toEqual({
+      replayed: false,
+      value: {
+        id: '00000000-0000-4000-8000-000000000101',
+        organizationId: identity.organizationId,
+        ownerPrincipalId: identity.principalId,
+        name: 'Trusted repository',
+        source: {
+          kind: 'git',
+          connectorId: '00000000-0000-4000-8000-000000000201',
+          repositoryId: '00000000-0000-4000-8000-000000000202',
+          defaultBranch: 'main',
+        },
+        operationMode: 'edit_with_confirmation',
+        lifecycleStatus: 'provisioning',
+        defaultWorkingRoot: null,
+        provisioningFailure: null,
+        createdAt: new Date('2026-09-15T00:00:00.000Z'),
+        updatedAt: new Date('2026-09-15T00:00:00.000Z'),
+      },
+    });
+  });
+
+  it('rejects an invalid default branch at the Module boundary', async () => {
+    const catalog = createInMemoryWorkspaceCatalog();
+    await expect(catalog.provisionGit(identity, {
+      commandId: workspaceCommandId('00000000-0000-4000-8000-000000000104'),
+      name: 'Invalid branch',
+      operationMode: 'observe',
+      source: {
+        connectorId: workspaceConnectorId('00000000-0000-4000-8000-000000000201'),
+        repositoryId: workspaceRepositoryId('00000000-0000-4000-8000-000000000202'),
+        defaultBranch: '../server-path',
+      },
+    })).rejects.toBeInstanceOf(InvalidGitBranchNameError);
+  });
+
   it('provisions one ready empty Workspace with a stable default Working Root and Revision', async () => {
     const catalog = createInMemoryWorkspaceCatalog({
       clock: new FixedClock(new Date('2026-09-15T00:00:00.000Z')),

@@ -44,7 +44,15 @@ import {
   PostgresDevelopmentIdentity,
   principalId,
 } from '@cmaster/identity';
-import { PostgresWorkspaceCatalog } from '@cmaster/workspaces';
+import {
+  createConfiguredGitWorkspaceProvisioner,
+  PostgresWorkspaceCatalog,
+  PostgresWorkspaceProvisioningWorker,
+  PostgresWorkspaceWorkingRoots,
+  PostgresWorkspaceWorktreeWorker,
+  workspaceConnectorId,
+  workspaceRepositoryId,
+} from '@cmaster/workspaces';
 import { buildApi } from './app.js';
 import { GovernedAgentToolRuntime } from './governed-agent-tools.js';
 import { loadServerConfig, resolveDevelopmentAgentConfig } from './config.js';
@@ -77,6 +85,7 @@ const conversations = new PostgresConversationModule(database.pool);
 const execution = new PostgresExecutionModule(database.pool);
 const approvals = new PostgresApprovalModule(database.pool);
 const workspaces = new PostgresWorkspaceCatalog(database.pool);
+const workspaceWorkingRoots = new PostgresWorkspaceWorkingRoots(database.pool);
 
 let models: ModelGateway | undefined;
 let artifacts: PostgresArtifactModule | undefined;
@@ -215,7 +224,31 @@ const runWorker = new RunWorker(execution, conversations, engines, {
   leaseTtlMs: config.worker.leaseTtlMs,
   maxAttempts: config.worker.maxAttempts,
 }, contextRuntime);
-const worker = new WorkerRuntime(database, config.features.nextArchitecture ? runWorker : undefined, {
+const workspaceProvisioner = createConfiguredGitWorkspaceProvisioner({
+  storageRoot: config.workspaceRuntime.storageRoot,
+  repositories: config.workspaceRuntime.repositories.map((repository) => ({
+    organizationId: identity.resolveRequest().organizationId,
+    connectorId: workspaceConnectorId(repository.connectorId),
+    repositoryId: workspaceRepositoryId(repository.repositoryId),
+    remoteUrl: repository.remoteUrl,
+  })),
+});
+const workerCycles = config.features.nextArchitecture
+  ? [
+    runWorker,
+    ...(config.features.filesystemWorkspace ? [
+      new PostgresWorkspaceProvisioningWorker(database.pool, workspaceProvisioner, {
+        workerId: `${config.worker.id}:workspace-provision`,
+        leaseTtlMs: config.worker.leaseTtlMs,
+      }),
+      new PostgresWorkspaceWorktreeWorker(database.pool, workspaceProvisioner, {
+        workerId: `${config.worker.id}:workspace-worktree`,
+        leaseTtlMs: config.worker.leaseTtlMs,
+      }),
+    ] : []),
+  ]
+  : undefined;
+const worker = new WorkerRuntime(database, workerCycles, {
   pollIntervalMs: config.worker.pollIntervalMs,
   concurrency: config.worker.concurrency,
 });
@@ -228,7 +261,9 @@ const api = config.role === 'worker' ? undefined : buildApi({
       ? { workspaceApi: { identity, conversations, execution, approvals } }
       : {}),
     ...(config.features.filesystemWorkspace
-      ? { filesystemWorkspaceApi: { identity, catalog: workspaces } }
+      ? { filesystemWorkspaceApi: {
+        identity, catalog: workspaces, workingRoots: workspaceWorkingRoots,
+      } }
       : {}),
     ...(artifacts ? { artifactApi: { identity, artifacts } } : {}),
     ...(toolConfirmationCoordinator ? { toolConfirmationCoordinator } : {}),

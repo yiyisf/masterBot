@@ -150,11 +150,34 @@ describe('loadServerConfig', () => {
       CMASTER_FILESYSTEM_WORKSPACE_ENABLED: 'true',
     }, [])).toThrow('Filesystem Workspace requires the next architecture');
 
-    expect(loadServerConfig({
+    const enabled = loadServerConfig({
       DATABASE_URL: 'postgresql://localhost/cmaster',
       NEXT_ARCHITECTURE_ENABLED: 'true',
       CMASTER_FILESYSTEM_WORKSPACE_ENABLED: 'true',
-    }, []).features.filesystemWorkspace).toBe(true);
+      CMASTER_WORKSPACE_STORAGE_ROOT: '/srv/cmaster/workspaces',
+      CMASTER_GIT_REPOSITORIES_JSON: JSON.stringify([{
+        connectorId: '00000000-0000-4000-8000-000000000101',
+        repositoryId: '00000000-0000-4000-8000-000000000102',
+        remoteUrl: 'https://git.example.internal/product/repository.git',
+      }]),
+    }, []);
+    expect(enabled.features.filesystemWorkspace).toBe(true);
+    expect(enabled.workspaceRuntime).toEqual({
+      storageRoot: '/srv/cmaster/workspaces',
+      repositories: [{
+        connectorId: '00000000-0000-4000-8000-000000000101',
+        repositoryId: '00000000-0000-4000-8000-000000000102',
+        remoteUrl: 'https://git.example.internal/product/repository.git',
+      }],
+    });
+    expect(() => loadServerConfig({
+      DATABASE_URL: 'postgresql://localhost/cmaster',
+      CMASTER_GIT_REPOSITORIES_JSON: JSON.stringify([{
+        connectorId: '00000000-0000-4000-8000-000000000101',
+        repositoryId: '00000000-0000-4000-8000-000000000102',
+        remoteUrl: 'https://git.example.internal/repository.git?token=secret',
+      }]),
+    }, [])).toThrow('credential-free');
   });
 
   it('keeps Employee Workspace disabled by default and requires every Slice 4 prerequisite', () => {

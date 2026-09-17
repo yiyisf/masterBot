@@ -1,7 +1,7 @@
 import type { DatabaseHealth } from './postgres.js';
 
 export interface WorkerCycle {
-  relayOne(): Promise<boolean>;
+  relayOne?(): Promise<boolean>;
   executeOne(): Promise<boolean>;
 }
 
@@ -16,7 +16,7 @@ export class WorkerRuntime {
 
   constructor(
     private readonly database: DatabaseHealth,
-    private readonly cycle?: WorkerCycle,
+    private readonly cycles?: WorkerCycle | readonly WorkerCycle[],
     private readonly options: WorkerRuntimeOptions = { pollIntervalMs: 500, concurrency: 1 },
   ) {}
 
@@ -24,20 +24,23 @@ export class WorkerRuntime {
     if (!(await this.database.check())) {
       throw new Error('Worker cannot start while PostgreSQL is unavailable');
     }
-    if (this.cycle) void this.tick().catch(() => undefined);
+    if (this.cycles) void this.tick().catch(() => undefined);
     this.timer = setInterval(() => void this.tick().catch(() => undefined), this.options.pollIntervalMs);
   }
 
   private async tick(): Promise<void> {
-    if (this.running || !this.cycle) return;
+    if (this.running || !this.cycles) return;
     this.running = true;
     try {
-      while (await this.cycle.relayOne()) {
-        // Drain durable dispatch requests before leasing work.
+      const cycles = Array.isArray(this.cycles) ? this.cycles : [this.cycles];
+      for (const cycle of cycles) {
+        while (await cycle.relayOne?.()) {
+          // Drain durable dispatch requests before leasing work.
+        }
       }
-      await Promise.all(
-        Array.from({ length: this.options.concurrency }, () => this.cycle!.executeOne()),
-      );
+      await Promise.all(cycles.flatMap((cycle) => (
+        Array.from({ length: this.options.concurrency }, () => cycle.executeOne())
+      )));
     } finally {
       this.running = false;
     }

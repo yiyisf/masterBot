@@ -29,6 +29,20 @@ const optionalModelBaseUrl = z.preprocess(
   }, 'Model Base URL must be credential-free HTTP(S)').optional(),
 );
 
+const configuredGitRepositoriesSchema = z.array(z.object({
+  connectorId: z.uuid(),
+  repositoryId: z.uuid(),
+  remoteUrl: z.string().min(1).refine((value) => {
+    try {
+      const url = new URL(value);
+      return ['https:', 'http:', 'ssh:', 'file:'].includes(url.protocol)
+        && !url.username && !url.password && !url.search && !url.hash;
+    } catch {
+      return false;
+    }
+  }, 'Trusted Git remote must be a credential-free URL'),
+}).strict()).max(100);
+
 const environmentSchema = z.object({
   CMASTER_SERVER_ROLE: serverRoleSchema.default('all'),
   CMASTER_API_PORT: z.coerce.number().int().min(1).max(65535).default(3100),
@@ -42,6 +56,15 @@ const environmentSchema = z.object({
   CMASTER_EMPLOYEE_WORKSPACE_ENABLED: z.enum(['true', 'false']).default('false').transform((value) => value === 'true'),
   CMASTER_FILESYSTEM_WORKSPACE_ENABLED: z.enum(['true', 'false']).default('false').transform((value) => value === 'true'),
   CMASTER_ARTIFACT_STORAGE_ROOT: z.string().min(1).default('data/artifacts'),
+  CMASTER_WORKSPACE_STORAGE_ROOT: z.string().min(1).default('data/workspaces'),
+  CMASTER_GIT_REPOSITORIES_JSON: z.string().default('[]').transform((value, context) => {
+    try {
+      return JSON.parse(value) as unknown;
+    } catch {
+      context.addIssue({ code: 'custom', message: 'Trusted Git repositories must be valid JSON' });
+      return z.NEVER;
+    }
+  }).pipe(configuredGitRepositoriesSchema),
   CMASTER_HTTP_FETCH_ALLOWED_HOSTS: z.string().default(''),
   CMASTER_RUNTIME_ENV: z.enum(['development', 'test', 'production']).default('development'),
   CMASTER_DEV_ORGANIZATION_ID: z.uuid().default('00000000-0000-4000-8000-000000000001'),
@@ -95,6 +118,14 @@ export interface ServerConfig {
   };
   runtimeEnvironment: 'development' | 'test' | 'production';
   artifactStorageRoot: string;
+  workspaceRuntime: {
+    storageRoot: string;
+    repositories: readonly {
+      connectorId: string;
+      repositoryId: string;
+      remoteUrl: string;
+    }[];
+  };
   developmentIdentity: {
     organizationId: string;
     principalId: string;
@@ -363,6 +394,10 @@ export function loadServerConfig(
     },
     runtimeEnvironment: parsed.CMASTER_RUNTIME_ENV,
     artifactStorageRoot: parsed.CMASTER_ARTIFACT_STORAGE_ROOT,
+    workspaceRuntime: {
+      storageRoot: parsed.CMASTER_WORKSPACE_STORAGE_ROOT,
+      repositories: parsed.CMASTER_GIT_REPOSITORIES_JSON,
+    },
     toolRuntime: {
       httpFetchAllowedHosts: parseAllowedHosts(parsed.CMASTER_HTTP_FETCH_ALLOWED_HOSTS),
     },
