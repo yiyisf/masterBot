@@ -8,6 +8,7 @@ import {
   ContextBuildFailureError,
   ContextCompressionRequiredError,
   ContextInputTooLargeError,
+  ContextSourceIntegrityError,
   contextInvocationId,
   contextRunId,
   PostgresContextBuilder,
@@ -23,6 +24,12 @@ import {
   type ModelGateway,
   type ModelInvocationRequest,
 } from '@cmaster/models';
+import {
+  workingRootId,
+  workspaceId,
+  workspaceInvocationId,
+  workspaceRevisionId,
+} from '@cmaster/workspaces';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { Pool } from 'pg';
 
@@ -368,5 +375,38 @@ describe('governed Invocation Context', () => {
       principalId: requestIdentity.principalId,
       manifestId: built.manifest.id,
     })).resolves.toEqual(built.invocationContext);
+
+    const fileSource = {
+      organizationId: requestIdentity.organizationId,
+      invocationId: workspaceInvocationId(invocationId),
+      workspaceId: workspaceId(randomUUID()),
+      workingRootId: workingRootId(randomUUID()),
+      revisionId: workspaceRevisionId(randomUUID()),
+      path: 'src/report.md',
+      mediaType: 'text/markdown; charset=utf-8',
+      sizeBytes: 42,
+      sha256: 'a'.repeat(64),
+    };
+    await context.recordOpenedFile(fileSource);
+    await context.recordOpenedFile(fileSource);
+    await expect(context.recordOpenedFile({
+      ...fileSource, sha256: 'b'.repeat(64),
+    })).rejects.toBeInstanceOf(ContextSourceIntegrityError);
+    const recoveredWithFile = await context.build(buildRequest);
+    expect(recoveredWithFile.manifest.itemCount).toBe(4);
+    expect(recoveredWithFile.manifest.items.at(-1)).toEqual({
+      sourceKind: 'workspace_file',
+      workspaceId: fileSource.workspaceId,
+      workingRootId: fileSource.workingRootId,
+      revisionId: fileSource.revisionId,
+      path: fileSource.path,
+      mediaType: fileSource.mediaType,
+      sizeBytes: fileSource.sizeBytes,
+      sourceHash: fileSource.sha256,
+      provenance: 'workspace_revision_file',
+      trustClass: 'reference',
+      inclusionMode: 'verbatim',
+    });
+    expect(recoveredWithFile.invocationContext).toEqual(built.invocationContext);
   });
 });

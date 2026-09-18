@@ -10,7 +10,8 @@
     { "path": "../identity" },
     { "path": "../artifacts" },
     { "path": "../conversations" },
-    { "path": "../models" }
+    { "path": "../models" },
+    { "path": "../workspaces" }
   ],
   "include": ["src/**/*.ts"],
   "exclude": ["src/**/*.test.ts"]

@@ -54,7 +54,7 @@ test('PostgreSQL adapters query only tables owned by their Module', async () => 
     workspaces: new Set([
       'workspaces', 'workspace_roots', 'workspace_revisions', 'workspace_operation_receipts',
       'workspace_repository_bindings', 'workspace_git_worktrees', 'workspace_operations',
-      'workspace_outbox', 'workspace_file_entries',
+      'workspace_outbox', 'workspace_file_entries', 'workspace_run_environments',
     ]),
     agents: new Set(['agents', 'agent_revisions']),
     conversations: new Set(['conversations', 'messages', 'conversation_rename_receipts']),

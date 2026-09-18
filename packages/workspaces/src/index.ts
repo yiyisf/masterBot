@@ -14,10 +14,18 @@ import {
   type WorkspaceRevisionContentReader,
   type WorkspaceRevisionContentScope,
 } from './revision-content.js';
-
-export type WorkspaceId = Brand<string, 'WorkspaceId'>;
-export type WorkingRootId = Brand<string, 'WorkingRootId'>;
-export type WorkspaceRevisionId = Brand<string, 'WorkspaceRevisionId'>;
+import {
+  InvalidWorkspaceCursorError,
+  InvalidWorkspaceFilePathError,
+  InvalidWorkspaceFileQueryError,
+  InvalidWorkspacePageLimitError,
+  WorkspaceFileContentUnavailableError,
+  WorkspaceFileLimitError,
+  WorkspaceNotFoundError,
+  type WorkingRootId,
+  type WorkspaceId,
+  type WorkspaceRevisionId,
+} from './workspace-types.js';
 export type WorkspaceCommandId = Brand<string, 'WorkspaceCommandId'>;
 export type WorkspaceConnectorId = Brand<string, 'WorkspaceConnectorId'>;
 export type WorkspaceRepositoryId = Brand<string, 'WorkspaceRepositoryId'>;
@@ -57,17 +65,10 @@ export interface Workspace {
 }
 
 export class WorkspaceIdempotencyConflictError extends Error {}
-export class WorkspaceNotFoundError extends Error {}
 export class InvalidWorkspaceNameError extends Error {}
-export class InvalidWorkspaceCursorError extends Error {}
-export class InvalidWorkspacePageLimitError extends Error {}
 export class InvalidGitBranchNameError extends Error {}
 export class WorkspaceBranchConflictError extends Error {}
 export class WorkspaceLifecycleConflictError extends Error {}
-export class InvalidWorkspaceFilePathError extends Error {}
-export class InvalidWorkspaceFileQueryError extends Error {}
-export class WorkspaceFileLimitError extends Error {}
-export class WorkspaceFileContentUnavailableError extends Error {}
 
 export interface WorkspaceCommandResult<Value> {
   readonly value: Value;
@@ -2375,6 +2376,34 @@ export function workingRootId(value: string): WorkingRootId {
 export function workspaceRevisionId(value: string): WorkspaceRevisionId {
   return value as WorkspaceRevisionId;
 }
+
+export {
+  InvalidWorkspaceCursorError,
+  InvalidWorkspaceFilePathError,
+  InvalidWorkspaceFileQueryError,
+  InvalidWorkspacePageLimitError,
+  WorkspaceFileContentUnavailableError,
+  WorkspaceFileLimitError,
+  WorkspaceNotFoundError,
+  type WorkingRootId,
+  type WorkspaceId,
+  type WorkspaceRevisionId,
+} from './workspace-types.js';
+
+export {
+  PostgresWorkspaceRunEnvironments,
+  WorkspaceRunEnvironmentUnavailableError,
+  workspaceInvocationId,
+  type PrepareWorkspaceRunEnvironment,
+  type WorkspaceSandboxAdapter,
+  type WorkspaceSandboxScope,
+  type WorkspaceInvocationId,
+  type WorkspaceRunEnvironment,
+  type WorkspaceRunEnvironmentId,
+  type WorkspaceRunEnvironments,
+} from './run-environments.js';
+
+export { createConfiguredWorkspaceSandboxAdapter } from './sandbox-adapter.js';
 
 export {
   createConfiguredWorkspaceRevisionContentReader,

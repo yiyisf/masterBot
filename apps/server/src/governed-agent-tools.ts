@@ -24,6 +24,15 @@ export interface RequestIdentitySource {
   resolveRequest(): RequestIdentity;
 }
 
+export interface GovernedToolOutcomeObserver {
+  observe(
+    identity: RequestIdentity,
+    input: EngineInvocation,
+    descriptor: ToolDescriptor,
+    outcome: ToolOutcome,
+  ): Promise<void>;
+}
+
 /**
  * Server composition adapter between the provider-neutral Agent Engine and Tools Module.
  * Model-visible names are resolved only from the active granted Catalog; invented names
@@ -36,6 +45,7 @@ export class GovernedAgentToolRuntime implements AgentToolRuntime {
     private readonly identity: RequestIdentitySource,
     private readonly entitlements: PrincipalEntitlementSource,
     private readonly execution: ToolExecutionBoundary,
+    private readonly observers: readonly GovernedToolOutcomeObserver[] = [],
   ) {}
 
   async list(input: EngineInvocation): Promise<readonly ModelAvailableTool[]> {
@@ -73,6 +83,7 @@ export class GovernedAgentToolRuntime implements AgentToolRuntime {
         input: request.input,
         signal,
       });
+      await this.observe(identity, input, descriptor, outcome);
       return projectOutcome(outcome, descriptor);
     } finally {
       await this.execution.leaveToolBoundary(identity, input.runId, boundary);
@@ -94,7 +105,19 @@ export class GovernedAgentToolRuntime implements AgentToolRuntime {
       call.capabilityId,
       'capability',
     );
+    if (call.outcome) await this.observe(identity, input, descriptor, call.outcome);
     return projectCall(call, descriptor);
+  }
+
+  private async observe(
+    identity: RequestIdentity,
+    input: EngineInvocation,
+    descriptor: ToolDescriptor,
+    outcome: ToolOutcome,
+  ): Promise<void> {
+    for (const observer of this.observers) {
+      await observer.observe(identity, input, descriptor, outcome);
+    }
   }
 
   private resolveIdentity(input: EngineInvocation): RequestIdentity {

@@ -8,7 +8,7 @@ import type {
   WorkingRootId,
   WorkspaceId,
   WorkspaceRevisionId,
-} from './index.js';
+} from './workspace-types.js';
 
 const executeFile = promisify(execFile);
 const gitCommitPattern = /^[0-9a-f]{40,64}$/u;

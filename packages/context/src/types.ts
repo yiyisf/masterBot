@@ -1,6 +1,12 @@
 import type { ConversationId, MessageId } from '@cmaster/conversations';
 import type { OrganizationId, PrincipalId } from '@cmaster/identity';
 import type { Brand } from '@cmaster/kernel';
+import type {
+  WorkingRootId,
+  WorkspaceId,
+  WorkspaceInvocationId,
+  WorkspaceRevisionId,
+} from '@cmaster/workspaces';
 
 export type ContextPolicyRevision = Brand<string, 'ContextPolicyRevision'>;
 
@@ -117,9 +123,22 @@ export type ContextManifestItem =
     readonly provenance: 'context_summary';
     readonly trustClass: 'reference';
     readonly inclusionMode: 'summary';
+  }
+  | {
+    readonly sourceKind: 'workspace_file';
+    readonly workspaceId: WorkspaceId;
+    readonly workingRootId: WorkingRootId;
+    readonly revisionId: WorkspaceRevisionId;
+    readonly path: string;
+    readonly mediaType: string;
+    readonly sizeBytes: number;
+    readonly sourceHash: ContextSourceHash;
+    readonly provenance: 'workspace_revision_file';
+    readonly trustClass: 'reference';
+    readonly inclusionMode: 'verbatim';
   };
 
-/** Completed, Organization-scoped Context selection; one exists per Invocation. */
+/** Organization-scoped provenance envelope; base selection is fixed and Tool reads append only. */
 export interface ContextManifest {
   readonly id: ContextManifestId;
   readonly organizationId: OrganizationId;
@@ -186,6 +205,23 @@ export interface MaterializeInvocationContext {
 export interface ContextBuilder {
   build(request: BuildInvocationContext): Promise<BuiltInvocationContext>;
   materialize(request: MaterializeInvocationContext): Promise<InvocationContext>;
+}
+
+export interface RecordOpenedWorkspaceFile {
+  readonly organizationId: OrganizationId;
+  readonly invocationId: WorkspaceInvocationId;
+  readonly workspaceId: WorkspaceId;
+  readonly workingRootId: WorkingRootId;
+  readonly revisionId: WorkspaceRevisionId;
+  readonly path: string;
+  readonly mediaType: string;
+  readonly sizeBytes: number;
+  readonly sha256: string;
+}
+
+/** Records only files actually opened into the private Model Tool transcript. */
+export interface WorkspaceFileContextRecorder {
+  recordOpenedFile(input: RecordOpenedWorkspaceFile): Promise<void>;
 }
 
 /** Non-retryable failure when mandatory Context cannot fit the approved budget. */

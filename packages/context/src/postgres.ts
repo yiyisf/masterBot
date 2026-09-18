@@ -20,6 +20,11 @@ import type {
   ModelProfileId,
   ModelUsage,
 } from '@cmaster/models';
+import type {
+  WorkingRootId,
+  WorkspaceId,
+  WorkspaceRevisionId,
+} from '@cmaster/workspaces';
 import type { Pool, PoolClient } from 'pg';
 import {
   ContextBuildFailureError,
@@ -45,6 +50,8 @@ import {
   type InvocationContext,
   type InvocationContextMessage,
   type MaterializeInvocationContext,
+  type RecordOpenedWorkspaceFile,
+  type WorkspaceFileContextRecorder,
 } from './types.js';
 
 interface ManifestRow {
@@ -80,14 +87,20 @@ interface SummaryRow {
 
 interface ManifestItemRow {
   position: number;
-  source_kind: 'message' | 'artifact' | 'summary';
-  source_id: string;
+  source_kind: 'message' | 'artifact' | 'summary' | 'workspace_file';
+  source_id: string | null;
   artifact_id: string | null;
   source_sequence: number | null;
   source_hash: string;
   provenance: ContextManifestItem['provenance'];
   trust_class: ContextManifestItem['trustClass'];
   inclusion_mode: ContextManifestItem['inclusionMode'];
+  workspace_id: string | null;
+  working_root_id: string | null;
+  workspace_revision_id: string | null;
+  file_path: string | null;
+  media_type: string | null;
+  size_bytes: number | null;
 }
 
 function hashText(value: string): ContextSourceHash {
@@ -317,7 +330,7 @@ async function generateSummary(
 function mapManifestItem(row: ManifestItemRow): ContextManifestItem {
   const common = { sourceHash: row.source_hash as ContextSourceHash };
   if (row.source_kind === 'message') {
-    if (row.source_sequence === null
+    if (row.source_id === null || row.source_sequence === null
       || !['employee_message', 'assistant_message'].includes(row.provenance)
       || row.trust_class !== 'conversation'
       || !['verbatim', 'summary'].includes(row.inclusion_mode)) {
@@ -334,7 +347,7 @@ function mapManifestItem(row: ManifestItemRow): ContextManifestItem {
     };
   }
   if (row.source_kind === 'artifact') {
-    if (row.artifact_id === null || row.source_sequence !== null
+    if (row.source_id === null || row.artifact_id === null || row.source_sequence !== null
       || row.provenance !== 'artifact_version'
       || row.trust_class !== 'reference'
       || !['verbatim', 'summary', 'reference_only'].includes(row.inclusion_mode)) {
@@ -350,7 +363,31 @@ function mapManifestItem(row: ManifestItemRow): ContextManifestItem {
       inclusionMode: row.inclusion_mode as 'verbatim' | 'summary' | 'reference_only',
     };
   }
-  if (row.source_sequence !== null || row.provenance !== 'context_summary'
+  if (row.source_kind === 'workspace_file') {
+    if (row.source_id !== null || row.source_sequence !== null
+      || row.workspace_id === null || row.working_root_id === null
+      || row.workspace_revision_id === null || row.file_path === null
+      || row.media_type === null || row.size_bytes === null
+      || row.provenance !== 'workspace_revision_file'
+      || row.trust_class !== 'reference' || row.inclusion_mode !== 'verbatim') {
+      throw new ContextSourceIntegrityError('Stored Workspace File Context item is invalid');
+    }
+    return {
+      sourceKind: 'workspace_file',
+      workspaceId: row.workspace_id as WorkspaceId,
+      workingRootId: row.working_root_id as WorkingRootId,
+      revisionId: row.workspace_revision_id as WorkspaceRevisionId,
+      path: row.file_path,
+      mediaType: row.media_type,
+      sizeBytes: row.size_bytes,
+      sourceHash: row.source_hash as ContextSourceHash,
+      provenance: 'workspace_revision_file',
+      trustClass: 'reference',
+      inclusionMode: 'verbatim',
+    };
+  }
+  if (row.source_id === null || row.source_sequence !== null
+    || row.provenance !== 'context_summary'
     || row.trust_class !== 'reference' || row.inclusion_mode !== 'summary') {
     throw new ContextSourceIntegrityError('Stored Summary Context item is invalid');
   }
@@ -379,7 +416,8 @@ async function loadManifest(
   if (!row) return undefined;
   const items = await client.query<ManifestItemRow>(
     `SELECT position, source_kind, source_id, artifact_id, source_sequence, source_hash,
-            provenance, trust_class, inclusion_mode
+            provenance, trust_class, inclusion_mode, workspace_id, working_root_id,
+            workspace_revision_id, file_path, media_type, size_bytes
      FROM context_manifest_items
      WHERE organization_id = $1 AND manifest_id = $2
      ORDER BY position ASC`,
@@ -416,7 +454,7 @@ async function loadSummary(
 }
 
 /** PostgreSQL Manifest Adapter; source bodies remain behind owning Module interfaces. */
-export class PostgresContextBuilder implements ContextBuilder {
+export class PostgresContextBuilder implements ContextBuilder, WorkspaceFileContextRecorder {
   constructor(
     private readonly pool: Pool,
     private readonly conversations: Pick<ConversationModule, 'readHistoryThrough'>,
@@ -664,6 +702,87 @@ export class PostgresContextBuilder implements ContextBuilder {
     };
   }
 
+  async recordOpenedFile(input: RecordOpenedWorkspaceFile): Promise<void> {
+    if (!/^[0-9a-f]{64}$/u.test(input.sha256)
+      || input.path.length < 1 || input.path.length > 1024
+      || input.path.startsWith('/') || input.path.includes('\\')
+      || input.path.split('/').some((segment) => segment === '' || segment === '.' || segment === '..')
+      || !Number.isInteger(input.sizeBytes) || input.sizeBytes < 0 || input.sizeBytes > 1_048_576
+      || input.mediaType.length < 1 || input.mediaType.length > 100) {
+      throw new ContextSourceIntegrityError('Workspace File provenance is invalid');
+    }
+    const client = await this.pool.connect();
+    const lockKey = `context-workspace-file:${input.organizationId}:${input.invocationId}`;
+    let transactionStarted = false;
+    try {
+      await client.query('SELECT pg_advisory_lock(hashtextextended($1, 0))', [lockKey]);
+      await client.query('BEGIN');
+      transactionStarted = true;
+      const manifest = await client.query<{ readonly id: string }>(
+        `SELECT id FROM context_manifests
+         WHERE organization_id = $1 AND invocation_id = $2
+         FOR UPDATE`,
+        [input.organizationId, input.invocationId],
+      );
+      const manifestId = manifest.rows[0]?.id;
+      if (!manifestId) throw new ContextSourceIntegrityError('Invocation Context was not found');
+      const existing = await client.query<ManifestItemRow>(
+        `SELECT position, source_kind, source_id, artifact_id, source_sequence, source_hash,
+                provenance, trust_class, inclusion_mode, workspace_id, working_root_id,
+                workspace_revision_id, file_path, media_type, size_bytes
+         FROM context_manifest_items
+         WHERE manifest_id = $1 AND source_kind = 'workspace_file'
+           AND workspace_id = $2 AND working_root_id = $3
+           AND workspace_revision_id = $4 AND file_path = $5`,
+        [manifestId, input.workspaceId, input.workingRootId, input.revisionId, input.path],
+      );
+      const recorded = existing.rows[0];
+      if (recorded) {
+        if (recorded.source_hash !== input.sha256 || recorded.media_type !== input.mediaType
+          || recorded.size_bytes !== input.sizeBytes) {
+          throw new ContextSourceIntegrityError('Workspace File provenance changed');
+        }
+      } else {
+        const position = await client.query<{ readonly next_position: number }>(
+          `SELECT COALESCE(MAX(position), -1) + 1 AS next_position
+           FROM context_manifest_items WHERE manifest_id = $1`,
+          [manifestId],
+        );
+        await client.query(
+          `INSERT INTO context_manifest_items (
+             manifest_id, organization_id, position, source_kind, source_id, artifact_id,
+             source_sequence, source_hash, provenance, trust_class, inclusion_mode,
+             workspace_id, working_root_id, workspace_revision_id,
+             file_path, media_type, size_bytes
+           ) VALUES (
+             $1, $2, $3, 'workspace_file', NULL, NULL, NULL, $4,
+             'workspace_revision_file', 'reference', 'verbatim',
+             $5, $6, $7, $8, $9, $10
+           )`,
+          [manifestId, input.organizationId, position.rows[0]?.next_position ?? 0,
+            input.sha256, input.workspaceId, input.workingRootId, input.revisionId,
+            input.path, input.mediaType, input.sizeBytes],
+        );
+        await client.query(
+          `UPDATE context_manifests SET item_count = item_count + 1
+           WHERE organization_id = $1 AND id = $2`,
+          [input.organizationId, manifestId],
+        );
+      }
+      await client.query('COMMIT');
+      transactionStarted = false;
+    } catch (error) {
+      if (transactionStarted) await client.query('ROLLBACK');
+      throw error;
+    } finally {
+      try {
+        await client.query('SELECT pg_advisory_unlock(hashtextextended($1, 0))', [lockKey]);
+      } finally {
+        client.release();
+      }
+    }
+  }
+
   async materialize(request: MaterializeInvocationContext): Promise<InvocationContext> {
     const manifest = await loadManifest(this.pool, request.organizationId, {
       id: request.manifestId,
@@ -715,6 +834,11 @@ export class PostgresContextBuilder implements ContextBuilder {
             trustClass: 'conversation',
           });
         }
+        continue;
+      }
+      if (item.sourceKind === 'workspace_file') {
+        // Tool output is already fixed in the provider-neutral checkpoint transcript.
+        // The Manifest item is provenance, not a second prompt injection path.
         continue;
       }
       if (item.sourceKind === 'summary') {
