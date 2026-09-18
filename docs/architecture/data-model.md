@@ -148,7 +148,7 @@ Checkpoint 保存安全恢复所需 Working State、Engine Adapter/version、Con
 
 ### ContextManifest / ContextSummary
 
-ContextManifest 是一次 Invocation 实际 Context 选择的不可变、Organization-scoped 记录，`(organizationId, invocationId)` 唯一。Workspace File 来源同时固定 Workspace/Working Root/Revision/path。Manifest 保存 Trigger Message sequence、Context Policy version、预算/估算用量，以及有序来源项的 source ID/sequence、content hash、分类与 `verbatim | summary` 纳入方式；不复制 Message、Workspace File 或 Artifact 正文。
+ContextManifest 是一次 Invocation 的 Organization-scoped provenance envelope，`(organizationId, invocationId)` 唯一。Engine 启动前固定的 Message/Artifact/Summary 基础选择不可变；Invocation 执行期间，受治理 Tool 实际打开并进入 Model transcript 的 Workspace File 只按 ADR-0047 追加不可变 provenance item。Workspace File 来源同时固定 Workspace/Working Root/Revision/path/hash；list/search 不声明正文纳入。Manifest 保存 Trigger Message sequence、Context Policy version、预算/估算用量，以及有序来源项的 source ID/sequence、content hash、分类与 `verbatim | summary` 纳入方式；不复制 Message、Workspace File 或 Artifact 正文。
 
 ContextSummary 是对一个明确连续来源区间的有损派生内容。首版使用固定的 Employee Goal、Explicit Constraints、Established Facts、Decisions and Commitments、Relevant Artifacts、Unresolved Items 结构；它不是 Message、Memory 或 Knowledge，也不能提升来源内容的指令权限。恢复通过 Manifest 重新读取权威来源并校验 hash；已完成 Manifest 不重新选择或摘要。
 

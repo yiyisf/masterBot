@@ -1,6 +1,6 @@
 # Filesystem Workspace foundation and trusted Git provisioning
 
-Slices 6.1–6.3a expose the authoritative Workspace backend behind:
+Slices 6.1–6.3b expose the authoritative Workspace backend behind:
 
 ```text
 NEXT_ARCHITECTURE_ENABLED=true
@@ -44,7 +44,11 @@ Only credential-free `https`, `http`, `ssh`, and `file` URLs are accepted in thi
 - bounded opaque-cursor Workspace, Worktree, and fixed-Revision file pagination;
 - exact-Revision text file list/search/open backed by persisted safe metadata;
 - mandatory `.cmasterignore` and applicable `.gitignore` filtering;
-- denial of traversal, symbolic links, Gitlinks/nested repositories, binary files, and oversized content.
+- denial of traversal, symbolic links, Gitlinks/nested repositories, binary files, and oversized content;
+- durable Invocation-to-fixed-Revision Run Environments with opaque identities and restart-safe materialization;
+- read-only fixed roots plus private temp/overlay directories that are not exposed through Module or Tool results;
+- governed `workspace_list_files`, `workspace_search_files`, and `workspace_open_file` Tools;
+- exact Workspace/Working Root/Revision/path/hash Context provenance for opened files.
 
 PostgreSQL and shared Workspace Content Storage are authoritative. Git provisioning is accepted transactionally before any Git I/O. The `api` role only accepts and reads Commands; the `worker` or `all` role materializes repositories and Worktrees. A Worker restart can reclaim an expired lease, and operation-scoped content receipts prevent a completed Git side effect from being repeated after response loss.
 
@@ -80,9 +84,13 @@ Additional Worktrees are asynchronous. Their Command first returns a `pending` o
 
 File reads always identify an exact Workspace, Working Root, and immutable Revision. The first authorized read builds a bounded safe metadata index from the pinned Git commit (or the canonical empty Revision), then persists only relative path, media type, byte size, and SHA-256. Content remains in shared Workspace storage and is revalidated against metadata when opened. Only canonical UTF-8 regular files up to 1 MiB are readable. Search is literal, case-sensitive, and bounded to 1,000 files / 8 MiB per request. Ignored and unsupported entries are absent rather than exposing host or Git details.
 
+A Run Environment binds one Invocation to one Principal-private fixed Revision. Preparation is idempotent and records `preparing` before materialization, so a different Worker can reconcile the same environment after process loss. The Sandbox Adapter copies only already-filtered, hash-verified files into a read-only fixed root; private temp and overlay directories are separate and have no public path-bearing API. This read slice exposes no arbitrary process or network capability.
+
+Workspace file Tools take only bounded relative-path/search inputs. Workspace, Working Root, Revision, storage, and host scope are resolved server-side from the Invocation binding. Model-facing pages are capped at 20 list entries and 10 search matches, and Tool open is capped at 8 KiB so the complete validated Tool outcome remains below the durable 64 KiB Tool payload boundary. The HTTP/Module read capability retains its wider 1 MiB limit. List/search do not claim Context inclusion. After Tool Runtime has durably completed an open, one idempotent `workspace_file` Context Manifest item records exact scope and SHA-256; content remains in the private Tool transcript/checkpoint rather than the Manifest item.
+
 ## Explicitly absent
 
-This slice does not add Sandbox execution, governed file Tools, Invocation temp/overlay, Change Sets, Conversation/Run/Artifact Workspace scope, Git commit/push/PR/merge delivery, Pending composition, Worktree deletion, or the replacement Employee Experience.
+This slice does not add arbitrary Shell/process execution, network-enabled Sandbox capabilities, file mutation, Change Sets, Conversation/Run/Artifact product routing scope, Git commit/push/PR/merge delivery, Pending composition, Worktree deletion, or the replacement Employee Experience.
 
 ## Verification
 

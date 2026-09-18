@@ -67,6 +67,9 @@ interface WorkspaceChanges {
 
 interface WorkspaceRunEnvironments {
   prepare(request: PrepareWorkspaceRunEnvironment): Promise<WorkspaceRunEnvironment>;
+  listFiles(query: ListInvocationWorkspaceFiles): Promise<Page<WorkspaceFileEntry>>;
+  searchFiles(query: SearchInvocationWorkspaceFiles): Promise<Page<WorkspaceFileMatch>>;
+  openFile(query: OpenInvocationWorkspaceFile): Promise<WorkspaceFileContent>;
   release(command: ReleaseWorkspaceRunEnvironment): Promise<void>;
 }
 ```
@@ -135,7 +138,7 @@ interface RunQueries {
 - Slice 5 的 Execution Query 提供按 Conversation 的 Run summaries、按 Trigger Message 的 attempts、按 initiating Principal 的 active Interrupts 与分页 Event 读取；它不读取 Conversation 正文或 Artifact 内容。
 - Checkpoint 只在声明的安全点产生；不兼容 Engine version 必须显式失败或迁移。
 
-Slice 2 使用 `accepted | queued | running | succeeded | failed | cancelled`；Slice 3 增加非终态 `waiting`，具体原因由持久化 Interrupt 表达，Invocation 等待时为 `interrupted` 且不持有 Worker Lease。`output_ready` 是取消边界：若取消先提交则丢弃后续 Engine 输出；若输出先提交则取消太晚，继续幂等追加 Assistant Message。Tool Provider in-flight 期间暂时不可取消，Tool boundary 持久化后恢复可取消，不引入 `cancelling/completing`。Slice 2 在此 Interface 内增加按 generation 排序的聚合 output events；Slice 3 在 Tool/Interrupt 安全点写 Engine-neutral Checkpoint，Lease 恢复不得重复已完成 ToolCall。Slice 4 在 Agent Engine 前构建并固定 Context Manifest；Checkpoint 只保存 `contextManifestId` 和 Invocation 开始后的执行增量，不复制 Manifest 引用的 Message 或 Artifact 内容。最终 `output_ready` 同时固定文本和 Harness 收集的 Artifact References，以便崩溃后幂等交付同一 Assistant Message。
+Slice 2 使用 `accepted | queued | running | succeeded | failed | cancelled`；Slice 3 增加非终态 `waiting`，具体原因由持久化 Interrupt 表达，Invocation 等待时为 `interrupted` 且不持有 Worker Lease。`output_ready` 是取消边界：若取消先提交则丢弃后续 Engine 输出；若输出先提交则取消太晚，继续幂等追加 Assistant Message。Tool Provider in-flight 期间暂时不可取消，Tool boundary 持久化后恢复可取消，不引入 `cancelling/completing`。Slice 2 在此 Interface 内增加按 generation 排序的聚合 output events；Slice 3 在 Tool/Interrupt 安全点写 Engine-neutral Checkpoint，Lease 恢复不得重复已完成 ToolCall。Slice 4 在 Agent Engine 前构建并固定 Context Manifest 的基础选择；按 ADR-0047，后续受治理 Tool 实际打开的 Workspace File 只追加 provenance item，不改写基础 materialization。Checkpoint 只保存 `contextManifestId` 和 Invocation 开始后的执行增量，不复制 Manifest 引用的 Message 或 Artifact 内容。最终 `output_ready` 同时固定文本和 Harness 收集的 Artifact References，以便崩溃后幂等交付同一 Assistant Message。
 
 ### Agent Engine Port
 

@@ -30,4 +30,6 @@ export {
   type InvocationContext,
   type InvocationContextMessage,
   type MaterializeInvocationContext,
+  type RecordOpenedWorkspaceFile,
+  type WorkspaceFileContextRecorder,
 } from './types.js';

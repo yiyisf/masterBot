@@ -73,6 +73,9 @@ describe('Slice3BaselinePolicy', () => {
     for (const capabilityId of [
       'cmaster.utility.current_time:v1',
       'cmaster.artifact.create_text:v1',
+      'cmaster.workspace.list_files:v1',
+      'cmaster.workspace.search_files:v1',
+      'cmaster.workspace.open_file:v1',
     ]) {
       await expect(policy.evaluate({
         organizationId: organizationId('10000000-0000-4000-8000-000000000001'),

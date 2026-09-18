@@ -47,7 +47,9 @@ import {
 import {
   createConfiguredGitWorkspaceProvisioner,
   createConfiguredWorkspaceRevisionContentReader,
+  createConfiguredWorkspaceSandboxAdapter,
   PostgresWorkspaceCatalog,
+  PostgresWorkspaceRunEnvironments,
   PostgresWorkspaceProvisioningWorker,
   PostgresWorkspaceWorkingRoots,
   PostgresWorkspaceWorktreeWorker,
@@ -64,6 +66,11 @@ import {
 } from './tool-confirmation-coordinator.js';
 import { PollingRunEventNotifier, PostgresRunEventNotifier } from './run-event-notifier.js';
 import { WorkerRuntime } from './worker.js';
+import {
+  WorkspaceFileToolProvider,
+  WorkspaceFileToolProvenanceObserver,
+  workspaceFileToolCatalog,
+} from './workspace-file-tools.js';
 
 const config = loadServerConfig();
 const database = new PostgresConnection(config.databaseUrl);
@@ -86,9 +93,16 @@ const conversations = new PostgresConversationModule(database.pool);
 const execution = new PostgresExecutionModule(database.pool);
 const approvals = new PostgresApprovalModule(database.pool);
 const workspaces = new PostgresWorkspaceCatalog(database.pool);
+const revisionContent = createConfiguredWorkspaceRevisionContentReader({
+  storageRoot: config.workspaceRuntime.storageRoot,
+});
 const workspaceWorkingRoots = new PostgresWorkspaceWorkingRoots(database.pool, {
-  revisionContent: createConfiguredWorkspaceRevisionContentReader({
+  revisionContent,
+});
+const workspaceRunEnvironments = new PostgresWorkspaceRunEnvironments(database.pool, {
+  sandbox: createConfiguredWorkspaceSandboxAdapter({
     storageRoot: config.workspaceRuntime.storageRoot,
+    revisionContent,
   }),
 });
 
@@ -96,6 +110,7 @@ let models: ModelGateway | undefined;
 let artifacts: PostgresArtifactModule | undefined;
 let governedAgentTools: GovernedAgentToolRuntime | undefined;
 let toolConfirmationCoordinator: ToolConfirmationCoordinator | undefined;
+let contextBuilder: PostgresContextBuilder | undefined;
 if (config.features.nextArchitecture) await identity.provision();
 if (config.modelRuntime) {
   // 临时开发装配：环境变量 Profile/明文 Key 将分别由 Models Admin 与 Credential Broker Slice 替换。
@@ -157,11 +172,23 @@ if (config.features.toolRuntime) {
   artifacts = config.features.contextArtifacts
     ? new PostgresArtifactModule(database.pool, config.artifactStorageRoot)
     : undefined;
+  contextBuilder = config.features.contextArtifacts && models && artifacts
+    ? new PostgresContextBuilder(database.pool, conversations, models, artifacts)
+    : undefined;
+  const workspaceTools = contextBuilder && config.features.filesystemWorkspace
+    ? workspaceFileToolCatalog(
+      organizationId,
+      agentRevisionId(config.developmentIdentity.contextArtifactAgentRevisionId),
+    )
+    : undefined;
   const providers = [
     new CurrentTimeToolProvider(),
     new TextStatisticsToolProvider(),
     new HttpsFetchToolProvider({ allowedHosts: config.toolRuntime.httpFetchAllowedHosts }),
     ...(artifacts ? [new CreateTextArtifactToolProvider(artifacts)] : []),
+    ...(contextBuilder && workspaceTools
+      ? [new WorkspaceFileToolProvider(workspaceRunEnvironments)]
+      : []),
   ];
   await catalog.provision(
     organizationId,
@@ -175,6 +202,7 @@ if (config.features.toolRuntime) {
       revisions: [
         ...baseline.revisions,
         { ...createTextArtifactToolRevision, id: toolRevisionId(createTextArtifactToolRevision.id) },
+        ...(workspaceTools?.revisions ?? []),
       ],
       grants: [{
         id: toolGrantId(SLICE4_ARTIFACT_TOOL_GRANT_ID),
@@ -184,6 +212,7 @@ if (config.features.toolRuntime) {
         capabilityIds: [
           ...(baseline.grants[0]?.capabilityIds ?? []),
           createTextArtifactToolRevision.capabilityId,
+          ...(workspaceTools?.grants[0]?.capabilityIds ?? []),
         ],
       }],
     });
@@ -193,7 +222,17 @@ if (config.features.toolRuntime) {
   );
   const entitlements = new Slice3DevelopmentEntitlements();
   governedAgentTools = new GovernedAgentToolRuntime(
-    catalog, toolRuntime, identity, entitlements, execution,
+    catalog,
+    toolRuntime,
+    identity,
+    entitlements,
+    execution,
+    contextBuilder && workspaceTools
+      ? [new WorkspaceFileToolProvenanceObserver(
+        workspaceRunEnvironments,
+        contextBuilder,
+      )]
+      : [],
   );
   toolConfirmationCoordinator = new ToolConfirmationCoordinator(
     execution, toolRuntime, entitlements,
@@ -207,10 +246,11 @@ if (notifier instanceof PostgresRunEventNotifier) await notifier.start();
 
 const engines: AgentEngine[] = [new EchoAgentEngine()];
 if (models) engines.push(new AiSdkAgentEngine(models, governedAgentTools));
-const contextRuntime = config.features.contextArtifacts && models && governedAgentTools && artifacts
+const contextRuntime = config.features.contextArtifacts && models && governedAgentTools
+  && artifacts && contextBuilder
   ? {
     agentRevisionId: agentRevisionId(config.developmentIdentity.contextArtifactAgentRevisionId),
-    builder: new PostgresContextBuilder(database.pool, conversations, models, artifacts),
+    builder: contextBuilder,
     models,
     resolveFixedOverheadTokens: async (input: Parameters<GovernedAgentToolRuntime['list']>[0]) => (
       slice4BaselineFixedOverheadTokens
