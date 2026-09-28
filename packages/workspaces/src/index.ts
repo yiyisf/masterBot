@@ -21,20 +21,17 @@ import {
   InvalidWorkspacePageLimitError,
   WorkspaceFileContentUnavailableError,
   WorkspaceFileLimitError,
+  WorkspaceIdempotencyConflictError,
   WorkspaceNotFoundError,
   type WorkingRootId,
   type WorkspaceId,
+  type WorkspaceOperationMode,
   type WorkspaceRevisionId,
 } from './workspace-types.js';
 export type WorkspaceCommandId = Brand<string, 'WorkspaceCommandId'>;
 export type WorkspaceConnectorId = Brand<string, 'WorkspaceConnectorId'>;
 export type WorkspaceRepositoryId = Brand<string, 'WorkspaceRepositoryId'>;
 export type GitWorktreeId = Brand<string, 'GitWorktreeId'>;
-
-export type WorkspaceOperationMode =
-  | 'observe'
-  | 'edit_with_confirmation'
-  | 'trusted_automation';
 
 export interface Workspace {
   readonly id: WorkspaceId;
@@ -64,7 +61,6 @@ export interface Workspace {
   readonly updatedAt: Date;
 }
 
-export class WorkspaceIdempotencyConflictError extends Error {}
 export class InvalidWorkspaceNameError extends Error {}
 export class InvalidGitBranchNameError extends Error {}
 export class WorkspaceBranchConflictError extends Error {}
@@ -675,8 +671,8 @@ export class PostgresWorkspaceCatalog implements WorkspaceCatalog {
       await client.query(
         `INSERT INTO workspace_revisions (
            id, organization_id, workspace_id, working_root_id,
-           parent_revision_id, content_manifest_hash, created_at
-         ) VALUES ($1, $2, $3, $4, NULL, $5, $6)`,
+           parent_revision_id, content_manifest_hash, content_kind, created_at
+         ) VALUES ($1, $2, $3, $4, NULL, $5, 'empty', $6)`,
         [revisionId, identity.organizationId, workspaceId, workingRootId,
           emptyContentManifestHash, now],
       );
@@ -1064,7 +1060,7 @@ interface WorkspaceFileRow {
 }
 
 interface WorkspaceRevisionScopeRow {
-  readonly source_kind: 'empty' | 'git';
+  readonly content_kind: 'empty' | 'git_commit' | 'git_snapshot' | 'snapshot';
   readonly git_commit_sha: string | null;
   readonly file_index_status: 'pending' | 'ready';
 }
@@ -1539,7 +1535,7 @@ export class PostgresWorkspaceWorkingRoots implements WorkspaceWorkingRoots {
     scope: WorkspaceFileScope,
   ): Promise<WorkspaceRevisionContentScope> {
     const selected = await this.pool.query<WorkspaceRevisionScopeRow>(
-      `SELECT workspace.source_kind, revision.git_commit_sha, revision.file_index_status
+      `SELECT revision.content_kind, revision.git_commit_sha, revision.file_index_status
          FROM workspaces workspace
          JOIN workspace_roots root
            ON root.organization_id = workspace.organization_id
@@ -1557,9 +1553,11 @@ export class PostgresWorkspaceWorkingRoots implements WorkspaceWorkingRoots {
     const contentScope: WorkspaceRevisionContentScope = {
       organizationId: identity.organizationId,
       ...scope,
-      source: revision.source_kind === 'empty'
+      source: revision.content_kind === 'empty'
         ? { kind: 'empty' }
-        : { kind: 'git', commit: revision.git_commit_sha! },
+        : revision.content_kind === 'snapshot'
+          ? { kind: 'snapshot' }
+          : { kind: 'git', commit: revision.git_commit_sha! },
     };
     if (revision.file_index_status === 'ready') return contentScope;
     if (!this.revisionContent) throw new WorkspaceFileContentUnavailableError();
@@ -1814,8 +1812,8 @@ export class PostgresWorkspaceProvisioningWorker {
       await client.query(
         `INSERT INTO workspace_revisions (
            id, organization_id, workspace_id, working_root_id, parent_revision_id,
-           content_manifest_hash, git_commit_sha, created_at
-         ) VALUES ($1, $2, $3, $4, NULL, $5, $6, $7)`,
+           content_manifest_hash, git_commit_sha, content_kind, created_at
+         ) VALUES ($1, $2, $3, $4, NULL, $5, $6, 'git_commit', $7)`,
         [revisionId, operation.organization_id, operation.workspace_id, workingRootId,
           result.contentManifestHash, result.headCommit, now],
       );
@@ -2027,8 +2025,8 @@ export class PostgresWorkspaceWorktreeWorker {
       await client.query(
         `INSERT INTO workspace_revisions (
            id, organization_id, workspace_id, working_root_id, parent_revision_id,
-           content_manifest_hash, git_commit_sha, created_at
-         ) VALUES ($1, $2, $3, $4, NULL, $5, $6, $7)`,
+           content_manifest_hash, git_commit_sha, content_kind, created_at
+         ) VALUES ($1, $2, $3, $4, NULL, $5, $6, 'git_commit', $7)`,
         [revisionId, operation.organization_id, operation.workspace_id, workingRootId,
           result.contentManifestHash, result.headCommit, now],
       );
@@ -2384,11 +2382,53 @@ export {
   InvalidWorkspacePageLimitError,
   WorkspaceFileContentUnavailableError,
   WorkspaceFileLimitError,
+  WorkspaceIdempotencyConflictError,
   WorkspaceNotFoundError,
   type WorkingRootId,
   type WorkspaceId,
+  type WorkspaceOperationMode,
   type WorkspaceRevisionId,
 } from './workspace-types.js';
+
+export {
+  PostgresWorkspaceChanges,
+  InvalidWorkspaceChangeSetError,
+  WorkspaceChangeConflictError,
+  WorkspaceChangeSetUnavailableError,
+  WorkspaceOperationModeDeniedError,
+  workspaceChangeCommandId,
+  type ApplyWorkspaceChangeSet,
+  type ProposeWorkspaceChangeSet,
+  type WorkspaceChangeCommandId,
+  type WorkspaceChangeCommandResult,
+  type WorkspaceChangeEntry,
+  type WorkspaceChangeInput,
+  type WorkspaceChanges,
+  type WorkspaceChangeSet,
+  type WorkspaceChangeSetId,
+  type WorkspaceChangeSetPage,
+} from './change-sets.js';
+
+export {
+  createConfiguredWorkspaceGitSnapshotAdapter,
+  type WorkspaceGitSnapshotAdapter,
+  type WorkspaceGitSnapshotChange,
+} from './git-snapshot-adapter.js';
+
+export {
+  createConfiguredWorkspaceRevisionSnapshotStore,
+  type WorkspaceRevisionSnapshotChange,
+  type WorkspaceRevisionSnapshotEntry,
+  type WorkspaceRevisionSnapshotScope,
+  type WorkspaceRevisionSnapshotStore,
+} from './revision-snapshot-store.js';
+
+export {
+  createConfiguredWorkspaceChangeContentStore,
+  type WorkspaceChangeContentEntry,
+  type WorkspaceChangeContentScope,
+  type WorkspaceChangeContentStore,
+} from './change-content-store.js';
 
 export {
   PostgresWorkspaceRunEnvironments,

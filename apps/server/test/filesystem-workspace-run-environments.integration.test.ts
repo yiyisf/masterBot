@@ -86,6 +86,7 @@ describe('PostgreSQL Workspace Run Environments', () => {
       workspaceId: request.workspaceId,
       workingRootId: request.workingRootId,
       revisionId: request.revisionId,
+      maximumOperationMode: 'observe',
       status: 'prepared',
     });
     expect(JSON.stringify(first)).not.toMatch(/storage|path|root\//i);

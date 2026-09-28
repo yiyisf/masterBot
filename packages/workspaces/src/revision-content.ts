@@ -4,24 +4,24 @@ import { join } from 'node:path';
 import { promisify } from 'node:util';
 import ignore, { type Ignore } from 'ignore';
 import type { OrganizationId } from '@cmaster/identity';
-import type {
-  WorkingRootId,
-  WorkspaceId,
-  WorkspaceRevisionId,
+import {
+  WorkspaceFileNotFoundError,
+  WorkspaceRevisionContentError,
+  type WorkingRootId,
+  type WorkspaceFileEntry,
+  type WorkspaceId,
+  type WorkspaceRevisionId,
 } from './workspace-types.js';
+import {
+  readWorkspaceRevisionSnapshotFile,
+  readWorkspaceRevisionSnapshotManifest,
+} from './revision-snapshot-store.js';
 
 const executeFile = promisify(execFile);
 const gitCommitPattern = /^[0-9a-f]{40,64}$/u;
 const maximumReadableFileBytes = 1_048_576;
 const maximumIndexedFiles = 10_000;
 const maximumIndexedBytes = 64 * 1_048_576;
-
-export interface WorkspaceFileEntry {
-  readonly path: string;
-  readonly mediaType: string;
-  readonly sizeBytes: number;
-  readonly sha256: string;
-}
 
 export interface WorkspaceRevisionContentScope {
   readonly organizationId: OrganizationId;
@@ -31,21 +31,21 @@ export interface WorkspaceRevisionContentScope {
   readonly source: { readonly kind: 'empty' } | {
     readonly kind: 'git';
     readonly commit: string;
-  };
+  } | { readonly kind: 'snapshot' };
 }
 
 export interface WorkspaceRevisionContentReader {
   list(scope: WorkspaceRevisionContentScope): Promise<readonly WorkspaceFileEntry[]>;
   open(scope: WorkspaceRevisionContentScope & { readonly path: string }): Promise<Buffer>;
+  isPathVisible(scope: WorkspaceRevisionContentScope, path: string): Promise<boolean>;
+  pathExists(scope: WorkspaceRevisionContentScope, path: string): Promise<boolean>;
 }
 
-export class WorkspaceFileNotFoundError extends Error {}
-
-export class WorkspaceRevisionContentError extends Error {
-  constructor(readonly code: 'content_unavailable' | 'content_limit_exceeded') {
-    super(code);
-  }
-}
+export {
+  WorkspaceFileNotFoundError,
+  WorkspaceRevisionContentError,
+  type WorkspaceFileEntry,
+} from './workspace-types.js';
 
 interface GitTreeEntry {
   readonly mode: string;
@@ -169,9 +169,34 @@ export function createConfiguredWorkspaceRevisionContentReader(options: {
   return {
     async list(scope) {
       if (scope.source.kind === 'empty') return [];
-      const cacheKey = `${scope.organizationId}:${scope.workspaceId}:${scope.source.commit}`;
+      const cacheKey = scope.source.kind === 'git'
+        ? `${scope.organizationId}:${scope.workspaceId}:git:${scope.source.commit}`
+        : `${scope.organizationId}:${scope.workspaceId}:snapshot:${scope.revisionId}`;
       const cached = metadataCache.get(cacheKey);
       if (cached) return cached;
+      if (scope.source.kind === 'snapshot') {
+        const entries = await readWorkspaceRevisionSnapshotManifest(options.storageRoot, scope);
+        const policy = entries.find((entry) => entry.path === '.cmasterignore');
+        let visible = entries;
+        if (policy) {
+          if (policy.sizeBytes > 65_536) {
+            throw new WorkspaceRevisionContentError('content_limit_exceeded');
+          }
+          let contents: string;
+          try {
+            contents = new TextDecoder('utf-8', { fatal: true }).decode(
+              await readWorkspaceRevisionSnapshotFile(options.storageRoot, scope, policy),
+            );
+          } catch (error) {
+            if (error instanceof WorkspaceRevisionContentError) throw error;
+            throw new WorkspaceRevisionContentError('content_unavailable');
+          }
+          const matcher = ignore().add(contents);
+          visible = entries.filter((entry) => !matcher.ignores(entry.path));
+        }
+        metadataCache.set(cacheKey, visible);
+        return visible;
+      }
       if (!gitCommitPattern.test(scope.source.commit)) {
         throw new WorkspaceRevisionContentError('content_unavailable');
       }
@@ -222,10 +247,84 @@ export function createConfiguredWorkspaceRevisionContentReader(options: {
       return entries;
     },
 
+    async isPathVisible(scope, path) {
+      if (!canonicalRelativePath(path)
+        || path.split('/').some((segment) => segment === '.git')) return false;
+      if (scope.source.kind === 'empty') return true;
+      if (scope.source.kind === 'snapshot') {
+        const entries = await readWorkspaceRevisionSnapshotManifest(options.storageRoot, scope);
+        const policy = entries.find((entry) => entry.path === '.cmasterignore');
+        if (!policy) return true;
+        if (policy.sizeBytes > 65_536) {
+          throw new WorkspaceRevisionContentError('content_limit_exceeded');
+        }
+        const contents = new TextDecoder('utf-8', { fatal: true }).decode(
+          await readWorkspaceRevisionSnapshotFile(options.storageRoot, scope, policy),
+        );
+        return !ignore().add(contents).ignores(path);
+      }
+      if (!gitCommitPattern.test(scope.source.commit)) {
+        throw new WorkspaceRevisionContentError('content_unavailable');
+      }
+      const repositoryPath = join(
+        options.storageRoot, scope.organizationId, scope.workspaceId, 'repository.git',
+      );
+      try {
+        const { stdout } = await executeFile('git', [
+          '--git-dir', repositoryPath, 'ls-tree', '-r', '-z', '-l', scope.source.commit,
+        ], { encoding: 'utf8', maxBuffer: 16 * 1_048_576 });
+        const tree = parseTree(stdout);
+        const rules = await buildIgnoreRules(repositoryPath, scope.source.commit, tree);
+        return !isIgnored(path, rules);
+      } catch (error) {
+        if (error instanceof WorkspaceRevisionContentError) throw error;
+        throw new WorkspaceRevisionContentError('content_unavailable');
+      }
+    },
+
+    async pathExists(scope, path) {
+      if (!canonicalRelativePath(path)
+        || path.split('/').some((segment) => segment === '.git')) return false;
+      if (scope.source.kind === 'empty') return false;
+      if (scope.source.kind === 'snapshot') {
+        const entries = await readWorkspaceRevisionSnapshotManifest(options.storageRoot, scope);
+        return entries.some((entry) => entry.path === path
+          || entry.path.startsWith(`${path}/`) || path.startsWith(`${entry.path}/`));
+      }
+      if (!gitCommitPattern.test(scope.source.commit)) {
+        throw new WorkspaceRevisionContentError('content_unavailable');
+      }
+      const repositoryPath = join(
+        options.storageRoot, scope.organizationId, scope.workspaceId, 'repository.git',
+      );
+      try {
+        const commit = scope.source.commit;
+        const inspect = async (candidate: string): Promise<string> => {
+          const { stdout } = await executeFile('git', [
+            '--git-dir', repositoryPath, 'ls-tree', '-z', commit, '--', candidate,
+          ], { encoding: 'utf8', maxBuffer: 65_536 });
+          return stdout;
+        };
+        if ((await inspect(path)).length > 0) return true;
+        const segments = path.split('/');
+        for (let index = 1; index < segments.length; index += 1) {
+          const ancestor = segments.slice(0, index).join('/');
+          const output = await inspect(ancestor);
+          if (output.length > 0 && !output.startsWith('040000 tree ')) return true;
+        }
+        return false;
+      } catch {
+        throw new WorkspaceRevisionContentError('content_unavailable');
+      }
+    },
+
     async open(request) {
       if (!canonicalRelativePath(request.path)) throw new WorkspaceFileNotFoundError();
       const entry = (await this.list(request)).find((candidate) => candidate.path === request.path);
       if (!entry || request.source.kind === 'empty') throw new WorkspaceFileNotFoundError();
+      if (request.source.kind === 'snapshot') {
+        return readWorkspaceRevisionSnapshotFile(options.storageRoot, request, entry);
+      }
       const repositoryPath = join(
         options.storageRoot, request.organizationId, request.workspaceId, 'repository.git',
       );

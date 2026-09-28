@@ -41,6 +41,8 @@ describe('configured Workspace Sandbox Adapter', () => {
     const revisionContent: WorkspaceRevisionContentReader = {
       async list() { return [entry()]; },
       async open() { return content; },
+      async isPathVisible() { return true; },
+      async pathExists() { return true; },
     };
     const scope = {
       environmentId: randomUUID() as WorkspaceRunEnvironmentId,
