@@ -14,13 +14,19 @@ import {
   type WorkspaceRunEnvironments,
 } from '@cmaster/workspaces';
 import {
+  DELETE_WORKSPACE_FILE_CAPABILITY_ID,
   OPEN_WORKSPACE_FILE_CAPABILITY_ID,
+  PROPOSE_WORKSPACE_CHANGES_CAPABILITY_ID,
+  WRITE_WORKSPACE_FILE_CAPABILITY_ID,
   WorkspaceFileToolProvider,
   WorkspaceFileToolProvenanceObserver,
   workspaceFileToolCatalog,
 } from './workspace-file-tools.js';
 
-function request(input: unknown): ToolProviderRequest {
+function request(
+  input: unknown,
+  capabilityId = OPEN_WORKSPACE_FILE_CAPABILITY_ID,
+): ToolProviderRequest {
   const organization = organizationId(randomUUID());
   const principal = principalId(randomUUID());
   return {
@@ -29,7 +35,7 @@ function request(input: unknown): ToolProviderRequest {
       const provisioned = workspaceFileToolCatalog(
         organization, agentRevisionId(randomUUID()),
       ).revisions
-        .find((candidate) => candidate.capabilityId === OPEN_WORKSPACE_FILE_CAPABILITY_ID)!;
+        .find((candidate) => candidate.capabilityId === capabilityId)!;
       return { ...provisioned, revisionId: provisioned.id };
     })(),
     runId: randomUUID(),
@@ -111,6 +117,75 @@ describe('Workspace file Tool Provider', () => {
       },
     });
     expect(JSON.stringify(result.safeSummary)).not.toContain('export const');
+  });
+
+  it('uses the Tool Call identity for private writes, deletes, and immutable proposals', async () => {
+    const writeFile = vi.fn(async (
+      _identity: unknown, _invocationId: unknown, _command: unknown,
+    ) => ({
+      value: {
+        kind: 'write' as const, path: 'src/app.ts',
+        mediaType: 'text/plain; charset=utf-8', sizeBytes: 10, sha256: 'a'.repeat(64),
+      },
+      replayed: false,
+    }));
+    const deleteFile = vi.fn(async (
+      _identity: unknown, _invocationId: unknown, _command: unknown,
+    ) => ({
+      value: { kind: 'delete' as const, path: 'old.txt' }, replayed: false,
+    }));
+    const proposeChanges = vi.fn(async (
+      _identity: unknown, _invocationId: unknown, _command: unknown,
+    ) => ({
+      value: {
+        id: randomUUID(), workspaceId: randomUUID(), workingRootId: randomUUID(),
+        baseRevisionId: randomUUID(), status: 'proposed' as const,
+        entries: [{ kind: 'delete' as const, path: 'old.txt' }],
+      },
+      replayed: false,
+    }));
+    const environments = {
+      writeFile, deleteFile, proposeChanges,
+    } as unknown as WorkspaceRunEnvironments;
+    const provider = new WorkspaceFileToolProvider(environments);
+    const writeRequest = request(
+      { path: 'src/app.ts', content: 'const x=1;' },
+      WRITE_WORKSPACE_FILE_CAPABILITY_ID,
+    );
+    const deleteRequest = request(
+      { path: 'old.txt' }, DELETE_WORKSPACE_FILE_CAPABILITY_ID,
+    );
+    const proposeRequest = request({}, PROPOSE_WORKSPACE_CHANGES_CAPABILITY_ID);
+
+    await expect(provider.execute(writeRequest)).resolves.toMatchObject({
+      kind: 'success', value: { kind: 'write', path: 'src/app.ts', changed: true },
+    });
+    await expect(provider.execute(deleteRequest)).resolves.toMatchObject({
+      kind: 'success', value: { kind: 'delete', path: 'old.txt', changed: true },
+    });
+    await expect(provider.execute(proposeRequest)).resolves.toMatchObject({
+      kind: 'success', value: { status: 'proposed', entries: [{ kind: 'delete' }] },
+    });
+    expect(writeFile.mock.calls[0]?.[2]).toMatchObject({
+      commandId: writeRequest.toolCallId, path: 'src/app.ts', content: 'const x=1;',
+    });
+    expect(deleteFile.mock.calls[0]?.[2]).toMatchObject({
+      commandId: deleteRequest.toolCallId, path: 'old.txt',
+    });
+    expect(proposeChanges.mock.calls[0]?.[2]).toEqual({
+      commandId: proposeRequest.toolCallId,
+    });
+    const catalog = workspaceFileToolCatalog(
+      writeRequest.credentialLease.organizationId, agentRevisionId(randomUUID()),
+    );
+    expect(catalog.revisions.map(({ capabilityId }) => capabilityId)).toEqual([
+      'cmaster.workspace.list_files:v1',
+      'cmaster.workspace.search_files:v1',
+      OPEN_WORKSPACE_FILE_CAPABILITY_ID,
+      WRITE_WORKSPACE_FILE_CAPABILITY_ID,
+      DELETE_WORKSPACE_FILE_CAPABILITY_ID,
+      PROPOSE_WORKSPACE_CHANGES_CAPABILITY_ID,
+    ]);
   });
 
   it('rejects an open result that cannot fit the governed Tool payload boundary', async () => {

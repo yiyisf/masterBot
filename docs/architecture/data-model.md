@@ -48,7 +48,7 @@ Workspace 1 ── * Artifact
 - Workspace Revision 是一个 Working Root 的一致不可变状态 identity，不等于 Git Commit。Workspace File content 存共享持久 Workspace Content Storage；PostgreSQL 保存 owner、路径、media/size/hash、Revision 关系和 Adapter opaque reference。
 - Change Set 固定 source Run、Working Root、base Revision、request hash、文件 create/modify/move/delete entries、Approval reference 与 `proposed | approved | rejected | applying | applied | conflicted | failed` 状态。调整创建新 Change Set，不修改旧 Subject。
 - Apply 以 current Revision 比较 base；确定性证明不重叠时可重放到新 base，重叠或未知时进入 conflict。成功应用原子产生一个新 Revision 和 receipt。
-- 6.4a 的持久化实现状态为 `preparing | proposed | applying | applied | conflicted`；Approval 接入后再增加 approved/rejected/failed 事实，不复用或改写旧 Change Set。Git-backed `git_snapshot` Revision 使用 ADR-0048 的 private retention ref 内部对象，且不移动 Employee branch/ref；非 Git `snapshot` 使用共享 Workspace Content Storage。
+- Change Set 的持久化实现状态为 `preparing | proposed | applying | applied | conflicted`；Approval 接入后再增加 approved/rejected/failed 事实，不复用或改写旧 Change Set。6.4b 的 Invocation-private overlay manifest/blob/tombstone/Command receipt 保存在可恢复的 Sandbox content storage，不进入共享 Revision；finalize 时只把相对固定 base 的净 add/modify/delete 写入 immutable Change Set。Git-backed `git_snapshot` Revision 使用 ADR-0048 的 private retention ref 内部对象，且不移动 Employee branch/ref；非 Git `snapshot` 使用共享 Workspace Content Storage。
 - Workspace Operation Mode 为 `observe | edit_with_confirmation | trusted_automation`。Run 保存启动时最大模式；当前 Workspace/Policy 收缩可立即限制后续 Tool Call，提升不改变现有 Run。
 - Archive 可恢复且禁止新工作；Delete 受 active Run、dirty Worktree、未解决 Change Set 和 Retention 约束，不自动修改 Git Remote。
 

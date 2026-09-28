@@ -71,7 +71,10 @@ export class Slice3BaselinePolicy implements PolicyModule {
       || request.capabilityId === 'cmaster.artifact.create_text:v1'
       || request.capabilityId === 'cmaster.workspace.list_files:v1'
       || request.capabilityId === 'cmaster.workspace.search_files:v1'
-      || request.capabilityId === 'cmaster.workspace.open_file:v1') {
+      || request.capabilityId === 'cmaster.workspace.open_file:v1'
+      || request.capabilityId === 'cmaster.workspace.write_file:v1'
+      || request.capabilityId === 'cmaster.workspace.delete_file:v1'
+      || request.capabilityId === 'cmaster.workspace.propose_changes:v1') {
       return {
         effect: 'allow',
         policyVersion: SLICE3_POLICY_VERSION,

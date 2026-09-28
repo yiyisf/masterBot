@@ -46,9 +46,13 @@ import {
 } from '@cmaster/identity';
 import {
   createConfiguredGitWorkspaceProvisioner,
+  createConfiguredWorkspaceChangeContentStore,
+  createConfiguredWorkspaceGitSnapshotAdapter,
   createConfiguredWorkspaceRevisionContentReader,
+  createConfiguredWorkspaceRevisionSnapshotStore,
   createConfiguredWorkspaceSandboxAdapter,
   PostgresWorkspaceCatalog,
+  PostgresWorkspaceChanges,
   PostgresWorkspaceRunEnvironments,
   PostgresWorkspaceProvisioningWorker,
   PostgresWorkspaceWorkingRoots,
@@ -99,7 +103,20 @@ const revisionContent = createConfiguredWorkspaceRevisionContentReader({
 const workspaceWorkingRoots = new PostgresWorkspaceWorkingRoots(database.pool, {
   revisionContent,
 });
+const workspaceChanges = new PostgresWorkspaceChanges(database.pool, {
+  revisionContent,
+  contentStore: createConfiguredWorkspaceChangeContentStore({
+    storageRoot: config.workspaceRuntime.storageRoot,
+  }),
+  snapshotStore: createConfiguredWorkspaceRevisionSnapshotStore({
+    storageRoot: config.workspaceRuntime.storageRoot,
+  }),
+  gitSnapshot: createConfiguredWorkspaceGitSnapshotAdapter({
+    storageRoot: config.workspaceRuntime.storageRoot,
+  }),
+});
 const workspaceRunEnvironments = new PostgresWorkspaceRunEnvironments(database.pool, {
+  changes: workspaceChanges,
   sandbox: createConfiguredWorkspaceSandboxAdapter({
     storageRoot: config.workspaceRuntime.storageRoot,
     revisionContent,

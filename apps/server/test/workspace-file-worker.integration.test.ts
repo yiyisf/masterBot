@@ -31,8 +31,11 @@ import {
 } from '@cmaster/models';
 import { PostgresToolCatalog, PostgresToolRuntime } from '@cmaster/tools';
 import {
+  createConfiguredWorkspaceChangeContentStore,
+  createConfiguredWorkspaceRevisionSnapshotStore,
   createConfiguredWorkspaceSandboxAdapter,
   PostgresWorkspaceCatalog,
+  PostgresWorkspaceChanges,
   PostgresWorkspaceRunEnvironments,
   workspaceCommandId,
   workspaceInvocationId,
@@ -60,27 +63,30 @@ afterAll(async () => {
   await Promise.all(roots.map((root) => rm(root, { recursive: true, force: true })));
 });
 
-class WorkspaceReadModelAdapter implements ModelAdapter {
+class WorkspaceEditingModelAdapter implements ModelAdapter {
   readonly providerKind = 'openai-compatible' as const;
   calls = 0;
-  toolOutput: unknown;
+  toolOutputs: unknown[] = [];
 
   async *stream(request: ModelAdapterRequest): AsyncIterable<ModelAdapterEvent> {
     this.calls += 1;
-    if (this.calls === 1) {
-      yield {
-        type: 'tool_requested',
-        request: {
-          requestId: 'open-fixed-file',
-          name: 'workspace_open_file',
-          input: { path: 'README.md' },
-        },
-      };
+    if (this.calls > 1) this.toolOutputs.push(request.transcript?.at(-1));
+    const requested = this.calls === 1
+      ? { requestId: 'open-fixed-file', name: 'workspace_open_file', input: { path: 'README.md' } }
+      : this.calls === 2
+        ? {
+          requestId: 'write-private-overlay', name: 'workspace_write_file',
+          input: { path: 'README.md', content: '# Edited README\n' },
+        }
+        : this.calls === 3
+          ? { requestId: 'propose-private-overlay', name: 'workspace_propose_changes', input: {} }
+          : undefined;
+    if (requested) {
+      yield { type: 'tool_requested', request: requested };
       yield { type: 'completed', usage: { inputTokens: 4, outputTokens: 2, totalTokens: 6 } };
       return;
     }
-    this.toolOutput = request.transcript?.at(-1);
-    yield { type: 'text_delta', text: 'The fixed file was read.' };
+    yield { type: 'text_delta', text: 'The fixed file was edited and proposed.' };
     yield { type: 'completed', usage: { inputTokens: 8, outputTokens: 5, totalTokens: 13 } };
   }
 
@@ -90,7 +96,7 @@ class WorkspaceReadModelAdapter implements ModelAdapter {
 }
 
 describe('Workspace file Tools in the real Worker', () => {
-  it('recovers a prepared fixed-Revision Sandbox on another Worker and records open provenance', async () => {
+  it('recovers a private overlay on another Worker, proposes it, and records open provenance', async () => {
     const identity = new PostgresDevelopmentIdentity(pool, {
       organizationId: organizationId(randomUUID()),
       organizationName: `Workspace Tool ${randomUUID()}`,
@@ -113,7 +119,7 @@ describe('Workspace file Tools in the real Worker', () => {
     await agents.provision(requestIdentity.organizationId);
     const agent = await agents.resolveDefault(requestIdentity.organizationId);
 
-    const modelsAdapter = new WorkspaceReadModelAdapter();
+    const modelsAdapter = new WorkspaceEditingModelAdapter();
     const models = new PostgresModelGateway(pool, modelsAdapter, {
       credentials: new Map([['env:test', 'model-secret']]),
     });
@@ -155,7 +161,7 @@ describe('Workspace file Tools in the real Worker', () => {
       {
         commandId: workspaceCommandId(randomUUID()),
         name: 'Worker fixed files',
-        operationMode: 'observe',
+        operationMode: 'edit_with_confirmation',
       },
     )).value;
     const root = workspace.defaultWorkingRoot;
@@ -193,8 +199,14 @@ describe('Workspace file Tools in the real Worker', () => {
       environmentId: preparedEnvironment.id,
     }));
 
+    const changes = new PostgresWorkspaceChanges(pool, {
+      revisionContent,
+      contentStore: createConfiguredWorkspaceChangeContentStore({ storageRoot }),
+      snapshotStore: createConfiguredWorkspaceRevisionSnapshotStore({ storageRoot }),
+    });
     const recoveredEnvironments = new PostgresWorkspaceRunEnvironments(pool, {
       sandbox: createConfiguredWorkspaceSandboxAdapter({ storageRoot, revisionContent }),
+      changes,
     });
     const context = new PostgresContextBuilder(pool, conversations);
     const catalog = new PostgresToolCatalog(pool);
@@ -242,10 +254,27 @@ describe('Workspace file Tools in the real Worker', () => {
     }
 
     expect(completed).toBe(true);
-    expect(modelsAdapter.toolOutput).toMatchObject({
-      role: 'tool',
-      output: { path: 'README.md', content: '# Pinned README\n' },
-    });
+    expect(modelsAdapter.toolOutputs).toEqual([
+      expect.objectContaining({
+        role: 'tool', output: expect.objectContaining({
+          path: 'README.md', content: '# Pinned README\n',
+        }),
+      }),
+      expect.objectContaining({
+        role: 'tool', output: expect.objectContaining({
+          kind: 'write', path: 'README.md', changed: true,
+        }),
+      }),
+      expect.objectContaining({
+        role: 'tool', output: expect.objectContaining({
+          status: 'proposed',
+          entries: [expect.objectContaining({ kind: 'modify', path: 'README.md' })],
+        }),
+      }),
+    ]);
+    await expect(recoveredEnvironments.listOverlay(
+      requestIdentity, environmentRequest.invocationId,
+    )).resolves.toMatchObject({ items: [{ kind: 'write', path: 'README.md' }] });
     const recoveredContext = await context.build({
       organizationId: requestIdentity.organizationId,
       principalId: requestIdentity.principalId,
