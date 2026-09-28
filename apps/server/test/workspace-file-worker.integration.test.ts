@@ -169,6 +169,8 @@ describe('Workspace file Tools in the real Worker', () => {
     const revisionContent: WorkspaceRevisionContentReader = {
       async list() { return [entry]; },
       async open() { return bytes; },
+      async isPathVisible() { return true; },
+      async pathExists() { return true; },
     };
     const storageRoot = await mkdtemp(join(tmpdir(), 'cmaster-worker-sandbox-'));
     roots.push(storageRoot);

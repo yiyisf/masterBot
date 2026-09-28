@@ -16,6 +16,7 @@ import {
   WorkspaceNotFoundError,
   type WorkingRootId,
   type WorkspaceId,
+  type WorkspaceOperationMode,
   type WorkspaceRevisionId,
 } from './workspace-types.js';
 import {
@@ -37,6 +38,7 @@ export interface WorkspaceRunEnvironment {
   readonly workspaceId: WorkspaceId;
   readonly workingRootId: WorkingRootId;
   readonly revisionId: WorkspaceRevisionId;
+  readonly maximumOperationMode: WorkspaceOperationMode;
   readonly status: 'preparing' | 'prepared' | 'released';
   readonly preparedAt?: Date;
   readonly releasedAt?: Date;
@@ -102,14 +104,16 @@ interface RunEnvironmentRow {
   readonly workspace_id: string;
   readonly working_root_id: string;
   readonly revision_id: string;
+  readonly maximum_operation_mode: WorkspaceOperationMode;
   readonly status: WorkspaceRunEnvironment['status'];
   readonly prepared_at: Date | null;
   readonly released_at: Date | null;
 }
 
 interface RevisionScopeRow {
-  readonly source_kind: 'empty' | 'git';
+  readonly content_kind: 'empty' | 'git_commit' | 'git_snapshot' | 'snapshot';
   readonly git_commit_sha: string | null;
+  readonly operation_mode: WorkspaceOperationMode;
 }
 
 function mapEnvironment(row: RunEnvironmentRow): WorkspaceRunEnvironment {
@@ -119,6 +123,7 @@ function mapEnvironment(row: RunEnvironmentRow): WorkspaceRunEnvironment {
     workspaceId: row.workspace_id as WorkspaceId,
     workingRootId: row.working_root_id as WorkingRootId,
     revisionId: row.revision_id as WorkspaceRevisionId,
+    maximumOperationMode: row.maximum_operation_mode,
     status: row.status,
     ...(row.prepared_at ? { preparedAt: row.prepared_at } : {}),
     ...(row.released_at ? { releasedAt: row.released_at } : {}),
@@ -181,9 +186,11 @@ function matchPosition(content: string, offset: number): { readonly line: number
 }
 
 function contentSource(row: RevisionScopeRow): WorkspaceRevisionContentScope['source'] {
-  return row.source_kind === 'empty'
+  return row.content_kind === 'empty'
     ? { kind: 'empty' }
-    : { kind: 'git', commit: row.git_commit_sha! };
+    : row.content_kind === 'snapshot'
+      ? { kind: 'snapshot' }
+      : { kind: 'git', commit: row.git_commit_sha! };
 }
 
 export class PostgresWorkspaceRunEnvironments implements WorkspaceRunEnvironments {
@@ -216,7 +223,7 @@ export class PostgresWorkspaceRunEnvironments implements WorkspaceRunEnvironment
       await client.query('BEGIN');
       transactionStarted = true;
       const scope = await client.query<RevisionScopeRow>(
-        `SELECT w.source_kind, v.git_commit_sha
+        `SELECT v.content_kind, v.git_commit_sha, w.operation_mode
          FROM workspaces w
          JOIN workspace_roots r
            ON r.organization_id = w.organization_id AND r.workspace_id = w.id
@@ -234,7 +241,7 @@ export class PostgresWorkspaceRunEnvironments implements WorkspaceRunEnvironment
 
       const existing = await client.query<RunEnvironmentRow>(
         `SELECT id, owner_principal_id, invocation_id, workspace_id, working_root_id,
-                revision_id, status, prepared_at, released_at
+                revision_id, maximum_operation_mode, status, prepared_at, released_at
          FROM workspace_run_environments
          WHERE organization_id = $1 AND invocation_id = $2
          FOR UPDATE`,
@@ -254,12 +261,14 @@ export class PostgresWorkspaceRunEnvironments implements WorkspaceRunEnvironment
         const inserted = await client.query<RunEnvironmentRow>(
           `INSERT INTO workspace_run_environments (
              id, organization_id, invocation_id, owner_principal_id,
-             workspace_id, working_root_id, revision_id, status, created_at
-           ) VALUES ($1, $2, $3, $4, $5, $6, $7, 'preparing', $8)
+             workspace_id, working_root_id, revision_id, maximum_operation_mode,
+             status, created_at
+           ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'preparing', $9)
            RETURNING id, owner_principal_id, invocation_id, workspace_id, working_root_id,
-                     revision_id, status, prepared_at, released_at`,
+                     revision_id, maximum_operation_mode, status, prepared_at, released_at`,
           [id, identity.organizationId, request.invocationId, identity.principalId,
-            request.workspaceId, request.workingRootId, request.revisionId, this.clock.now()],
+            request.workspaceId, request.workingRootId, request.revisionId,
+            revision.operation_mode, this.clock.now()],
         );
         row = inserted.rows[0];
         if (!row) throw new Error('Workspace Run Environment was not persisted');
@@ -286,7 +295,7 @@ export class PostgresWorkspaceRunEnvironments implements WorkspaceRunEnvironment
          WHERE organization_id = $1 AND owner_principal_id = $2
            AND invocation_id = $3 AND status = 'preparing'
          RETURNING id, owner_principal_id, invocation_id, workspace_id, working_root_id,
-                   revision_id, status, prepared_at, released_at`,
+                   revision_id, maximum_operation_mode, status, prepared_at, released_at`,
         [identity.organizationId, identity.principalId, request.invocationId, this.clock.now()],
       );
       const preparedRow = prepared.rows[0];
@@ -310,7 +319,7 @@ export class PostgresWorkspaceRunEnvironments implements WorkspaceRunEnvironment
   ): Promise<WorkspaceRunEnvironment> {
     const result = await this.pool.query<RunEnvironmentRow>(
       `SELECT id, owner_principal_id, invocation_id, workspace_id, working_root_id,
-              revision_id, status, prepared_at, released_at
+              revision_id, maximum_operation_mode, status, prepared_at, released_at
        FROM workspace_run_environments
        WHERE organization_id = $1 AND owner_principal_id = $2 AND invocation_id = $3`,
       [identity.organizationId, identity.principalId, invocationId],
