@@ -76,6 +76,9 @@ describe('Slice3BaselinePolicy', () => {
       'cmaster.workspace.list_files:v1',
       'cmaster.workspace.search_files:v1',
       'cmaster.workspace.open_file:v1',
+      'cmaster.workspace.write_file:v1',
+      'cmaster.workspace.delete_file:v1',
+      'cmaster.workspace.propose_changes:v1',
     ]) {
       await expect(policy.evaluate({
         organizationId: organizationId('10000000-0000-4000-8000-000000000001'),

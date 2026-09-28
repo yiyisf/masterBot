@@ -9,10 +9,18 @@ import type {
   WorkspaceFileSearchPage,
 } from './index.js';
 import {
+  WorkspaceOperationModeDeniedError,
+  type WorkspaceChangeCommandId,
+  type WorkspaceChangeCommandResult,
+  type WorkspaceChangeInput,
+  type WorkspaceChanges,
+} from './change-sets.js';
+import {
   InvalidWorkspaceCursorError,
   InvalidWorkspaceFileQueryError,
   InvalidWorkspacePageLimitError,
   WorkspaceFileContentUnavailableError,
+  WorkspaceIdempotencyConflictError,
   WorkspaceNotFoundError,
   type WorkingRootId,
   type WorkspaceId,
@@ -27,6 +35,11 @@ import {
 
 export type WorkspaceRunEnvironmentId = Brand<string, 'WorkspaceRunEnvironmentId'>;
 export type WorkspaceInvocationId = Brand<string, 'WorkspaceInvocationId'>;
+export type WorkspaceOverlayCommandId = Brand<string, 'WorkspaceOverlayCommandId'>;
+
+export function workspaceOverlayCommandId(value: string): WorkspaceOverlayCommandId {
+  return value as WorkspaceOverlayCommandId;
+}
 
 export function workspaceInvocationId(value: string): WorkspaceInvocationId {
   return value as WorkspaceInvocationId;
@@ -56,12 +69,62 @@ export interface WorkspaceSandboxScope extends WorkspaceRevisionContentScope {
   readonly invocationId: WorkspaceInvocationId;
 }
 
-/** Internal durable-content Adapter. Implementations are idempotent by environmentId. */
+export type WorkspaceOverlayEntry =
+  | {
+    readonly kind: 'write';
+    readonly path: string;
+    readonly mediaType: string;
+    readonly sizeBytes: number;
+    readonly sha256: string;
+  }
+  | { readonly kind: 'delete'; readonly path: string };
+
+export interface WorkspaceOverlayPage {
+  readonly items: readonly WorkspaceOverlayEntry[];
+}
+
+export interface WorkspaceOverlayCommandResult {
+  readonly value: WorkspaceOverlayEntry | null;
+  readonly replayed: boolean;
+}
+
+export type WorkspaceSandboxOverlayCommand =
+  | {
+    readonly commandId: WorkspaceOverlayCommandId;
+    readonly kind: 'write';
+    readonly path: string;
+    readonly mediaType: string;
+    readonly bytes: Buffer;
+  }
+  | {
+    readonly commandId: WorkspaceOverlayCommandId;
+    readonly kind: 'delete';
+    readonly path: string;
+  };
+
+export interface WorkspaceSandboxOverlaySnapshot {
+  readonly entries: readonly (WorkspaceOverlayEntry & {
+    readonly bytes?: Buffer;
+    readonly baseExists?: boolean;
+    readonly baseSha256?: string;
+  })[];
+}
+
+/**
+ * Internal durable-content Adapter. Preparation is idempotent by environmentId;
+ * overlay mutation is serialized by the Module and idempotent by commandId.
+ */
 export interface WorkspaceSandboxAdapter {
   prepare(scope: WorkspaceSandboxScope): Promise<void>;
   release(scope: { readonly environmentId: WorkspaceRunEnvironmentId }): Promise<void>;
   list(environmentId: WorkspaceRunEnvironmentId): Promise<readonly WorkspaceFileEntry[]>;
   open(environmentId: WorkspaceRunEnvironmentId, path: string): Promise<Buffer>;
+  mutateOverlay(
+    scope: WorkspaceSandboxScope,
+    command: WorkspaceSandboxOverlayCommand,
+  ): Promise<WorkspaceOverlayCommandResult>;
+  listOverlay(environmentId: WorkspaceRunEnvironmentId): Promise<WorkspaceOverlayPage>;
+  snapshotOverlay(scope: WorkspaceSandboxScope): Promise<WorkspaceSandboxOverlaySnapshot>;
 }
 
 /**
@@ -92,6 +155,22 @@ export interface WorkspaceRunEnvironments {
     invocationId: WorkspaceInvocationId,
     query: { readonly query: string; readonly cursor?: string; readonly limit: number },
   ): Promise<WorkspaceFileSearchPage>;
+  writeFile(identity: RequestIdentity, invocationId: WorkspaceInvocationId, command: {
+    readonly commandId: WorkspaceOverlayCommandId;
+    readonly path: string;
+    readonly content: string;
+  }): Promise<WorkspaceOverlayCommandResult>;
+  deleteFile(identity: RequestIdentity, invocationId: WorkspaceInvocationId, command: {
+    readonly commandId: WorkspaceOverlayCommandId;
+    readonly path: string;
+  }): Promise<WorkspaceOverlayCommandResult>;
+  listOverlay(
+    identity: RequestIdentity,
+    invocationId: WorkspaceInvocationId,
+  ): Promise<WorkspaceOverlayPage>;
+  proposeChanges(identity: RequestIdentity, invocationId: WorkspaceInvocationId, command: {
+    readonly commandId: WorkspaceChangeCommandId;
+  }): Promise<WorkspaceChangeCommandResult>;
   release(identity: RequestIdentity, invocationId: WorkspaceInvocationId): Promise<void>;
 }
 
@@ -176,6 +255,15 @@ function decodeSearchCursor(value: string): SearchCursor {
   }
 }
 
+function overlayMediaType(path: string): string {
+  const lower = path.toLowerCase();
+  if (lower.endsWith('.md') || lower.endsWith('.markdown')) {
+    return 'text/markdown; charset=utf-8';
+  }
+  if (lower.endsWith('.json')) return 'application/json; charset=utf-8';
+  return 'text/plain; charset=utf-8';
+}
+
 function matchPosition(content: string, offset: number): { readonly line: number; readonly column: number } {
   const before = content.slice(0, offset);
   const lineStart = before.lastIndexOf('\n');
@@ -197,6 +285,7 @@ export class PostgresWorkspaceRunEnvironments implements WorkspaceRunEnvironment
   private readonly clock: Clock;
   private readonly generateId: () => string;
   private readonly sandbox: WorkspaceSandboxAdapter;
+  private readonly changes: WorkspaceChanges | undefined;
 
   constructor(
     private readonly pool: Pool,
@@ -204,11 +293,13 @@ export class PostgresWorkspaceRunEnvironments implements WorkspaceRunEnvironment
       readonly clock?: Clock;
       readonly generateId?: () => string;
       readonly sandbox: WorkspaceSandboxAdapter;
+      readonly changes?: WorkspaceChanges;
     },
   ) {
     this.clock = options.clock ?? new SystemClock();
     this.generateId = options.generateId ?? randomUUID;
     this.sandbox = options.sandbox;
+    this.changes = options.changes;
   }
 
   async prepare(
@@ -434,6 +525,98 @@ export class PostgresWorkspaceRunEnvironments implements WorkspaceRunEnvironment
       : { items };
   }
 
+  async writeFile(
+    identity: RequestIdentity,
+    invocationId: WorkspaceInvocationId,
+    command: {
+      readonly commandId: WorkspaceOverlayCommandId;
+      readonly path: string;
+      readonly content: string;
+    },
+  ): Promise<WorkspaceOverlayCommandResult> {
+    const bytes = Buffer.from(command.content, 'utf8');
+    if (bytes.byteLength > 1_048_576
+      || new TextDecoder('utf-8', { fatal: true }).decode(bytes) !== command.content) {
+      throw new WorkspaceFileContentUnavailableError();
+    }
+    return this.mutateOverlay(identity, invocationId, {
+      commandId: command.commandId,
+      kind: 'write',
+      path: command.path,
+      mediaType: overlayMediaType(command.path),
+      bytes,
+    });
+  }
+
+  async deleteFile(
+    identity: RequestIdentity,
+    invocationId: WorkspaceInvocationId,
+    command: { readonly commandId: WorkspaceOverlayCommandId; readonly path: string },
+  ): Promise<WorkspaceOverlayCommandResult> {
+    return this.mutateOverlay(identity, invocationId, {
+      commandId: command.commandId,
+      kind: 'delete',
+      path: command.path,
+    });
+  }
+
+  async listOverlay(
+    identity: RequestIdentity,
+    invocationId: WorkspaceInvocationId,
+  ): Promise<WorkspaceOverlayPage> {
+    const environment = await this.preparedEnvironment(identity, invocationId);
+    try {
+      return await this.sandbox.listOverlay(environment.id);
+    } catch {
+      throw new WorkspaceRunEnvironmentUnavailableError();
+    }
+  }
+
+  async proposeChanges(
+    identity: RequestIdentity,
+    invocationId: WorkspaceInvocationId,
+    command: { readonly commandId: WorkspaceChangeCommandId },
+  ): Promise<WorkspaceChangeCommandResult> {
+    const environment = await this.mutableEnvironment(identity, invocationId);
+    if (!this.changes) throw new WorkspaceRunEnvironmentUnavailableError();
+    const client = await this.pool.connect();
+    const lockKey = `workspace-environment:${identity.organizationId}:${invocationId}`;
+    try {
+      await client.query('SELECT pg_advisory_lock(hashtextextended($1, 0))', [lockKey]);
+      await this.mutableEnvironment(identity, invocationId);
+      const scope = await this.sandboxScope(identity, environment);
+      let snapshot: WorkspaceSandboxOverlaySnapshot;
+      try {
+        snapshot = await this.sandbox.snapshotOverlay(scope);
+      } catch {
+        throw new WorkspaceRunEnvironmentUnavailableError();
+      }
+      return await this.changes.propose(identity, {
+        commandId: command.commandId,
+        invocationId,
+        workspaceId: environment.workspaceId,
+        workingRootId: environment.workingRootId,
+        baseRevisionId: environment.revisionId,
+        entries: snapshot.entries.flatMap<WorkspaceChangeInput>((entry) => entry.kind === 'delete'
+          ? [{ kind: 'delete' as const, path: entry.path }]
+          : entry.baseSha256 === entry.sha256
+            ? []
+            : [{
+              kind: entry.baseExists ? 'modify' as const : 'add' as const,
+              path: entry.path,
+              mediaType: entry.mediaType,
+              content: entry.bytes!,
+            }]),
+      });
+    } finally {
+      try {
+        await client.query('SELECT pg_advisory_unlock(hashtextextended($1, 0))', [lockKey]);
+      } finally {
+        client.release();
+      }
+    }
+  }
+
   async release(
     identity: RequestIdentity,
     invocationId: WorkspaceInvocationId,
@@ -462,6 +645,98 @@ export class PostgresWorkspaceRunEnvironments implements WorkspaceRunEnvironment
         client.release();
       }
     }
+  }
+
+  private async mutateOverlay(
+    identity: RequestIdentity,
+    invocationId: WorkspaceInvocationId,
+    command: WorkspaceSandboxOverlayCommand,
+  ): Promise<WorkspaceOverlayCommandResult> {
+    const environment = await this.mutableEnvironment(identity, invocationId);
+    const client = await this.pool.connect();
+    const lockKey = `workspace-environment:${identity.organizationId}:${invocationId}`;
+    try {
+      await client.query('SELECT pg_advisory_lock(hashtextextended($1, 0))', [lockKey]);
+      await this.mutableEnvironment(identity, invocationId);
+      const scope = await this.sandboxScope(identity, environment);
+      return await this.sandbox.mutateOverlay(scope, command);
+    } catch (error) {
+      if (error instanceof WorkspaceOperationModeDeniedError
+        || error instanceof WorkspaceIdempotencyConflictError) throw error;
+      if (error instanceof WorkspaceFileNotFoundError) throw new WorkspaceNotFoundError();
+      throw new WorkspaceRunEnvironmentUnavailableError();
+    } finally {
+      try {
+        await client.query('SELECT pg_advisory_unlock(hashtextextended($1, 0))', [lockKey]);
+      } finally {
+        client.release();
+      }
+    }
+  }
+
+  private async sandboxScope(
+    identity: RequestIdentity,
+    environment: WorkspaceRunEnvironment,
+  ): Promise<WorkspaceSandboxScope> {
+    const result = await this.pool.query<RevisionScopeRow>(
+      `SELECT v.content_kind, v.git_commit_sha, w.operation_mode
+       FROM workspaces w
+       JOIN workspace_roots r
+         ON r.organization_id = w.organization_id AND r.workspace_id = w.id
+       JOIN workspace_revisions v
+         ON v.organization_id = r.organization_id AND v.working_root_id = r.id
+       WHERE w.organization_id = $1 AND w.owner_principal_id = $2
+         AND w.id = $3 AND r.id = $4 AND v.id = $5`,
+      [identity.organizationId, identity.principalId, environment.workspaceId,
+        environment.workingRootId, environment.revisionId],
+    );
+    const row = result.rows[0];
+    if (!row) throw new WorkspaceNotFoundError();
+    return {
+      environmentId: environment.id,
+      invocationId: environment.invocationId,
+      organizationId: identity.organizationId,
+      workspaceId: environment.workspaceId,
+      workingRootId: environment.workingRootId,
+      revisionId: environment.revisionId,
+      source: contentSource(row),
+    };
+  }
+
+  private async mutableEnvironment(
+    identity: RequestIdentity,
+    invocationId: WorkspaceInvocationId,
+  ): Promise<WorkspaceRunEnvironment> {
+    const environment = await this.preparedEnvironment(identity, invocationId);
+    if (environment.maximumOperationMode === 'observe') {
+      throw new WorkspaceOperationModeDeniedError();
+    }
+    const current = await this.pool.query<{
+      readonly operation_mode: WorkspaceOperationMode;
+      readonly lifecycle_status: string;
+      readonly worktree_archived: boolean;
+    }>(
+      `SELECT w.operation_mode, w.lifecycle_status,
+              EXISTS (
+                SELECT 1 FROM workspace_git_worktrees wt
+                WHERE wt.organization_id = r.organization_id
+                  AND wt.working_root_id = r.id AND wt.lifecycle_status = 'archived'
+              ) AS worktree_archived
+       FROM workspaces w
+       JOIN workspace_roots r
+         ON r.organization_id = w.organization_id AND r.workspace_id = w.id
+       WHERE w.organization_id = $1 AND w.owner_principal_id = $2
+         AND w.id = $3 AND r.id = $4`,
+      [identity.organizationId, identity.principalId,
+        environment.workspaceId, environment.workingRootId],
+    );
+    const row = current.rows[0];
+    if (!row) throw new WorkspaceNotFoundError();
+    if (row.operation_mode === 'observe') throw new WorkspaceOperationModeDeniedError();
+    if (row.lifecycle_status !== 'ready' || row.worktree_archived) {
+      throw new WorkspaceRunEnvironmentUnavailableError();
+    }
+    return environment;
   }
 
   private async openEnvironmentFile(

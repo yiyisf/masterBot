@@ -64,6 +64,9 @@ describe('PostgreSQL Workspace Run Environments', () => {
           sha256: createHash('sha256').update('sandbox bytes\n').digest('hex'),
         }],
         open: async () => Buffer.from('sandbox bytes\n'),
+        mutateOverlay: async () => ({ value: null, replayed: false }),
+        listOverlay: async () => ({ items: [] }),
+        snapshotOverlay: async () => ({ entries: [] }),
       },
     });
     const request = {
@@ -135,6 +138,9 @@ describe('PostgreSQL Workspace Run Environments', () => {
       async release() {},
       async list() { return []; },
       async open() { return Buffer.alloc(0); },
+      async mutateOverlay() { return { value: null, replayed: false }; },
+      async listOverlay() { return { items: [] }; },
+      async snapshotOverlay() { return { entries: [] }; },
     };
     const request = {
       invocationId,

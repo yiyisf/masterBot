@@ -14,7 +14,9 @@ import {
   type ToolProviderResult,
 } from '@cmaster/tools';
 import {
+  workspaceChangeCommandId,
   workspaceInvocationId,
+  workspaceOverlayCommandId,
   type WorkspaceFileContent,
   type WorkspaceRunEnvironments,
 } from '@cmaster/workspaces';
@@ -23,8 +25,12 @@ import type { GovernedToolOutcomeObserver } from './governed-agent-tools.js';
 export const LIST_WORKSPACE_FILES_CAPABILITY_ID = 'cmaster.workspace.list_files:v1';
 export const SEARCH_WORKSPACE_FILES_CAPABILITY_ID = 'cmaster.workspace.search_files:v1';
 export const OPEN_WORKSPACE_FILE_CAPABILITY_ID = 'cmaster.workspace.open_file:v1';
+export const WRITE_WORKSPACE_FILE_CAPABILITY_ID = 'cmaster.workspace.write_file:v1';
+export const DELETE_WORKSPACE_FILE_CAPABILITY_ID = 'cmaster.workspace.delete_file:v1';
+export const PROPOSE_WORKSPACE_CHANGES_CAPABILITY_ID = 'cmaster.workspace.propose_changes:v1';
 export const WORKSPACE_FILE_TOOL_PROVIDER_KEY = 'builtin:workspace-files';
 const maximumToolOpenBytes = 8 * 1024;
+const maximumToolWriteCharacters = 16 * 1024;
 
 const workspacePathJsonSchema = {
   type: 'string', minLength: 1, maxLength: 1024,
@@ -132,6 +138,86 @@ export function workspaceFileToolCatalog(
         effect: 'read_only', recovery: 'retry_same_call', risks: ['handles_sensitive_data'],
         providerKey: WORKSPACE_FILE_TOOL_PROVIDER_KEY,
       },
+      {
+        id: toolRevisionId(catalogId(organizationId, WRITE_WORKSPACE_FILE_CAPABILITY_ID)),
+        capabilityId: WRITE_WORKSPACE_FILE_CAPABILITY_ID,
+        name: 'workspace_write_file',
+        description: 'Writes bounded UTF-8 text only to this Invocation’s private overlay.',
+        inputSchema: {
+          type: 'object', required: ['path', 'content'], additionalProperties: false,
+          properties: {
+            path: workspacePathJsonSchema,
+            content: { type: 'string', maxLength: maximumToolWriteCharacters },
+          },
+        },
+        outputSchema: {
+          type: 'object', required: ['kind', 'path', 'changed'],
+          additionalProperties: false,
+          properties: {
+            kind: { enum: ['write', 'delete', 'none'] },
+            path: workspacePathJsonSchema,
+            changed: { type: 'boolean' },
+            mediaType: { type: 'string', minLength: 1, maxLength: 100 },
+            sizeBytes: { type: 'integer', minimum: 0, maximum: 1_048_576 },
+            sha256: { type: 'string', pattern: '^[0-9a-f]{64}$' },
+          },
+        },
+        effect: 'idempotent_write', recovery: 'retry_same_call', risks: ['handles_sensitive_data'],
+        providerKey: WORKSPACE_FILE_TOOL_PROVIDER_KEY,
+      },
+      {
+        id: toolRevisionId(catalogId(organizationId, DELETE_WORKSPACE_FILE_CAPABILITY_ID)),
+        capabilityId: DELETE_WORKSPACE_FILE_CAPABILITY_ID,
+        name: 'workspace_delete_file',
+        description: 'Marks one visible file deleted only in this Invocation’s private overlay.',
+        inputSchema: {
+          type: 'object', required: ['path'], additionalProperties: false,
+          properties: { path: workspacePathJsonSchema },
+        },
+        outputSchema: {
+          type: 'object', required: ['kind', 'path', 'changed'],
+          additionalProperties: false,
+          properties: {
+            kind: { enum: ['write', 'delete', 'none'] },
+            path: workspacePathJsonSchema,
+            changed: { type: 'boolean' },
+          },
+        },
+        effect: 'idempotent_write', recovery: 'retry_same_call', risks: ['handles_sensitive_data'],
+        providerKey: WORKSPACE_FILE_TOOL_PROVIDER_KEY,
+      },
+      {
+        id: toolRevisionId(catalogId(organizationId, PROPOSE_WORKSPACE_CHANGES_CAPABILITY_ID)),
+        capabilityId: PROPOSE_WORKSPACE_CHANGES_CAPABILITY_ID,
+        name: 'workspace_propose_changes',
+        description: 'Finalizes the private overlay as one immutable Workspace Change Set.',
+        inputSchema: { type: 'object', additionalProperties: false, properties: {} },
+        outputSchema: {
+          type: 'object',
+          required: ['changeSetId', 'workspaceId', 'workingRootId', 'baseRevisionId',
+            'status', 'entries'],
+          additionalProperties: false,
+          properties: {
+            changeSetId: { type: 'string' },
+            workspaceId: { type: 'string' },
+            workingRootId: { type: 'string' },
+            baseRevisionId: { type: 'string' },
+            status: { enum: ['preparing', 'proposed', 'applying', 'applied', 'conflicted'] },
+            entries: {
+              type: 'array', minItems: 1, maxItems: 100,
+              items: {
+                type: 'object', required: ['kind', 'path'], additionalProperties: false,
+                properties: {
+                  kind: { enum: ['add', 'modify', 'delete'] },
+                  ...workspaceFileEntryProperties,
+                },
+              },
+            },
+          },
+        },
+        effect: 'idempotent_write', recovery: 'retry_same_call', risks: ['handles_sensitive_data'],
+        providerKey: WORKSPACE_FILE_TOOL_PROVIDER_KEY,
+      },
     ],
     grants: [{
       id: toolGrantId(catalogId(organizationId, 'workspace-file-tool-grant')),
@@ -140,6 +226,9 @@ export function workspaceFileToolCatalog(
         LIST_WORKSPACE_FILES_CAPABILITY_ID,
         SEARCH_WORKSPACE_FILES_CAPABILITY_ID,
         OPEN_WORKSPACE_FILE_CAPABILITY_ID,
+        WRITE_WORKSPACE_FILE_CAPABILITY_ID,
+        DELETE_WORKSPACE_FILE_CAPABILITY_ID,
+        PROPOSE_WORKSPACE_CHANGES_CAPABILITY_ID,
       ],
     }],
   };
@@ -243,7 +332,7 @@ export class WorkspaceFileToolProvider implements ToolProvider {
 
   constructor(
     private readonly environments: Pick<WorkspaceRunEnvironments,
-      'listFiles' | 'searchFiles' | 'openFile'>,
+      'listFiles' | 'searchFiles' | 'openFile' | 'writeFile' | 'deleteFile' | 'proposeChanges'>,
   ) {}
 
   summarize(_input: unknown) {
@@ -296,6 +385,73 @@ export class WorkspaceFileToolProvider implements ToolProvider {
           safeSummary: {
             title: 'Workspace file opened',
             details: { path: file.path, bytes: String(file.sizeBytes) },
+          },
+        };
+      }
+      case WRITE_WORKSPACE_FILE_CAPABILITY_ID: {
+        if (typeof input.path !== 'string' || typeof input.content !== 'string'
+          || input.content.length > maximumToolWriteCharacters) {
+          throw new Error('Workspace write input is invalid');
+        }
+        const result = await this.environments.writeFile(identity, invocationId, {
+          commandId: workspaceOverlayCommandId(request.toolCallId),
+          path: input.path,
+          content: input.content,
+        });
+        const value = {
+          kind: result.value?.kind ?? 'none',
+          path: result.value?.path ?? input.path,
+          changed: result.value !== null,
+          ...(result.value?.kind === 'write' ? {
+            mediaType: result.value.mediaType,
+            sizeBytes: result.value.sizeBytes,
+            sha256: result.value.sha256,
+          } : {}),
+        };
+        return {
+          kind: 'success', value,
+          safeSummary: {
+            title: 'Workspace overlay file written',
+            details: { path: value.path, changed: String(value.changed) },
+          },
+        };
+      }
+      case DELETE_WORKSPACE_FILE_CAPABILITY_ID: {
+        if (typeof input.path !== 'string') throw new Error('Workspace file path is required');
+        const result = await this.environments.deleteFile(identity, invocationId, {
+          commandId: workspaceOverlayCommandId(request.toolCallId),
+          path: input.path,
+        });
+        const value = {
+          kind: result.value?.kind ?? 'none',
+          path: result.value?.path ?? input.path,
+          changed: result.value !== null,
+        };
+        return {
+          kind: 'success', value,
+          safeSummary: {
+            title: 'Workspace overlay file deleted',
+            details: { path: value.path, changed: String(value.changed) },
+          },
+        };
+      }
+      case PROPOSE_WORKSPACE_CHANGES_CAPABILITY_ID: {
+        const result = await this.environments.proposeChanges(identity, invocationId, {
+          commandId: workspaceChangeCommandId(request.toolCallId),
+        });
+        const value = {
+          changeSetId: result.value.id,
+          workspaceId: result.value.workspaceId,
+          workingRootId: result.value.workingRootId,
+          baseRevisionId: result.value.baseRevisionId,
+          status: result.value.status,
+          entries: result.value.entries,
+        };
+        return {
+          kind: 'success', value,
+          safeSummary: {
+            title: 'Workspace changes proposed',
+            details: { files: String(value.entries.length) },
           },
         };
       }

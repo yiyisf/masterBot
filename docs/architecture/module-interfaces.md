@@ -72,6 +72,10 @@ interface WorkspaceRunEnvironments {
   listFiles(query: ListInvocationWorkspaceFiles): Promise<Page<WorkspaceFileEntry>>;
   searchFiles(query: SearchInvocationWorkspaceFiles): Promise<Page<WorkspaceFileMatch>>;
   openFile(query: OpenInvocationWorkspaceFile): Promise<WorkspaceFileContent>;
+  writeFile(command: WriteInvocationOverlayFile): Promise<WorkspaceOverlayCommandResult>;
+  deleteFile(command: DeleteInvocationOverlayFile): Promise<WorkspaceOverlayCommandResult>;
+  listOverlay(query: ListInvocationOverlay): Promise<WorkspaceOverlayPage>;
+  proposeChanges(command: ProposeInvocationOverlay): Promise<WorkspaceChangeSet>;
   release(command: ReleaseWorkspaceRunEnvironment): Promise<void>;
 }
 ```
@@ -85,7 +89,7 @@ interface WorkspaceRunEnvironments {
 - 所有普通文件写入都形成 Change Set。应用以 base Revision 做 optimistic concurrency；不重叠重放必须确定性，重叠/未知返回 conflict，禁止 force overwrite。
 - Edit with Confirmation 的批准前不得修改 Workspace File；Trusted Automation 仍通过相同 Change Set Interface 自动批准/应用；Observe 拒绝 propose。
 - Apply、Commit、Push、PR 与 Merge 使用不同 Command/ToolCall/Approval identity。Workspace Module 管理 Git 状态但不拥有 Approval 或 Run。
-- 当前 6.4a 只挂载 trusted package-root `propose/get/list/apply` seam；`resolve`、Approval/Interrupt、mutating Tool 和 Browser Contract 在后续治理 Slice 接入前保持未挂载。Apply 写入 receipt 后可恢复同一 resulting Revision。
+- 当前 6.4b 挂载 Invocation-bound `workspace_write_file`、`workspace_delete_file` 与 `workspace_propose_changes` Tool；它们只改变 durable private overlay 或创建 immutable proposal。`resolve`、Approval/Interrupt、apply Tool 和 Browser Contract 在后续治理 Slice 接入前保持未挂载；trusted package-root `apply` 写入 receipt 后可恢复同一 resulting Revision。
 - Git-backed Apply 依 ADR-0048 创建由 server-owned private ref 保留、但不移动 Employee branch/ref 的内部 immutable snapshot object；它不是产品 Git Commit 操作。
 - Workspace Content Store、Git Adapter 与 Sandbox Adapter 是 Module 内真实 Seam；公开 Interface 不泄漏其实现。
 

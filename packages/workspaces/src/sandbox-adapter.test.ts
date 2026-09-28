@@ -14,9 +14,11 @@ import {
   createConfiguredWorkspaceSandboxAdapter,
   type WorkspaceFileEntry,
   WorkspaceFileNotFoundError,
+  WorkspaceIdempotencyConflictError,
   type WorkspaceRevisionContentReader,
   workspaceId,
   workspaceInvocationId,
+  workspaceOverlayCommandId,
   workspaceRevisionId,
   type WorkspaceRunEnvironmentId,
   workingRootId,
@@ -41,8 +43,8 @@ describe('configured Workspace Sandbox Adapter', () => {
     const revisionContent: WorkspaceRevisionContentReader = {
       async list() { return [entry()]; },
       async open() { return content; },
-      async isPathVisible() { return true; },
-      async pathExists() { return true; },
+      async isPathVisible(_scope, path) { return path !== 'ignored.txt'; },
+      async pathExists(_scope, path) { return path === 'src/readme.txt' || path === 'linked'; },
     };
     const scope = {
       environmentId: randomUUID() as WorkspaceRunEnvironmentId,
@@ -74,6 +76,75 @@ describe('configured Workspace Sandbox Adapter', () => {
     expect(JSON.stringify(await recoveredWorker.list(scope.environmentId)))
       .not.toContain(storageRoot);
 
+    await expect(recoveredWorker.mutateOverlay(scope, {
+      commandId: workspaceOverlayCommandId(randomUUID()),
+      kind: 'write',
+      path: '../escape.txt',
+      mediaType: 'text/plain; charset=utf-8',
+      bytes: Buffer.from('escape\n'),
+    })).rejects.toBeInstanceOf(WorkspaceFileNotFoundError);
+    await expect(recoveredWorker.mutateOverlay(scope, {
+      commandId: workspaceOverlayCommandId(randomUUID()),
+      kind: 'write',
+      path: 'binary.txt',
+      mediaType: 'text/plain; charset=utf-8',
+      bytes: Buffer.from([0xff]),
+    })).rejects.toThrow('content_unavailable');
+    await expect(recoveredWorker.mutateOverlay(scope, {
+      commandId: workspaceOverlayCommandId(randomUUID()),
+      kind: 'write',
+      path: 'oversized.txt',
+      mediaType: 'text/plain; charset=utf-8',
+      bytes: Buffer.alloc(1_048_577, 0x61),
+    })).rejects.toThrow('content_limit_exceeded');
+    const writeCommand = workspaceOverlayCommandId(randomUUID());
+    const written = await recoveredWorker.mutateOverlay(scope, {
+      commandId: writeCommand,
+      kind: 'write',
+      path: 'notes/new.md',
+      mediaType: 'text/markdown; charset=utf-8',
+      bytes: Buffer.from('# New\n'),
+    });
+    await expect(firstWorker.mutateOverlay(scope, {
+      commandId: writeCommand,
+      kind: 'write',
+      path: 'notes/new.md',
+      mediaType: 'text/markdown; charset=utf-8',
+      bytes: Buffer.from('# New\n'),
+    })).resolves.toEqual({ ...written, replayed: true });
+    await expect(firstWorker.mutateOverlay(scope, {
+      commandId: writeCommand,
+      kind: 'write',
+      path: 'notes/new.md',
+      mediaType: 'text/markdown; charset=utf-8',
+      bytes: Buffer.from('# Conflict\n'),
+    })).rejects.toBeInstanceOf(WorkspaceIdempotencyConflictError);
+    await expect(firstWorker.mutateOverlay(scope, {
+      commandId: workspaceOverlayCommandId(randomUUID()),
+      kind: 'write',
+      path: 'notes/new.md/child.txt',
+      mediaType: 'text/plain; charset=utf-8',
+      bytes: Buffer.from('collision\n'),
+    })).rejects.toBeInstanceOf(WorkspaceFileNotFoundError);
+    await expect(recoveredWorker.mutateOverlay(scope, {
+      commandId: workspaceOverlayCommandId(randomUUID()),
+      kind: 'write',
+      path: 'ignored.txt',
+      mediaType: 'text/plain; charset=utf-8',
+      bytes: Buffer.from('hidden\n'),
+    })).rejects.toBeInstanceOf(WorkspaceFileNotFoundError);
+    await expect(recoveredWorker.mutateOverlay(scope, {
+      commandId: workspaceOverlayCommandId(randomUUID()),
+      kind: 'write',
+      path: 'linked',
+      mediaType: 'text/plain; charset=utf-8',
+      bytes: Buffer.from('replace\n'),
+    })).rejects.toBeInstanceOf(WorkspaceFileNotFoundError);
+    await expect(firstWorker.snapshotOverlay(scope)).resolves.toMatchObject({
+      entries: [{ kind: 'write', path: 'notes/new.md', baseExists: false,
+        bytes: Buffer.from('# New\n') }],
+    });
+
     const fixedFile = join(
       storageRoot, 'run-environments', scope.environmentId, 'root', 'src', 'readme.txt',
     );
@@ -84,6 +155,10 @@ describe('configured Workspace Sandbox Adapter', () => {
     await symlink('/etc/hosts', fixedFile);
     await expect(recoveredWorker.open(scope.environmentId, 'src/readme.txt'))
       .rejects.toBeInstanceOf(WorkspaceFileNotFoundError);
+    await writeFile(join(
+      storageRoot, 'run-environments', scope.environmentId, 'overlay', 'overlay-manifest.json',
+    ), '{corrupt', 'utf8');
+    await expect(recoveredWorker.prepare(scope)).rejects.toBeInstanceOf(WorkspaceFileNotFoundError);
     await recoveredWorker.release({ environmentId: scope.environmentId });
     await expect(recoveredWorker.list(scope.environmentId))
       .rejects.toBeInstanceOf(WorkspaceFileNotFoundError);
