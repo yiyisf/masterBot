@@ -71,6 +71,7 @@ import {
 import { PollingRunEventNotifier, PostgresRunEventNotifier } from './run-event-notifier.js';
 import { WorkerRuntime } from './worker.js';
 import {
+  WorkspaceChangeApplyToolProvider,
   WorkspaceFileToolProvider,
   WorkspaceFileToolProvenanceObserver,
   workspaceFileToolCatalog,
@@ -192,11 +193,11 @@ if (config.features.toolRuntime) {
   contextBuilder = config.features.contextArtifacts && models && artifacts
     ? new PostgresContextBuilder(database.pool, conversations, models, artifacts)
     : undefined;
+  const activeGovernedAgentRevisionId = agentRevisionId(
+    config.developmentIdentity.activeAgentRevisionId,
+  );
   const workspaceTools = contextBuilder && config.features.filesystemWorkspace
-    ? workspaceFileToolCatalog(
-      organizationId,
-      agentRevisionId(config.developmentIdentity.contextArtifactAgentRevisionId),
-    )
+    ? workspaceFileToolCatalog(organizationId, activeGovernedAgentRevisionId)
     : undefined;
   const providers = [
     new CurrentTimeToolProvider(),
@@ -204,7 +205,10 @@ if (config.features.toolRuntime) {
     new HttpsFetchToolProvider({ allowedHosts: config.toolRuntime.httpFetchAllowedHosts }),
     ...(artifacts ? [new CreateTextArtifactToolProvider(artifacts)] : []),
     ...(contextBuilder && workspaceTools
-      ? [new WorkspaceFileToolProvider(workspaceRunEnvironments)]
+      ? [
+        new WorkspaceFileToolProvider(workspaceRunEnvironments),
+        new WorkspaceChangeApplyToolProvider(workspaceChanges),
+      ]
       : []),
   ];
   await catalog.provision(
@@ -212,9 +216,7 @@ if (config.features.toolRuntime) {
     workflowValidationToolCatalog(agentRevisionId(config.developmentIdentity.toolAgentRevisionId)),
   );
   if (artifacts) {
-    const baseline = workflowValidationToolCatalog(
-      agentRevisionId(config.developmentIdentity.contextArtifactAgentRevisionId),
-    );
+    const baseline = workflowValidationToolCatalog(activeGovernedAgentRevisionId);
     await catalog.provision(organizationId, {
       revisions: [
         ...baseline.revisions,
@@ -222,10 +224,8 @@ if (config.features.toolRuntime) {
         ...(workspaceTools?.revisions ?? []),
       ],
       grants: [{
-        id: toolGrantId(SLICE4_ARTIFACT_TOOL_GRANT_ID),
-        agentRevisionId: agentRevisionId(
-          config.developmentIdentity.contextArtifactAgentRevisionId,
-        ),
+        id: workspaceTools?.grants[0]?.id ?? toolGrantId(SLICE4_ARTIFACT_TOOL_GRANT_ID),
+        agentRevisionId: activeGovernedAgentRevisionId,
         capabilityIds: [
           ...(baseline.grants[0]?.capabilityIds ?? []),
           createTextArtifactToolRevision.capabilityId,
@@ -266,7 +266,7 @@ if (models) engines.push(new AiSdkAgentEngine(models, governedAgentTools));
 const contextRuntime = config.features.contextArtifacts && models && governedAgentTools
   && artifacts && contextBuilder
   ? {
-    agentRevisionId: agentRevisionId(config.developmentIdentity.contextArtifactAgentRevisionId),
+    agentRevisionId: agentRevisionId(config.developmentIdentity.activeAgentRevisionId),
     builder: contextBuilder,
     models,
     resolveFixedOverheadTokens: async (input: Parameters<GovernedAgentToolRuntime['list']>[0]) => (

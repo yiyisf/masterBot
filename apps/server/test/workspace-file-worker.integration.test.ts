@@ -32,11 +32,13 @@ import {
 import { PostgresToolCatalog, PostgresToolRuntime } from '@cmaster/tools';
 import {
   createConfiguredWorkspaceChangeContentStore,
+  createConfiguredWorkspaceRevisionContentReader,
   createConfiguredWorkspaceRevisionSnapshotStore,
   createConfiguredWorkspaceSandboxAdapter,
   PostgresWorkspaceCatalog,
   PostgresWorkspaceChanges,
   PostgresWorkspaceRunEnvironments,
+  PostgresWorkspaceWorkingRoots,
   workspaceCommandId,
   workspaceInvocationId,
   type WorkspaceRevisionContentReader,
@@ -44,8 +46,12 @@ import {
 import { Pool } from 'pg';
 import { afterAll, describe, expect, it } from 'vitest';
 import { GovernedAgentToolRuntime } from '../src/governed-agent-tools.js';
-import { Slice3DevelopmentEntitlements } from '../src/tool-confirmation-coordinator.js';
 import {
+  Slice3DevelopmentEntitlements,
+  ToolConfirmationCoordinator,
+} from '../src/tool-confirmation-coordinator.js';
+import {
+  WorkspaceChangeApplyToolProvider,
   WorkspaceFileToolProvider,
   WorkspaceFileToolProvenanceObserver,
   workspaceFileToolCatalog,
@@ -80,13 +86,21 @@ class WorkspaceEditingModelAdapter implements ModelAdapter {
         }
         : this.calls === 3
           ? { requestId: 'propose-private-overlay', name: 'workspace_propose_changes', input: {} }
-          : undefined;
+          : this.calls === 4
+            ? {
+              requestId: 'apply-proposed-changes',
+              name: 'workspace_apply_changes',
+              input: {
+                changeSetId: changeSetIdFromTranscript(request.transcript?.at(-1)),
+              },
+            }
+            : undefined;
     if (requested) {
       yield { type: 'tool_requested', request: requested };
       yield { type: 'completed', usage: { inputTokens: 4, outputTokens: 2, totalTokens: 6 } };
       return;
     }
-    yield { type: 'text_delta', text: 'The fixed file was edited and proposed.' };
+    yield { type: 'text_delta', text: 'The fixed file was edited, approved, and applied.' };
     yield { type: 'completed', usage: { inputTokens: 8, outputTokens: 5, totalTokens: 13 } };
   }
 
@@ -95,8 +109,31 @@ class WorkspaceEditingModelAdapter implements ModelAdapter {
   }
 }
 
+function changeSetIdFromTranscript(value: unknown): string {
+  if (!value || typeof value !== 'object'
+    || !('output' in value) || !value.output || typeof value.output !== 'object'
+    || !('changeSetId' in value.output) || typeof value.output.changeSetId !== 'string') {
+    throw new Error('Expected proposed Change Set output');
+  }
+  return value.output.changeSetId;
+}
+
 describe('Workspace file Tools in the real Worker', () => {
-  it('recovers a private overlay on another Worker, proposes it, and records open provenance', async () => {
+  it('coordinates confirmed and trusted apply while recovering the private overlay', async () => {
+    for (const scenario of [
+      {
+        operationMode: 'edit_with_confirmation', confirmation: true,
+        response: 'confirm', applied: true,
+      },
+      {
+        operationMode: 'edit_with_confirmation', confirmation: true,
+        response: 'reject', applied: false,
+      },
+      {
+        operationMode: 'trusted_automation', confirmation: false,
+        response: 'confirm', applied: true,
+      },
+    ] as const) {
     const identity = new PostgresDevelopmentIdentity(pool, {
       organizationId: organizationId(randomUUID()),
       organizationName: `Workspace Tool ${randomUUID()}`,
@@ -161,7 +198,7 @@ describe('Workspace file Tools in the real Worker', () => {
       {
         commandId: workspaceCommandId(randomUUID()),
         name: 'Worker fixed files',
-        operationMode: 'edit_with_confirmation',
+        operationMode: scenario.operationMode,
       },
     )).value;
     const root = workspace.defaultWorkingRoot;
@@ -172,14 +209,31 @@ describe('Workspace file Tools in the real Worker', () => {
       sizeBytes: bytes.byteLength,
       sha256: createHash('sha256').update(bytes).digest('hex'),
     };
-    const revisionContent: WorkspaceRevisionContentReader = {
-      async list() { return [entry]; },
-      async open() { return bytes; },
-      async isPathVisible() { return true; },
-      async pathExists() { return true; },
-    };
     const storageRoot = await mkdtemp(join(tmpdir(), 'cmaster-worker-sandbox-'));
     roots.push(storageRoot);
+    const storedRevisionContent = createConfiguredWorkspaceRevisionContentReader({ storageRoot });
+    const revisionContent: WorkspaceRevisionContentReader = {
+      async list(scope) {
+        return scope.source.kind === 'snapshot'
+          ? storedRevisionContent.list(scope)
+          : [entry];
+      },
+      async open(scope) {
+        return scope.source.kind === 'snapshot'
+          ? storedRevisionContent.open(scope)
+          : bytes;
+      },
+      async isPathVisible(scope, path) {
+        return scope.source.kind === 'snapshot'
+          ? storedRevisionContent.isPathVisible(scope, path)
+          : true;
+      },
+      async pathExists(scope, path) {
+        return scope.source.kind === 'snapshot'
+          ? storedRevisionContent.pathExists(scope, path)
+          : true;
+      },
+    };
     const firstSandbox = createConfiguredWorkspaceSandboxAdapter({
       storageRoot, revisionContent,
     });
@@ -214,11 +268,15 @@ describe('Workspace file Tools in the real Worker', () => {
       requestIdentity.organizationId,
       workspaceFileToolCatalog(requestIdentity.organizationId, revisionId),
     );
+    const approvals = new PostgresApprovalModule(pool);
     const tools = new PostgresToolRuntime(
       pool,
       new Slice3BaselinePolicy(),
-      new PostgresApprovalModule(pool),
-      [new WorkspaceFileToolProvider(recoveredEnvironments)],
+      approvals,
+      [
+        new WorkspaceFileToolProvider(recoveredEnvironments),
+        new WorkspaceChangeApplyToolProvider(changes),
+      ],
     );
     const agentTools = new GovernedAgentToolRuntime(
       catalog,
@@ -241,11 +299,46 @@ describe('Workspace file Tools in the real Worker', () => {
       },
     );
 
+    const confirmation = new ToolConfirmationCoordinator(
+      execution, tools, new Slice3DevelopmentEntitlements(),
+    );
     let completed = false;
-    for (let attempt = 0; attempt < 20; attempt += 1) {
+    let confirmed = false;
+    for (let attempt = 0; attempt < 30; attempt += 1) {
       await worker.relayOne();
       await worker.executeOne();
       const current = await execution.getRun(requestIdentity, accepted.value.id);
+      if (current.status === 'waiting' && current.activeInterrupt && !confirmed) {
+        expect(current.activeInterrupt.kind).toBe('tool_confirmation');
+        const [approval] = await approvals.listBySubjectRefs(
+          requestIdentity, [current.activeInterrupt.subjectRef],
+        );
+        const proposedChangeSetId = changeSetIdFromTranscript(modelsAdapter.toolOutputs.at(-1));
+        expect(approval).toMatchObject({
+          status: 'pending',
+          subject: {
+            kind: 'tool_call',
+            subjectRef: current.activeInterrupt.subjectRef,
+            safeSummary: {
+              title: 'Apply Workspace changes',
+              details: { changeSetId: proposedChangeSetId },
+            },
+          },
+        });
+        expect(approval?.subject.requestHash).toMatch(/^[a-f0-9]{64}$/);
+        const beforeApproval = await new PostgresWorkspaceCatalog(pool).get(
+          requestIdentity, workspace.id,
+        );
+        expect(beforeApproval.defaultWorkingRoot?.currentRevisionId).toBe(root.currentRevisionId);
+        await confirmation.resolve(
+          requestIdentity, accepted.value.id, current.activeInterrupt.id, {
+            commandId: randomUUID(), response: scenario.response,
+            signal: new AbortController().signal,
+          },
+        );
+        confirmed = true;
+        continue;
+      }
       if (current.status === 'succeeded') {
         completed = true;
         break;
@@ -271,7 +364,36 @@ describe('Workspace file Tools in the real Worker', () => {
           entries: [expect.objectContaining({ kind: 'modify', path: 'README.md' })],
         }),
       }),
+      expect.objectContaining({
+        role: 'tool', output: scenario.applied
+          ? expect.objectContaining({
+            status: 'applied', resultingRevisionId: expect.any(String),
+            entries: [expect.objectContaining({ kind: 'modify', path: 'README.md' })],
+          })
+          : { status: 'denied', reason: 'employee_rejected' },
+      }),
     ]);
+    expect(confirmed).toBe(scenario.confirmation);
+    const appliedWorkspace = await new PostgresWorkspaceCatalog(pool).get(
+      requestIdentity, workspace.id,
+    );
+    if (scenario.applied) {
+      const resultingRevisionId = appliedWorkspace.defaultWorkingRoot?.currentRevisionId;
+      if (!resultingRevisionId) throw new Error('Expected an applied Workspace Revision');
+      expect(resultingRevisionId).not.toBe(root.currentRevisionId);
+      await expect(new PostgresWorkspaceWorkingRoots(pool, { revisionContent }).openFile(
+        requestIdentity,
+        {
+          workspaceId: workspace.id,
+          workingRootId: root.id,
+          revisionId: resultingRevisionId,
+          path: 'README.md',
+        },
+      )).resolves.toMatchObject({ content: '# Edited README\n' });
+    } else {
+      expect(appliedWorkspace.defaultWorkingRoot?.currentRevisionId)
+        .toBe(root.currentRevisionId);
+    }
     await expect(recoveredEnvironments.listOverlay(
       requestIdentity, environmentRequest.invocationId,
     )).resolves.toMatchObject({ items: [{ kind: 'write', path: 'README.md' }] });
@@ -295,5 +417,6 @@ describe('Workspace file Tools in the real Worker', () => {
       path: 'README.md',
       sourceHash: entry.sha256,
     }));
+    }
   });
 });

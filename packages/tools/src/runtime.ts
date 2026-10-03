@@ -245,6 +245,16 @@ export class PostgresToolRuntime implements ToolRuntime {
     if (completedReplay) return completedReplay;
 
     const revision = await selectGrantedRevision(this.pool, command);
+    const provider = revision ? this.providers.get(revision.provider_key) : undefined;
+    const resource = revision && provider
+      ? await this.resolvePolicyResource(provider, {
+        identity: command.identity,
+        revision,
+        runId: command.runId,
+        invocationId: command.invocationId,
+        input: command.input,
+      })
+      : undefined;
     const decision = await this.policy.evaluate({
       organizationId: command.identity.organizationId,
       principalId: command.identity.principalId,
@@ -253,13 +263,13 @@ export class PostgresToolRuntime implements ToolRuntime {
       agentGranted: revision !== undefined,
       toolRevisionActive: revision !== undefined,
       capabilityId: command.capabilityId,
+      ...(resource ? { resource } : {}),
     });
     if (decision.effect === 'deny' || !revision) {
       throw new ToolAuthorizationDeniedError(decision.reason);
     }
     const requiresConfirmation = decision.obligations
       .some((obligation) => obligation.kind === 'employee_confirmation');
-    const provider = this.providers.get(revision.provider_key);
     if (!provider) throw new ToolProviderUnavailableError();
     const requestPayload = validateInput(revision.input_schema, command.input);
     const safeRequestSummary = provider.summarize(command.input);
@@ -744,6 +754,16 @@ export class PostgresToolRuntime implements ToolRuntime {
         call.tool_revision_id, call.capability_id, call.agent_revision_id],
     );
     const revision = revisionResult.rows[0];
+    const provider = revision ? this.providers.get(revision.provider_key) : undefined;
+    const resource = revision && provider
+      ? await this.resolvePolicyResource(provider, {
+        identity: command.identity,
+        revision,
+        runId: call.run_id,
+        invocationId: call.invocation_id,
+        input: call.request_payload,
+      })
+      : undefined;
     const decision = await this.policy.evaluate({
       organizationId: command.identity.organizationId,
       principalId: command.identity.principalId,
@@ -752,6 +772,7 @@ export class PostgresToolRuntime implements ToolRuntime {
       agentGranted: revision !== undefined,
       toolRevisionActive: revision !== undefined,
       capabilityId: call.capability_id,
+      ...(resource ? { resource } : {}),
     });
     if (decision.effect === 'deny' || !revision) {
       const denied = await this.pool.query(
@@ -764,7 +785,6 @@ export class PostgresToolRuntime implements ToolRuntime {
       if (denied.rowCount !== 1) throw new ToolPersistenceError('Tool denial was superseded');
       return { kind: 'denied', toolCallId: command.toolCallId, reason: 'authorization_revoked' };
     }
-    const provider = this.providers.get(revision.provider_key);
     if (!provider) throw new ToolProviderUnavailableError();
     if (call.status === 'running') {
       return this.recoverExpiredDispatch(command, call, revision, provider);
@@ -801,6 +821,31 @@ export class PostgresToolRuntime implements ToolRuntime {
       operation: 'execute',
       signal: command.signal,
     });
+  }
+
+  private async resolvePolicyResource(
+    provider: ToolProvider,
+    input: {
+      readonly identity: RequestIdentity;
+      readonly revision: RuntimeRevisionRow;
+      readonly runId: string;
+      readonly invocationId: string;
+      readonly input: unknown;
+    },
+  ) {
+    if (!provider.resolvePolicyResource) return undefined;
+    try {
+      return await provider.resolvePolicyResource({
+        identity: input.identity,
+        revision: descriptor(input.revision),
+        runId: input.runId,
+        invocationId: input.invocationId,
+        input: input.input,
+      });
+    } catch {
+      // Resource lookup is authorization-sensitive; unknown and unauthorized both fail closed.
+      return undefined;
+    }
   }
 
   async listCalls(identity: RequestIdentity, runId: string): Promise<ToolCall[]> {

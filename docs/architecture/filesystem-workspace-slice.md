@@ -91,8 +91,8 @@ Each item is one blockers-first vertical ticket or the smallest set of independe
 
 - Persist bounded Invocation-private overlay writes and tombstones, and finalize their exact net diff into an immutable proposal through governed write/delete/propose Tools.
 - Add approve/reject/request-adjustment/apply transitions so shared content has one write path.
-- Implement whole-Change-Set Approval Subjects, stable Command identities, Revision compare-and-apply, compatible non-overlap replay, and explicit conflict.
-- Enforce Observe, Edit with Confirmation, and Trusted Automation through one write path.
+- Implement whole-Change-Set Approval through a separate governed Apply ToolCall, stable Command identities, Revision compare-and-apply, compatible non-overlap replay, and explicit conflict.
+- Re-resolve current and captured maximum Operation Mode before initial authorization and confirmation resume; enforce Observe, Edit with Confirmation, and Trusted Automation through one write path.
 - Pin Run maximum mode; allow immediate restriction but no in-place elevation.
 
 **Exit:** approval never changes files before commit; Trusted Automation still records and applies a Change Set; stale overlap never overwrites; response loss reconciles one transition.

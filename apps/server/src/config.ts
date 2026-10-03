@@ -75,6 +75,7 @@ const environmentSchema = z.object({
   CMASTER_DEV_AI_AGENT_REVISION_ID: z.uuid().default('00000000-0000-4000-8000-000000000005'),
   CMASTER_DEV_TOOL_AGENT_REVISION_ID: z.uuid().default('00000000-0000-4000-8000-000000000012'),
   CMASTER_DEV_CONTEXT_ARTIFACT_AGENT_REVISION_ID: z.uuid().default('00000000-0000-4000-8000-000000000015'),
+  CMASTER_DEV_WORKSPACE_AGENT_REVISION_ID: z.uuid().default('00000000-0000-4000-8000-000000000018'),
   CMASTER_PRIMARY_MODEL_PROFILE_ID: z.uuid().default('00000000-0000-4000-8000-000000000006'),
   CMASTER_TOOL_MODEL_PROFILE_ID: z.uuid().default('00000000-0000-4000-8000-000000000013'),
   CMASTER_CONTEXT_PRIMARY_MODEL_PROFILE_ID: z.uuid().default('00000000-0000-4000-8000-000000000016'),
@@ -135,6 +136,7 @@ export interface ServerConfig {
     aiSdkAgentRevisionId: string;
     toolAgentRevisionId: string;
     contextArtifactAgentRevisionId: string;
+    workspaceAgentRevisionId: string;
     activeAgentRevisionId: string;
     contextPolicyRevision?: ContextPolicyRevision;
   };
@@ -232,6 +234,13 @@ export function resolveDevelopmentAgentConfig(config: ServerConfig): Development
         contextPolicyRevision,
       }
       : {}),
+    ...(config.features.contextArtifacts && config.features.filesystemWorkspace
+      ? {
+        workspaceRevisionId: agentRevisionId(
+          config.developmentIdentity.workspaceAgentRevisionId,
+        ),
+      }
+      : {}),
     activeRevisionId: agentRevisionId(config.developmentIdentity.activeAgentRevisionId),
     name: 'Development Agent',
   };
@@ -249,6 +258,7 @@ export function loadServerConfig(
   if (environmentInput.CMASTER_CONTEXT_ARTIFACTS_ENABLED !== 'true') {
     for (const key of [
       'CMASTER_DEV_CONTEXT_ARTIFACT_AGENT_REVISION_ID',
+      'CMASTER_DEV_WORKSPACE_AGENT_REVISION_ID',
       'CMASTER_CONTEXT_PRIMARY_MODEL_PROFILE_ID',
       'CMASTER_CONTEXT_FALLBACK_MODEL_PROFILE_ID',
       'CMASTER_PRIMARY_MODEL_CONTEXT_WINDOW_TOKENS',
@@ -332,6 +342,10 @@ export function loadServerConfig(
     if (previousAgentRevisionIds.includes(parsed.CMASTER_DEV_CONTEXT_ARTIFACT_AGENT_REVISION_ID)) {
       throw new Error('Context-enabled Agent Revision ID must be distinct from earlier Slices');
     }
+    if ([...previousAgentRevisionIds, parsed.CMASTER_DEV_CONTEXT_ARTIFACT_AGENT_REVISION_ID]
+      .includes(parsed.CMASTER_DEV_WORKSPACE_AGENT_REVISION_ID)) {
+      throw new Error('Workspace-enabled Agent Revision ID must be distinct from earlier Slices');
+    }
     const previousModelProfileIds = [
       parsed.CMASTER_PRIMARY_MODEL_PROFILE_ID,
       parsed.CMASTER_FALLBACK_MODEL_PROFILE_ID,
@@ -349,7 +363,10 @@ export function loadServerConfig(
   }
 
   const runtimeTier = parsed.CMASTER_CONTEXT_ARTIFACTS_ENABLED
-    ? 'context'
+    && parsed.CMASTER_FILESYSTEM_WORKSPACE_ENABLED
+    ? 'workspace'
+    : parsed.CMASTER_CONTEXT_ARTIFACTS_ENABLED
+      ? 'context'
     : parsed.CMASTER_TOOL_RUNTIME_ENABLED
       ? 'tools'
       : parsed.CMASTER_AI_SDK_RUNTIME_ENABLED
@@ -373,6 +390,11 @@ export function loadServerConfig(
     },
     context: {
       agentRevisionId: parsed.CMASTER_DEV_CONTEXT_ARTIFACT_AGENT_REVISION_ID,
+      primaryModelProfileId: parsed.CMASTER_CONTEXT_PRIMARY_MODEL_PROFILE_ID,
+      fallbackModelProfileId: parsed.CMASTER_CONTEXT_FALLBACK_MODEL_PROFILE_ID,
+    },
+    workspace: {
+      agentRevisionId: parsed.CMASTER_DEV_WORKSPACE_AGENT_REVISION_ID,
       primaryModelProfileId: parsed.CMASTER_CONTEXT_PRIMARY_MODEL_PROFILE_ID,
       fallbackModelProfileId: parsed.CMASTER_CONTEXT_FALLBACK_MODEL_PROFILE_ID,
     },
@@ -410,6 +432,7 @@ export function loadServerConfig(
       aiSdkAgentRevisionId: parsed.CMASTER_DEV_AI_AGENT_REVISION_ID,
       toolAgentRevisionId: parsed.CMASTER_DEV_TOOL_AGENT_REVISION_ID,
       contextArtifactAgentRevisionId: parsed.CMASTER_DEV_CONTEXT_ARTIFACT_AGENT_REVISION_ID,
+      workspaceAgentRevisionId: parsed.CMASTER_DEV_WORKSPACE_AGENT_REVISION_ID,
       activeAgentRevisionId: runtimeConfiguration.agentRevisionId,
       ...(parsed.CMASTER_CONTEXT_ARTIFACTS_ENABLED
         ? { contextPolicyRevision: slice4BaselineContextPolicy.revision }

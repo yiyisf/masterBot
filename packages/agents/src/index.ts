@@ -28,6 +28,7 @@ export interface DevelopmentAgentConfig {
   aiSdkRevisionId?: AgentRevisionId;
   toolRevisionId?: AgentRevisionId;
   contextArtifactRevisionId?: AgentRevisionId;
+  workspaceRevisionId?: AgentRevisionId;
   contextPolicyRevision?: ContextPolicyRevision;
   activeRevisionId: AgentRevisionId;
   name: string;
@@ -54,9 +55,9 @@ interface RevisionRow {
 
 interface GovernedRevisionConfiguration {
   revisionId: AgentRevisionId;
-  revisionNumber: 3 | 4;
+  revisionNumber: 3 | 4 | 5;
   contextPolicyRevision: ContextPolicyRevision | null;
-  description: 'Tool-enabled' | 'Context-enabled';
+  description: 'Tool-enabled' | 'Context-enabled' | 'Workspace-enabled';
 }
 
 async function provisionGovernedRevision(
@@ -100,15 +101,18 @@ export class PostgresAgentModule implements AgentModule {
 
   async provision(organizationId: OrganizationId): Promise<void> {
     const hasContextRevision = this.config.contextArtifactRevisionId !== undefined;
+    const hasWorkspaceRevision = this.config.workspaceRevisionId !== undefined;
     const hasContextPolicy = this.config.contextPolicyRevision !== undefined;
-    if (hasContextRevision !== hasContextPolicy) {
-      throw new Error('Context-enabled Agent Revision and Context Policy must be configured together');
+    if (hasContextRevision !== hasContextPolicy
+      || (hasWorkspaceRevision && (!hasContextRevision || !hasContextPolicy))) {
+      throw new Error('Context-enabled Agent Revisions and Context Policy must be configured together');
     }
     const configuredRevisionIds = [
       this.config.echoRevisionId,
       this.config.aiSdkRevisionId,
       this.config.toolRevisionId,
       this.config.contextArtifactRevisionId,
+      this.config.workspaceRevisionId,
     ];
     if (!configuredRevisionIds.includes(this.config.activeRevisionId)) {
       throw new Error('Active Development Agent Revision must be provisioned');
@@ -157,6 +161,14 @@ export class PostgresAgentModule implements AgentModule {
           revisionNumber: 4,
           contextPolicyRevision: this.config.contextPolicyRevision,
           description: 'Context-enabled',
+        });
+      }
+      if (this.config.workspaceRevisionId && this.config.contextPolicyRevision) {
+        await provisionGovernedRevision(client, organizationId, this.config.agentId, {
+          revisionId: this.config.workspaceRevisionId,
+          revisionNumber: 5,
+          contextPolicyRevision: this.config.contextPolicyRevision,
+          description: 'Workspace-enabled',
         });
       }
       // 临时开发激活策略：Feature Flag 选择不可变 Revision；正式发布/回滚流程留待 Agent Admin Slice。
