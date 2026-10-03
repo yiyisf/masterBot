@@ -126,6 +126,26 @@ describe('loadServerConfig', () => {
       contextLimits: { contextWindowTokens: 131072, maxOutputTokens: 16384 },
     });
 
+    const workspaceEnabled = loadServerConfig({
+      ...base,
+      CMASTER_CONTEXT_ARTIFACTS_ENABLED: 'true',
+      CMASTER_FILESYSTEM_WORKSPACE_ENABLED: 'true',
+      CMASTER_PRIMARY_MODEL_CONTEXT_WINDOW_TOKENS: '131072',
+    }, []);
+    expect(workspaceEnabled.developmentIdentity.activeAgentRevisionId)
+      .toBe('00000000-0000-4000-8000-000000000018');
+    expect(resolveDevelopmentAgentConfig(workspaceEnabled)).toMatchObject({
+      workspaceRevisionId: '00000000-0000-4000-8000-000000000018',
+      activeRevisionId: '00000000-0000-4000-8000-000000000018',
+    });
+    expect(() => loadServerConfig({
+      ...base,
+      CMASTER_CONTEXT_ARTIFACTS_ENABLED: 'true',
+      CMASTER_FILESYSTEM_WORKSPACE_ENABLED: 'true',
+      CMASTER_PRIMARY_MODEL_CONTEXT_WINDOW_TOKENS: '131072',
+      CMASTER_DEV_WORKSPACE_AGENT_REVISION_ID: '00000000-0000-4000-8000-000000000015',
+    }, [])).toThrow('Workspace-enabled Agent Revision ID must be distinct');
+
     expect(() => loadServerConfig({
       ...base,
       CMASTER_CONTEXT_ARTIFACTS_ENABLED: 'true',

@@ -23,6 +23,7 @@ import {
   PostgresWorkspaceWorkingRoots,
   InvalidWorkspaceChangeSetError,
   WorkspaceChangeConflictError,
+  WorkspaceChangeSetUnavailableError,
   WorkspaceIdempotencyConflictError,
   WorkspaceNotFoundError,
   WorkspaceOperationModeDeniedError,
@@ -154,6 +155,40 @@ describe('PostgreSQL Workspace Change Sets', () => {
       },
     });
     expect(JSON.stringify(first)).not.toMatch(/storageRoot|export const|cmaster-change-sets/i);
+    await expect(changes.getApplyAuthority(
+      owner.resolveRequest(), invocationId, first.value.id,
+    )).resolves.toEqual({
+      changeSetId: first.value.id,
+      invocationId,
+      currentOperationMode: 'edit_with_confirmation',
+      maximumOperationMode: 'edit_with_confirmation',
+    });
+    await expect(changes.getApplyAuthority(
+      owner.resolveRequest(), workspaceInvocationId(randomUUID()), first.value.id,
+    )).rejects.toBeInstanceOf(WorkspaceNotFoundError);
+    await expect(changes.getApplyAuthority(
+      colleague.resolveRequest(), invocationId, first.value.id,
+    )).rejects.toBeInstanceOf(WorkspaceNotFoundError);
+    await pool.query(
+      `UPDATE workspaces SET operation_mode = 'observe'
+       WHERE organization_id = $1 AND id = $2`,
+      [organization, workspace.id],
+    );
+    await expect(changes.getApplyAuthority(
+      owner.resolveRequest(), invocationId, first.value.id,
+    )).resolves.toMatchObject({
+      currentOperationMode: 'observe',
+      maximumOperationMode: 'edit_with_confirmation',
+    });
+    await expect(changes.apply(owner.resolveRequest(), {
+      commandId: workspaceChangeCommandId(randomUUID()),
+      changeSetId: first.value.id,
+    })).rejects.toBeInstanceOf(WorkspaceOperationModeDeniedError);
+    await pool.query(
+      `UPDATE workspaces SET operation_mode = 'edit_with_confirmation'
+       WHERE organization_id = $1 AND id = $2`,
+      [organization, workspace.id],
+    );
     await expect(changes.get(colleague.resolveRequest(), first.value.id))
       .rejects.toBeInstanceOf(WorkspaceNotFoundError);
     await expect(changes.propose(colleague.resolveRequest(), {
@@ -293,6 +328,72 @@ describe('PostgreSQL Workspace Change Sets', () => {
       commandId: workspaceChangeCommandId(randomUUID()),
       changeSetId: conflicting[1]!.value.id,
     })).rejects.toBeInstanceOf(WorkspaceChangeConflictError);
+
+    const releasedInvocation = workspaceInvocationId(randomUUID());
+    const currentWorkspace = await new PostgresWorkspaceCatalog(pool).get(
+      owner.resolveRequest(), workspace.id,
+    );
+    const currentRoot = currentWorkspace.defaultWorkingRoot;
+    if (!currentRoot) throw new Error('Expected the current Working Root');
+    await environments.prepare(owner.resolveRequest(), {
+      invocationId: releasedInvocation,
+      workspaceId: workspace.id,
+      workingRootId: root.id,
+      revisionId: currentRoot.currentRevisionId,
+    });
+    const releasedProposal = await changes.propose(owner.resolveRequest(), {
+      commandId: workspaceChangeCommandId(randomUUID()),
+      invocationId: releasedInvocation,
+      workspaceId: workspace.id,
+      workingRootId: root.id,
+      baseRevisionId: currentRoot.currentRevisionId,
+      entries: [{ kind: 'add', path: 'released.txt',
+        mediaType: 'text/plain; charset=utf-8', content: Buffer.from('released\n') }],
+    });
+    await environments.release(owner.resolveRequest(), releasedInvocation);
+    await expect(changes.getApplyAuthority(
+      owner.resolveRequest(), releasedInvocation, releasedProposal.value.id,
+    )).rejects.toBeInstanceOf(WorkspaceChangeSetUnavailableError);
+    await expect(changes.apply(owner.resolveRequest(), {
+      commandId: workspaceChangeCommandId(randomUUID()),
+      changeSetId: releasedProposal.value.id,
+    })).rejects.toBeInstanceOf(WorkspaceChangeSetUnavailableError);
+
+    const archivedInvocation = workspaceInvocationId(randomUUID());
+    await environments.prepare(owner.resolveRequest(), {
+      invocationId: archivedInvocation,
+      workspaceId: workspace.id,
+      workingRootId: root.id,
+      revisionId: currentRoot.currentRevisionId,
+    });
+    const archivedProposal = await changes.propose(owner.resolveRequest(), {
+      commandId: workspaceChangeCommandId(randomUUID()),
+      invocationId: archivedInvocation,
+      workspaceId: workspace.id,
+      workingRootId: root.id,
+      baseRevisionId: currentRoot.currentRevisionId,
+      entries: [{ kind: 'add', path: 'archived.txt',
+        mediaType: 'text/plain; charset=utf-8', content: Buffer.from('archived\n') }],
+    });
+    await pool.query(
+      `UPDATE workspaces SET lifecycle_status = 'archived'
+       WHERE organization_id = $1 AND id = $2`,
+      [organization, workspace.id],
+    );
+    await expect(changes.getApplyAuthority(
+      owner.resolveRequest(), archivedInvocation, archivedProposal.value.id,
+    )).rejects.toBeInstanceOf(WorkspaceChangeSetUnavailableError);
+    await expect(changes.apply(owner.resolveRequest(), {
+      commandId: workspaceChangeCommandId(randomUUID()),
+      changeSetId: archivedProposal.value.id,
+    })).rejects.toBeInstanceOf(WorkspaceChangeSetUnavailableError);
+    await pool.query(
+      `UPDATE workspaces SET lifecycle_status = 'ready'
+       WHERE organization_id = $1 AND id = $2`,
+      [organization, workspace.id],
+    );
+    await environments.release(owner.resolveRequest(), archivedInvocation);
+
     await environments.release(owner.resolveRequest(), invocationId);
     await environments.release(owner.resolveRequest(), parallelInvocation);
     for (const conflictingInvocation of conflictInvocations) {
@@ -474,5 +575,37 @@ describe('PostgreSQL Workspace Change Sets', () => {
     ], { encoding: 'utf8' });
     expect(branchAfter.trim()).toBe(branchBefore.trim());
     await environments.release(owner.resolveRequest(), secondInvocation);
+
+    const thirdInvocation = workspaceInvocationId(randomUUID());
+    const resultingRevisionId = reapplied.value.resultingRevisionId;
+    if (!resultingRevisionId) throw new Error('Expected resulting Git Revision');
+    await environments.prepare(owner.resolveRequest(), {
+      invocationId: thirdInvocation,
+      workspaceId: workspace.id,
+      workingRootId: root.id,
+      revisionId: resultingRevisionId,
+    });
+    const archivedProposal = await changes.propose(owner.resolveRequest(), {
+      commandId: workspaceChangeCommandId(randomUUID()),
+      invocationId: thirdInvocation,
+      workspaceId: workspace.id,
+      workingRootId: root.id,
+      baseRevisionId: resultingRevisionId,
+      entries: [{ kind: 'modify', path: 'README.md',
+        mediaType: 'text/markdown; charset=utf-8', content: Buffer.from('# Archived\n') }],
+    });
+    await pool.query(
+      `UPDATE workspace_git_worktrees SET lifecycle_status = 'archived'
+       WHERE organization_id = $1 AND working_root_id = $2`,
+      [organization, root.id],
+    );
+    await expect(changes.getApplyAuthority(
+      owner.resolveRequest(), thirdInvocation, archivedProposal.value.id,
+    )).rejects.toBeInstanceOf(WorkspaceChangeSetUnavailableError);
+    await expect(changes.apply(owner.resolveRequest(), {
+      commandId: workspaceChangeCommandId(randomUUID()),
+      changeSetId: archivedProposal.value.id,
+    })).rejects.toBeInstanceOf(WorkspaceChangeSetUnavailableError);
+    await environments.release(owner.resolveRequest(), thirdInvocation);
   });
 });

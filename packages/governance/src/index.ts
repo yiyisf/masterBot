@@ -6,6 +6,13 @@ import type { OrganizationId, PrincipalId } from '@cmaster/identity';
 
 export const GOVERNED_TOOL_ENTITLEMENT = 'enterprise_assistant.use_governed_tools';
 export const SLICE3_POLICY_VERSION = 'slice3-baseline-v1';
+export const WORKSPACE_CHANGE_APPLY_POLICY_VERSION = 'slice6-workspace-change-apply-v1';
+
+export type PolicyResource = {
+  kind: 'workspace_change_apply';
+  currentOperationMode: 'observe' | 'edit_with_confirmation' | 'trusted_automation';
+  maximumOperationMode: 'observe' | 'edit_with_confirmation' | 'trusted_automation';
+};
 
 export interface PolicyRequest {
   organizationId: OrganizationId;
@@ -15,22 +22,24 @@ export interface PolicyRequest {
   agentGranted: boolean;
   toolRevisionActive: boolean;
   capabilityId: string;
+  resource?: PolicyResource;
 }
 
 export type PolicyDecision =
   | {
     effect: 'deny';
-    policyVersion: typeof SLICE3_POLICY_VERSION;
+    policyVersion: typeof SLICE3_POLICY_VERSION | typeof WORKSPACE_CHANGE_APPLY_POLICY_VERSION;
     reason:
       | 'missing_principal_entitlement'
       | 'agent_tool_not_granted'
       | 'tool_revision_inactive'
+      | 'workspace_operation_mode_denied'
       | 'unknown_tool_capability';
     obligations: readonly [];
   }
   | {
     effect: 'allow';
-    policyVersion: typeof SLICE3_POLICY_VERSION;
+    policyVersion: typeof SLICE3_POLICY_VERSION | typeof WORKSPACE_CHANGE_APPLY_POLICY_VERSION;
     reason: 'baseline_tool_allowed';
     obligations: readonly [] | readonly [{ kind: 'employee_confirmation' }];
   };
@@ -39,7 +48,7 @@ export interface PolicyModule {
   evaluate(request: PolicyRequest): Promise<PolicyDecision>;
 }
 
-/** Evaluates the fixed, deny-by-default Policy for the first governed Tool slice. */
+/** Evaluates the fixed, deny-by-default Policy for governed Tool capabilities. */
 export class Slice3BaselinePolicy implements PolicyModule {
   async evaluate(request: PolicyRequest): Promise<PolicyDecision> {
     if (!request.principalEntitlements.includes(GOVERNED_TOOL_ENTITLEMENT)) {
@@ -64,6 +73,34 @@ export class Slice3BaselinePolicy implements PolicyModule {
         policyVersion: SLICE3_POLICY_VERSION,
         reason: 'tool_revision_inactive',
         obligations: [],
+      };
+    }
+    if (request.capabilityId === 'cmaster.workspace.apply_changes:v1') {
+      if (request.resource?.kind !== 'workspace_change_apply') {
+        return {
+          effect: 'deny',
+          policyVersion: WORKSPACE_CHANGE_APPLY_POLICY_VERSION,
+          reason: 'unknown_tool_capability',
+          obligations: [],
+        };
+      }
+      if (request.resource.currentOperationMode === 'observe'
+        || request.resource.maximumOperationMode === 'observe') {
+        return {
+          effect: 'deny',
+          policyVersion: WORKSPACE_CHANGE_APPLY_POLICY_VERSION,
+          reason: 'workspace_operation_mode_denied',
+          obligations: [],
+        };
+      }
+      return {
+        effect: 'allow',
+        policyVersion: WORKSPACE_CHANGE_APPLY_POLICY_VERSION,
+        reason: 'baseline_tool_allowed',
+        obligations: request.resource.currentOperationMode === 'trusted_automation'
+          && request.resource.maximumOperationMode === 'trusted_automation'
+          ? []
+          : [{ kind: 'employee_confirmation' }],
       };
     }
     if (request.capabilityId === 'cmaster.utility.current_time:v1'

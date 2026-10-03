@@ -2400,6 +2400,7 @@ export {
   type ApplyWorkspaceChangeSet,
   type ProposeWorkspaceChangeSet,
   type WorkspaceChangeCommandId,
+  type WorkspaceChangeApplyAuthority,
   type WorkspaceChangeCommandResult,
   type WorkspaceChangeEntry,
   type WorkspaceChangeInput,

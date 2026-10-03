@@ -11,12 +11,17 @@ import {
   type ToolProviderRequest,
   type ToolDescriptor,
   type ToolOutcome,
+  type ToolPolicyResourceRequest,
   type ToolProviderResult,
 } from '@cmaster/tools';
 import {
+  WorkspaceChangeConflictError,
   workspaceChangeCommandId,
   workspaceInvocationId,
   workspaceOverlayCommandId,
+  type WorkspaceChangeSet,
+  type WorkspaceChangeSetId,
+  type WorkspaceChanges,
   type WorkspaceFileContent,
   type WorkspaceRunEnvironments,
 } from '@cmaster/workspaces';
@@ -28,7 +33,9 @@ export const OPEN_WORKSPACE_FILE_CAPABILITY_ID = 'cmaster.workspace.open_file:v1
 export const WRITE_WORKSPACE_FILE_CAPABILITY_ID = 'cmaster.workspace.write_file:v1';
 export const DELETE_WORKSPACE_FILE_CAPABILITY_ID = 'cmaster.workspace.delete_file:v1';
 export const PROPOSE_WORKSPACE_CHANGES_CAPABILITY_ID = 'cmaster.workspace.propose_changes:v1';
+export const APPLY_WORKSPACE_CHANGES_CAPABILITY_ID = 'cmaster.workspace.apply_changes:v1';
 export const WORKSPACE_FILE_TOOL_PROVIDER_KEY = 'builtin:workspace-files';
+export const WORKSPACE_CHANGE_APPLY_TOOL_PROVIDER_KEY = 'builtin:workspace-change-apply';
 const maximumToolOpenBytes = 8 * 1024;
 const maximumToolWriteCharacters = 16 * 1024;
 
@@ -218,9 +225,46 @@ export function workspaceFileToolCatalog(
         effect: 'idempotent_write', recovery: 'retry_same_call', risks: ['handles_sensitive_data'],
         providerKey: WORKSPACE_FILE_TOOL_PROVIDER_KEY,
       },
+      {
+        id: toolRevisionId(catalogId(organizationId, APPLY_WORKSPACE_CHANGES_CAPABILITY_ID)),
+        capabilityId: APPLY_WORKSPACE_CHANGES_CAPABILITY_ID,
+        name: 'workspace_apply_changes',
+        description: 'Applies one exact immutable Workspace Change Set through the centralized write path.',
+        inputSchema: {
+          type: 'object', required: ['changeSetId'], additionalProperties: false,
+          properties: { changeSetId: { type: 'string', minLength: 1 } },
+        },
+        outputSchema: {
+          type: 'object',
+          required: ['changeSetId', 'workspaceId', 'workingRootId', 'baseRevisionId',
+            'status', 'entries'],
+          additionalProperties: false,
+          properties: {
+            changeSetId: { type: 'string' },
+            workspaceId: { type: 'string' },
+            workingRootId: { type: 'string' },
+            baseRevisionId: { type: 'string' },
+            status: { enum: ['applied', 'conflicted'] },
+            resultingRevisionId: { type: 'string' },
+            entries: {
+              type: 'array', minItems: 1, maxItems: 100,
+              items: {
+                type: 'object', required: ['kind', 'path'], additionalProperties: false,
+                properties: {
+                  kind: { enum: ['add', 'modify', 'delete'] },
+                  ...workspaceFileEntryProperties,
+                },
+              },
+            },
+          },
+        },
+        effect: 'idempotent_write', recovery: 'retry_same_call',
+        risks: ['destructive', 'handles_sensitive_data'],
+        providerKey: WORKSPACE_CHANGE_APPLY_TOOL_PROVIDER_KEY,
+      },
     ],
     grants: [{
-      id: toolGrantId(catalogId(organizationId, 'workspace-file-tool-grant')),
+      id: toolGrantId(catalogId(organizationId, 'workspace-file-tool-grant-apply-v1')),
       agentRevisionId,
       capabilityIds: [
         LIST_WORKSPACE_FILES_CAPABILITY_ID,
@@ -229,6 +273,7 @@ export function workspaceFileToolCatalog(
         WRITE_WORKSPACE_FILE_CAPABILITY_ID,
         DELETE_WORKSPACE_FILE_CAPABILITY_ID,
         PROPOSE_WORKSPACE_CHANGES_CAPABILITY_ID,
+        APPLY_WORKSPACE_CHANGES_CAPABILITY_ID,
       ],
     }],
   };
@@ -325,6 +370,85 @@ function openedFile(value: unknown): WorkspaceFileContent {
     encoding: 'utf8',
     content: value.content,
   };
+}
+
+export class WorkspaceChangeApplyToolProvider implements ToolProvider {
+  readonly key = WORKSPACE_CHANGE_APPLY_TOOL_PROVIDER_KEY;
+
+  constructor(
+    private readonly changes: Pick<WorkspaceChanges, 'apply' | 'get' | 'getApplyAuthority'>,
+  ) {}
+
+  summarize(input: unknown) {
+    const value = objectInput(input);
+    return {
+      title: 'Apply Workspace changes',
+      details: {
+        changeSetId: typeof value.changeSetId === 'string' ? value.changeSetId : 'invalid',
+      },
+    };
+  }
+
+  async resolvePolicyResource(request: ToolPolicyResourceRequest) {
+    const input = objectInput(request.input);
+    if (typeof input.changeSetId !== 'string') {
+      throw new Error('Workspace Change Set ID is required');
+    }
+    const authority = await this.changes.getApplyAuthority(
+      request.identity,
+      workspaceInvocationId(request.invocationId),
+      input.changeSetId as WorkspaceChangeSetId,
+    );
+    return {
+      kind: 'workspace_change_apply' as const,
+      currentOperationMode: authority.currentOperationMode,
+      maximumOperationMode: authority.maximumOperationMode,
+    };
+  }
+
+  async execute(request: ToolProviderRequest): Promise<ToolProviderResult> {
+    const input = objectInput(request.input);
+    if (typeof input.changeSetId !== 'string') {
+      throw new Error('Workspace Change Set ID is required');
+    }
+    const identity = identityFrom(request);
+    const changeSetId = input.changeSetId as WorkspaceChangeSetId;
+    let changeSet: WorkspaceChangeSet;
+    try {
+      changeSet = (await this.changes.apply(identity, {
+        commandId: workspaceChangeCommandId(request.toolCallId),
+        changeSetId,
+      })).value;
+    } catch (error) {
+      if (!(error instanceof WorkspaceChangeConflictError)) throw error;
+      changeSet = await this.changes.get(identity, changeSetId);
+    }
+    const value = {
+      changeSetId: changeSet.id,
+      workspaceId: changeSet.workspaceId,
+      workingRootId: changeSet.workingRootId,
+      baseRevisionId: changeSet.baseRevisionId,
+      status: changeSet.status,
+      entries: changeSet.entries,
+      ...(changeSet.resultingRevisionId
+        ? { resultingRevisionId: changeSet.resultingRevisionId }
+        : {}),
+    };
+    return {
+      kind: 'success',
+      value,
+      safeSummary: {
+        title: changeSet.status === 'conflicted'
+          ? 'Workspace changes conflicted'
+          : 'Workspace changes applied',
+        details: {
+          changeSetId: changeSet.id,
+          status: changeSet.status,
+          files: String(changeSet.entries.length),
+        },
+      },
+    };
+  }
 }
 
 export class WorkspaceFileToolProvider implements ToolProvider {

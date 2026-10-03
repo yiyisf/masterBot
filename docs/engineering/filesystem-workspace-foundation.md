@@ -95,11 +95,13 @@ A Change Set proposal is bound to one prepared Invocation, exact Workspace/Worki
 
 Applied empty/non-Git roots use immutable Workspace Content Storage snapshots. Git-backed roots use deterministic Git snapshot objects retained by server-owned private refs as specified by ADR-0048, preserving ignored and unsupported repository bytes while leaving Employee branches, remotes, and Worktrees unchanged. Snapshot reads reapply ignore policy and verify path, type, size, and SHA-256. No Change Set content, storage path, Git object identifier, or credential enters Browser Contracts or Model-facing output.
 
-`WorkspaceChanges.apply` is currently a trusted package-root command seam only. Approval binding, Operation Mode auto-approval, apply Tool mounting, and Employee confirmation UI remain disabled until the governed orchestration slice. Current Observe mode rejects every pending overlay mutation/proposal immediately, and an environment that captured Observe remains read-only after later elevation.
+When Filesystem Workspace and Context are both enabled, `CMASTER_DEV_WORKSPACE_AGENT_REVISION_ID` selects a new immutable Workspace-enabled Agent Revision; existing Context Agent Revisions and Tool Grants are never mutated.
+
+`workspace_apply_changes` is a separate governed ToolCall from proposal and is the only mounted path to `WorkspaceChanges.apply`. The Tool Provider resolves the exact Change Set and current/captured Operation Modes server-side before both initial authorization and confirmation resume. Governance records `slice6-workspace-change-apply-v1` and requires Employee Confirmation unless both modes are `trusted_automation`; either Observe mode denies. The existing Tool Approval subject binds the immutable apply ToolCall request hash, while the apply Command reuses the stable ToolCall ID. Rejection resumes with a denied Tool outcome and never changes the Working Root; approval or Trusted Automation uses the same idempotent apply receipt and returns the authoritative applied or conflicted Change Set.
 
 ## Explicitly absent
 
-This slice does not add arbitrary Shell/process execution, network-enabled Sandbox capabilities, shared-content apply Tools, Change Set Approval/UI orchestration, Conversation/Run/Artifact product routing scope, Git ref commit/push/PR/merge delivery, Pending composition, Worktree deletion, or the replacement Employee Experience.
+This slice does not add arbitrary Shell/process execution, network-enabled Sandbox capabilities, Browser Change Set review/editing UI, Operation Mode management UI, Conversation/Run/Artifact product routing scope, Git ref commit/push/PR/merge delivery, Worktree deletion, or the replacement Employee Experience.
 
 ## Verification
 

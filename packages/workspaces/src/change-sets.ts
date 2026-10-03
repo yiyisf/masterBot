@@ -10,6 +10,7 @@ import {
   WorkspaceNotFoundError,
   type WorkingRootId,
   type WorkspaceId,
+  type WorkspaceOperationMode,
   type WorkspaceRevisionId,
 } from './workspace-types.js';
 import type { WorkspaceInvocationId } from './run-environments.js';
@@ -94,6 +95,13 @@ export interface WorkspaceChangeSetPage {
   readonly nextCursor?: string;
 }
 
+export interface WorkspaceChangeApplyAuthority {
+  readonly changeSetId: WorkspaceChangeSetId;
+  readonly invocationId: WorkspaceInvocationId;
+  readonly currentOperationMode: WorkspaceOperationMode;
+  readonly maximumOperationMode: WorkspaceOperationMode;
+}
+
 export interface WorkspaceChanges {
   propose(
     identity: RequestIdentity,
@@ -103,6 +111,11 @@ export interface WorkspaceChanges {
     identity: RequestIdentity,
     command: ApplyWorkspaceChangeSet,
   ): Promise<WorkspaceChangeCommandResult>;
+  getApplyAuthority(
+    identity: RequestIdentity,
+    invocationId: WorkspaceInvocationId,
+    changeSetId: WorkspaceChangeSetId,
+  ): Promise<WorkspaceChangeApplyAuthority>;
   list(identity: RequestIdentity, scope: {
     readonly workspaceId: WorkspaceId;
     readonly workingRootId: WorkingRootId;
@@ -159,6 +172,7 @@ interface ApplyingChangeSetRow {
   readonly base_revision_id: string;
   readonly operation_mode: 'observe' | 'edit_with_confirmation' | 'trusted_automation';
   readonly maximum_operation_mode: 'observe' | 'edit_with_confirmation' | 'trusted_automation';
+  readonly environment_status: 'preparing' | 'prepared' | 'released' | 'failed';
   readonly workspace_lifecycle_status: 'provisioning' | 'ready' | 'failed' | 'archived';
   readonly worktree_archived: boolean;
   readonly status: WorkspaceChangeSet['status'];
@@ -591,6 +605,7 @@ export class PostgresWorkspaceChanges implements WorkspaceChanges {
       const selected = await client.query<ApplyingChangeSetRow>(
         `SELECT cs.workspace_id, cs.working_root_id, cs.base_revision_id,
                 w.operation_mode, env.maximum_operation_mode,
+                env.status AS environment_status,
                 w.lifecycle_status AS workspace_lifecycle_status,
                 EXISTS (
                   SELECT 1 FROM workspace_git_worktrees wt
@@ -616,6 +631,9 @@ export class PostgresWorkspaceChanges implements WorkspaceChanges {
       if (changeSet.operation_mode === 'observe'
         || changeSet.maximum_operation_mode === 'observe') {
         throw new WorkspaceOperationModeDeniedError();
+      }
+      if (changeSet.environment_status !== 'prepared') {
+        throw new WorkspaceChangeSetUnavailableError();
       }
       if (changeSet.workspace_lifecycle_status !== 'ready'
         || changeSet.worktree_archived) {
@@ -884,6 +902,53 @@ export class PostgresWorkspaceChanges implements WorkspaceChanges {
         client.release();
       }
     }
+  }
+
+  async getApplyAuthority(
+    identity: RequestIdentity,
+    invocationId: WorkspaceInvocationId,
+    changeSetId: WorkspaceChangeSetId,
+  ): Promise<WorkspaceChangeApplyAuthority> {
+    const selected = await this.pool.query<{
+      readonly invocation_id: string;
+      readonly operation_mode: WorkspaceOperationMode;
+      readonly maximum_operation_mode: WorkspaceOperationMode;
+      readonly environment_status: string;
+      readonly workspace_lifecycle_status: string;
+      readonly worktree_archived: boolean;
+    }>(
+      `SELECT cs.invocation_id, w.operation_mode, env.maximum_operation_mode,
+              env.status AS environment_status,
+              w.lifecycle_status AS workspace_lifecycle_status,
+              EXISTS (
+                SELECT 1 FROM workspace_git_worktrees wt
+                WHERE wt.organization_id = cs.organization_id
+                  AND wt.working_root_id = cs.working_root_id
+                  AND wt.lifecycle_status = 'archived'
+              ) AS worktree_archived
+       FROM workspace_change_sets cs
+       JOIN workspaces w
+         ON w.organization_id = cs.organization_id AND w.id = cs.workspace_id
+       JOIN workspace_run_environments env
+         ON env.organization_id = cs.organization_id
+        AND env.owner_principal_id = cs.owner_principal_id
+        AND env.invocation_id = cs.invocation_id
+       WHERE cs.organization_id = $1 AND cs.owner_principal_id = $2
+         AND cs.id = $3 AND cs.invocation_id = $4`,
+      [identity.organizationId, identity.principalId, changeSetId, invocationId],
+    );
+    const authority = selected.rows[0];
+    if (!authority) throw new WorkspaceNotFoundError();
+    if (authority.environment_status !== 'prepared'
+      || authority.workspace_lifecycle_status !== 'ready' || authority.worktree_archived) {
+      throw new WorkspaceChangeSetUnavailableError();
+    }
+    return {
+      changeSetId,
+      invocationId: authority.invocation_id as WorkspaceInvocationId,
+      currentOperationMode: authority.operation_mode,
+      maximumOperationMode: authority.maximum_operation_mode,
+    };
   }
 
   async list(

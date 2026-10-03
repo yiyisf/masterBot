@@ -97,6 +97,58 @@ describe('Slice3BaselinePolicy', () => {
     }
   });
 
+  it('requires confirmation for Workspace apply unless current and captured modes are trusted', async () => {
+    const policy = new Slice3BaselinePolicy();
+    const base = {
+      organizationId: organizationId('10000000-0000-4000-8000-000000000001'),
+      principalId: principalId('20000000-0000-4000-8000-000000000001'),
+      agentRevisionId: agentRevisionId('30000000-0000-4000-8000-000000000001'),
+      principalEntitlements: ['enterprise_assistant.use_governed_tools'],
+      agentGranted: true,
+      toolRevisionActive: true,
+      capabilityId: 'cmaster.workspace.apply_changes:v1',
+    } as const;
+
+    await expect(policy.evaluate({
+      ...base,
+      resource: {
+        kind: 'workspace_change_apply',
+        currentOperationMode: 'edit_with_confirmation',
+        maximumOperationMode: 'trusted_automation',
+      },
+    })).resolves.toMatchObject({
+      effect: 'allow', obligations: [{ kind: 'employee_confirmation' }],
+    });
+    await expect(policy.evaluate({
+      ...base,
+      resource: {
+        kind: 'workspace_change_apply',
+        currentOperationMode: 'trusted_automation',
+        maximumOperationMode: 'trusted_automation',
+      },
+    })).resolves.toMatchObject({
+      effect: 'allow',
+      policyVersion: 'slice6-workspace-change-apply-v1',
+      obligations: [],
+    });
+    for (const resource of [
+      {
+        kind: 'workspace_change_apply' as const,
+        currentOperationMode: 'observe' as const,
+        maximumOperationMode: 'trusted_automation' as const,
+      },
+      {
+        kind: 'workspace_change_apply' as const,
+        currentOperationMode: 'trusted_automation' as const,
+        maximumOperationMode: 'observe' as const,
+      },
+    ]) {
+      await expect(policy.evaluate({ ...base, resource })).resolves.toMatchObject({
+        effect: 'deny', reason: 'workspace_operation_mode_denied',
+      });
+    }
+  });
+
   it('requires Employee Confirmation for the allowlisted HTTP fetch Capability', async () => {
     const policy = new Slice3BaselinePolicy();
 

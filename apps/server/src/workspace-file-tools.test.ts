@@ -10,14 +10,18 @@ import type {
   ToolProviderRequest,
 } from '@cmaster/tools';
 import {
+  WorkspaceChangeConflictError,
   workspaceInvocationId,
+  type WorkspaceChanges,
   type WorkspaceRunEnvironments,
 } from '@cmaster/workspaces';
 import {
+  APPLY_WORKSPACE_CHANGES_CAPABILITY_ID,
   DELETE_WORKSPACE_FILE_CAPABILITY_ID,
   OPEN_WORKSPACE_FILE_CAPABILITY_ID,
   PROPOSE_WORKSPACE_CHANGES_CAPABILITY_ID,
   WRITE_WORKSPACE_FILE_CAPABILITY_ID,
+  WorkspaceChangeApplyToolProvider,
   WorkspaceFileToolProvider,
   WorkspaceFileToolProvenanceObserver,
   workspaceFileToolCatalog,
@@ -185,7 +189,93 @@ describe('Workspace file Tool Provider', () => {
       WRITE_WORKSPACE_FILE_CAPABILITY_ID,
       DELETE_WORKSPACE_FILE_CAPABILITY_ID,
       PROPOSE_WORKSPACE_CHANGES_CAPABILITY_ID,
+      APPLY_WORKSPACE_CHANGES_CAPABILITY_ID,
     ]);
+  });
+
+  it('applies one exact Change Set with the stable Tool Call identity', async () => {
+    const getApplyAuthority = vi.fn(async () => ({
+      changeSetId: randomUUID(),
+      invocationId: workspaceInvocationId(randomUUID()),
+      currentOperationMode: 'edit_with_confirmation' as const,
+      maximumOperationMode: 'trusted_automation' as const,
+    }));
+    const apply = vi.fn(async (
+      _identity: unknown, _command: unknown,
+    ) => ({
+      value: {
+        id: randomUUID(), workspaceId: randomUUID(), workingRootId: randomUUID(),
+        baseRevisionId: randomUUID(), status: 'applied' as const,
+        resultingRevisionId: randomUUID(),
+        entries: [{ kind: 'modify' as const, path: 'README.md' }],
+      },
+      replayed: false,
+    }));
+    const provider = new WorkspaceChangeApplyToolProvider(
+      { apply, getApplyAuthority } as unknown as WorkspaceChanges,
+    );
+    const toolRequest = request(
+      { changeSetId: randomUUID() }, APPLY_WORKSPACE_CHANGES_CAPABILITY_ID,
+    );
+
+    await expect(provider.resolvePolicyResource!({
+      identity: {
+        organizationId: toolRequest.credentialLease.organizationId,
+        principalId: toolRequest.credentialLease.principalId,
+        principalType: 'employee',
+        displayName: 'Workspace Employee',
+      },
+      revision: toolRequest.revision,
+      runId: toolRequest.runId,
+      invocationId: toolRequest.invocationId,
+      input: toolRequest.input,
+    })).resolves.toEqual({
+      kind: 'workspace_change_apply',
+      currentOperationMode: 'edit_with_confirmation',
+      maximumOperationMode: 'trusted_automation',
+    });
+    await expect(provider.execute(toolRequest)).resolves.toMatchObject({
+      kind: 'success',
+      value: {
+        status: 'applied',
+        resultingRevisionId: expect.any(String),
+        entries: [{ kind: 'modify', path: 'README.md' }],
+      },
+      safeSummary: { title: 'Workspace changes applied' },
+    });
+    expect(apply.mock.calls[0]?.[1]).toEqual({
+      commandId: toolRequest.toolCallId,
+      changeSetId: toolRequest.input && (toolRequest.input as { changeSetId: string }).changeSetId,
+    });
+  });
+
+  it('returns the authoritative conflicted Change Set without a generic Provider failure', async () => {
+    const changeSetId = randomUUID();
+    const apply = vi.fn(async () => {
+      throw new WorkspaceChangeConflictError();
+    });
+    const get = vi.fn(async () => ({
+      id: changeSetId,
+      workspaceId: randomUUID(),
+      workingRootId: randomUUID(),
+      baseRevisionId: randomUUID(),
+      invocationId: workspaceInvocationId(randomUUID()),
+      status: 'conflicted' as const,
+      entries: [{ kind: 'delete' as const, path: 'README.md' }],
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    }));
+    const provider = new WorkspaceChangeApplyToolProvider(
+      { apply, get } as unknown as WorkspaceChanges,
+    );
+
+    await expect(provider.execute(request(
+      { changeSetId }, APPLY_WORKSPACE_CHANGES_CAPABILITY_ID,
+    ))).resolves.toMatchObject({
+      kind: 'success',
+      value: { changeSetId, status: 'conflicted' },
+      safeSummary: { details: { status: 'conflicted' } },
+    });
   });
 
   it('rejects an open result that cannot fit the governed Tool payload boundary', async () => {

@@ -815,4 +815,112 @@ describe('PostgresToolCatalog', () => {
     expect(credentialLeases).toBe(4);
     expect(credentialRevocations).toBe(4);
   });
+
+  it('resolves current Workspace apply authority before invoke and confirmation resume', async () => {
+    const identityModule = new PostgresDevelopmentIdentity(pool, {
+      organizationId: organizationId(randomUUID()),
+      organizationName: `Workspace Apply Policy ${randomUUID()}`,
+      principalId: principalId(randomUUID()),
+      principalDisplayName: 'Workspace Apply Employee',
+    });
+    await identityModule.provision();
+    const identity = identityModule.resolveRequest();
+    const catalog = new PostgresToolCatalog(pool);
+    const revisionId = toolRevisionId(randomUUID());
+    const grantedAgentRevisionId = agentRevisionId(randomUUID());
+    await catalog.provision(identity.organizationId, {
+      revisions: [{
+        id: revisionId,
+        capabilityId: 'cmaster.workspace.apply_changes:v1',
+        name: 'workspace_apply_changes',
+        description: 'Applies one Workspace Change Set.',
+        inputSchema: {
+          type: 'object', required: ['changeSetId'], additionalProperties: false,
+          properties: { changeSetId: { type: 'string' } },
+        },
+        outputSchema: {
+          type: 'object', required: ['status'], additionalProperties: false,
+          properties: { status: { const: 'applied' } },
+        },
+        effect: 'idempotent_write',
+        recovery: 'retry_same_call',
+        risks: ['destructive'],
+        providerKey: 'test:workspace-apply',
+      }],
+      grants: [{
+        id: toolGrantId(randomUUID()),
+        agentRevisionId: grantedAgentRevisionId,
+        capabilityIds: ['cmaster.workspace.apply_changes:v1'],
+      }],
+    });
+    let currentOperationMode: 'observe' | 'edit_with_confirmation' | 'trusted_automation'
+      = 'edit_with_confirmation';
+    let providerCalls = 0;
+    let authorityChecks = 0;
+    const provider: ToolProvider = {
+      key: 'test:workspace-apply',
+      summarize() {
+        return { title: 'Apply Workspace changes', details: { files: '1' } };
+      },
+      async resolvePolicyResource() {
+        authorityChecks += 1;
+        return {
+          kind: 'workspace_change_apply',
+          currentOperationMode,
+          maximumOperationMode: 'trusted_automation',
+        };
+      },
+      async execute() {
+        providerCalls += 1;
+        return {
+          kind: 'success', value: { status: 'applied' },
+          safeSummary: { title: 'Workspace changes applied', details: { files: '1' } },
+        };
+      },
+    };
+    const runtime = new PostgresToolRuntime(
+      pool, new Slice3BaselinePolicy(), new PostgresApprovalModule(pool), [provider],
+    );
+    const baseCommand = {
+      identity,
+      agentRevisionId: grantedAgentRevisionId,
+      principalEntitlements: ['enterprise_assistant.use_governed_tools'],
+      runId: randomUUID(),
+      invocationId: randomUUID(),
+      capabilityId: 'cmaster.workspace.apply_changes:v1',
+      input: { changeSetId: randomUUID() },
+      signal: new AbortController().signal,
+    } as const;
+
+    const confirmationCommand = {
+      ...baseCommand, modelRequestId: 'workspace-apply-confirmation',
+    };
+    const waiting = await runtime.invoke(confirmationCommand);
+    const waitingReplay = await runtime.invoke(confirmationCommand);
+    expect(waiting.kind).toBe('confirmation_required');
+    expect(waitingReplay).toEqual(waiting);
+    expect(providerCalls).toBe(0);
+    currentOperationMode = 'observe';
+    await expect(runtime.resume({
+      identity,
+      toolCallId: waiting.toolCallId,
+      commandId: approvalCommandId(randomUUID()),
+      response: 'confirm',
+      principalEntitlements: baseCommand.principalEntitlements,
+      signal: new AbortController().signal,
+    })).resolves.toMatchObject({ kind: 'denied', reason: 'authorization_revoked' });
+    expect(authorityChecks).toBe(3);
+    expect(providerCalls).toBe(0);
+
+    currentOperationMode = 'trusted_automation';
+    const trustedCommand = {
+      ...baseCommand, modelRequestId: 'workspace-apply-trusted',
+    };
+    const trusted = await runtime.invoke(trustedCommand);
+    const trustedReplay = await runtime.invoke(trustedCommand);
+    expect(trusted).toMatchObject({ kind: 'success', value: { status: 'applied' } });
+    expect(trustedReplay).toEqual(trusted);
+    expect(authorityChecks).toBe(4);
+    expect(providerCalls).toBe(1);
+  });
 });

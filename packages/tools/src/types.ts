@@ -1,5 +1,5 @@
 import type { AgentRevisionId } from '@cmaster/agents';
-import type { Approval, ApprovalCommandId } from '@cmaster/governance';
+import type { Approval, ApprovalCommandId, PolicyResource } from '@cmaster/governance';
 import type { OrganizationId, RequestIdentity } from '@cmaster/identity';
 import type { Brand } from '@cmaster/kernel';
 
@@ -75,6 +75,15 @@ export interface CredentialBroker {
   revoke(leaseId: CredentialLeaseId): Promise<void>;
 }
 
+/** Trusted server-resolved facts used by Governance; never sourced from Model input. */
+export interface ToolPolicyResourceRequest {
+  identity: RequestIdentity;
+  revision: ToolDescriptor;
+  runId: string;
+  invocationId: string;
+  input: unknown;
+}
+
 export interface ToolProviderRequest {
   toolCallId: ToolCallId;
   revision: ToolDescriptor;
@@ -100,6 +109,8 @@ export type ToolProviderResult = {
 export interface ToolProvider {
   readonly key: string;
   summarize(input: unknown): SafeToolSummary;
+  /** Re-resolved before initial authorization and confirmation resume. */
+  resolvePolicyResource?(request: ToolPolicyResourceRequest): Promise<PolicyResource>;
   execute(request: ToolProviderRequest): Promise<ToolProviderResult>;
   /**
    * 查询稳定 idempotency key 对应的外部状态，不重发原副作用。无法确认时应拒绝，
